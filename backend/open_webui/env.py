@@ -100,6 +100,7 @@ log_sources = [
     "SOCKET",
     "OAUTH",
     "SECRETS"
+    "SECRETS"
 ]
 
 SRC_LOG_LEVELS = {}
@@ -532,10 +533,10 @@ OAUTH_SESSION_TOKEN_ENCRYPTION_KEY = get_secret(
 ####################################
 
 ENABLE_SCIM = (
-    os.environ.get("ENABLE_SCIM", os.environ.get("SCIM_ENABLED", "False")).lower()
+    os.environ.get("ENABLE_SCIM", get_secret("SCIM_ENABLED", "False")).lower()
     == "true"
 )
-SCIM_TOKEN = os.environ.get("SCIM_TOKEN", "")
+SCIM_TOKEN = get_secret("SCIM_TOKEN", "")
 
 ####################################
 # LICENSE_KEY

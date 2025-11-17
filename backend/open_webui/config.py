@@ -35,6 +35,7 @@ from open_webui.env import (
 from open_webui.internal.db import Base, get_db
 from open_webui.utils.redis import get_redis_connection
 from open_webui.secrets import get_secret
+from open_webui.secrets import get_secret
 
 
 class EndpointFilter(logging.Filter):
@@ -1326,7 +1327,7 @@ USER_PERMISSIONS_WORKSPACE_PROMPTS_EXPORT = (
 )
 
 USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT = (
-    os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT", "False").lower() == "true"
+    get_secret("USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT", "False").lower() == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT = (
