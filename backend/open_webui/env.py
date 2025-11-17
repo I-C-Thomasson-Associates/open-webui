@@ -85,7 +85,33 @@ if "cuda_error" in locals():
     log.exception(cuda_error)
     del cuda_error
 
-SRC_LOG_LEVELS = {}  # Legacy variable, do not remove
+log_sources = [
+    "AUDIO",
+    "COMFYUI",
+    "CONFIG",
+    "DB",
+    "IMAGES",
+    "MAIN",
+    "MODELS",
+    "OLLAMA",
+    "OPENAI",
+    "RAG",
+    "WEBHOOK",
+    "SOCKET",
+    "OAUTH",
+    "SECRETS"
+]
+
+SRC_LOG_LEVELS = {}
+
+for source in log_sources:
+    log_env_var = source + "_LOG_LEVEL"
+    SRC_LOG_LEVELS[source] = os.environ.get(log_env_var, "").upper()
+    if SRC_LOG_LEVELS[source] not in logging.getLevelNamesMapping():
+        SRC_LOG_LEVELS[source] = GLOBAL_LOG_LEVEL
+    log.info(f"{log_env_var}: {SRC_LOG_LEVELS[source]}")
+
+log.setLevel(SRC_LOG_LEVELS["CONFIG"])
 
 WEBUI_NAME = os.environ.get("WEBUI_NAME", "Open WebUI")
 if WEBUI_NAME != "Open WebUI":
@@ -98,8 +124,11 @@ TRUSTED_SIGNATURE_KEY = os.environ.get("TRUSTED_SIGNATURE_KEY", "")
 ####################################
 # ENV (dev,test,prod)
 ####################################
+from open_webui.secrets import get_secret
+secrets_logger = logging.getLogger("open_webui.secrets")
+secrets_logger.setLevel(SRC_LOG_LEVELS["SECRETS"])
 
-ENV = os.environ.get("ENV", "dev")
+ENV = os.environ.get("ENV", "dev") 
 
 FROM_INIT_PY = os.environ.get("FROM_INIT_PY", "False").lower() == "true"
 
@@ -254,11 +283,11 @@ if os.path.exists(f"{DATA_DIR}/ollama.db"):
 else:
     pass
 
-DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DATA_DIR}/webui.db")
+DATABASE_URL = get_secret("DATABASE_URL", f"sqlite:///{DATA_DIR}/webui.db")
 
 DATABASE_TYPE = os.environ.get("DATABASE_TYPE")
 DATABASE_USER = os.environ.get("DATABASE_USER")
-DATABASE_PASSWORD = os.environ.get("DATABASE_PASSWORD")
+DATABASE_PASSWORD = get_secret("DATABASE_PASSWORD", "")
 
 DATABASE_CRED = ""
 if DATABASE_USER:
@@ -447,9 +476,9 @@ WEBUI_AUTH_SIGNOUT_REDIRECT_URL = os.environ.get(
 # WEBUI_SECRET_KEY
 ####################################
 
-WEBUI_SECRET_KEY = os.environ.get(
+WEBUI_SECRET_KEY = get_secret(
     "WEBUI_SECRET_KEY",
-    os.environ.get(
+    get_secret(
         "WEBUI_JWT_SECRET_KEY", "t0p-s3cr3t"
     ),  # DEPRECATED: remove at next major version
 )
@@ -490,11 +519,11 @@ ENABLE_OAUTH_ID_TOKEN_COOKIE = (
     os.environ.get("ENABLE_OAUTH_ID_TOKEN_COOKIE", "True").lower() == "true"
 )
 
-OAUTH_CLIENT_INFO_ENCRYPTION_KEY = os.environ.get(
+OAUTH_CLIENT_INFO_ENCRYPTION_KEY = get_secret(
     "OAUTH_CLIENT_INFO_ENCRYPTION_KEY", WEBUI_SECRET_KEY
 )
 
-OAUTH_SESSION_TOKEN_ENCRYPTION_KEY = os.environ.get(
+OAUTH_SESSION_TOKEN_ENCRYPTION_KEY = get_secret(
     "OAUTH_SESSION_TOKEN_ENCRYPTION_KEY", WEBUI_SECRET_KEY
 )
 
@@ -512,7 +541,7 @@ SCIM_TOKEN = os.environ.get("SCIM_TOKEN", "")
 # LICENSE_KEY
 ####################################
 
-LICENSE_KEY = os.environ.get("LICENSE_KEY", "")
+LICENSE_KEY = get_secret("LICENSE_KEY", "")
 
 LICENSE_BLOB = None
 LICENSE_BLOB_PATH = os.environ.get("LICENSE_BLOB_PATH", DATA_DIR / "l.data")
