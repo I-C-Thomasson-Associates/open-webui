@@ -34,6 +34,7 @@ from open_webui.env import (
 )
 from open_webui.internal.db import Base, get_db
 from open_webui.utils.redis import get_redis_connection
+from open_webui.secrets import get_secret
 
 
 class EndpointFilter(logging.Filter):
@@ -804,7 +805,7 @@ load_oauth_providers()
 # Static DIR
 ####################################
 
-STATIC_DIR = Path(os.getenv("STATIC_DIR", OPEN_WEBUI_DIR / "static")).resolve()
+STATIC_DIR = Path(get_secret("STATIC_DIR", OPEN_WEBUI_DIR / "static")).resolve()
 
 try:
     if STATIC_DIR.exists():
@@ -857,7 +858,7 @@ if frontend_loader.exists():
 # CUSTOM_NAME (Legacy)
 ####################################
 
-CUSTOM_NAME = os.environ.get("CUSTOM_NAME", "")
+CUSTOM_NAME = get_secret("CUSTOM_NAME", "")
 
 if CUSTOM_NAME:
     try:
@@ -900,28 +901,28 @@ if CUSTOM_NAME:
 # STORAGE PROVIDER
 ####################################
 
-STORAGE_PROVIDER = os.environ.get("STORAGE_PROVIDER", "local")  # defaults to local, s3
+STORAGE_PROVIDER = get_secret("STORAGE_PROVIDER", "local")  # defaults to local, s3
 
-S3_ACCESS_KEY_ID = os.environ.get("S3_ACCESS_KEY_ID", None)
-S3_SECRET_ACCESS_KEY = os.environ.get("S3_SECRET_ACCESS_KEY", None)
-S3_REGION_NAME = os.environ.get("S3_REGION_NAME", None)
-S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", None)
-S3_KEY_PREFIX = os.environ.get("S3_KEY_PREFIX", None)
-S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", None)
+S3_ACCESS_KEY_ID = get_secret("S3_ACCESS_KEY_ID", None)
+S3_SECRET_ACCESS_KEY = get_secret("S3_SECRET_ACCESS_KEY", None)
+S3_REGION_NAME = get_secret("S3_REGION_NAME", None)
+S3_BUCKET_NAME = get_secret("S3_BUCKET_NAME", None)
+S3_KEY_PREFIX = get_secret("S3_KEY_PREFIX", None)
+S3_ENDPOINT_URL = get_secret("S3_ENDPOINT_URL", None)
 S3_USE_ACCELERATE_ENDPOINT = (
-    os.environ.get("S3_USE_ACCELERATE_ENDPOINT", "false").lower() == "true"
+    get_secret("S3_USE_ACCELERATE_ENDPOINT", "false").lower() == "true"
 )
-S3_ADDRESSING_STYLE = os.environ.get("S3_ADDRESSING_STYLE", None)
-S3_ENABLE_TAGGING = os.getenv("S3_ENABLE_TAGGING", "false").lower() == "true"
+S3_ADDRESSING_STYLE = get_secret("S3_ADDRESSING_STYLE", None)
+S3_ENABLE_TAGGING = get_secret("S3_ENABLE_TAGGING", "false").lower() == "true"
 
 GCS_BUCKET_NAME = os.environ.get("GCS_BUCKET_NAME", None)
-GOOGLE_APPLICATION_CREDENTIALS_JSON = os.environ.get(
+GOOGLE_APPLICATION_CREDENTIALS_JSON = get_secret(
     "GOOGLE_APPLICATION_CREDENTIALS_JSON", None
 )
 
-AZURE_STORAGE_ENDPOINT = os.environ.get("AZURE_STORAGE_ENDPOINT", None)
-AZURE_STORAGE_CONTAINER_NAME = os.environ.get("AZURE_STORAGE_CONTAINER_NAME", None)
-AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", None)
+AZURE_STORAGE_ENDPOINT = get_secret("AZURE_STORAGE_ENDPOINT", None)
+AZURE_STORAGE_CONTAINER_NAME = get_secret("AZURE_STORAGE_CONTAINER_NAME", None)
+AZURE_STORAGE_KEY = get_secret("AZURE_STORAGE_KEY", None)
 
 ####################################
 # File Upload DIR
@@ -946,7 +947,7 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 ENABLE_DIRECT_CONNECTIONS = PersistentConfig(
     "ENABLE_DIRECT_CONNECTIONS",
     "direct.enable",
-    os.environ.get("ENABLE_DIRECT_CONNECTIONS", "False").lower() == "true",
+    get_secret("ENABLE_DIRECT_CONNECTIONS", "False").lower() == "true",
 )
 
 ####################################
@@ -956,14 +957,14 @@ ENABLE_DIRECT_CONNECTIONS = PersistentConfig(
 ENABLE_OLLAMA_API = PersistentConfig(
     "ENABLE_OLLAMA_API",
     "ollama.enable",
-    os.environ.get("ENABLE_OLLAMA_API", "True").lower() == "true",
+    get_secret("ENABLE_OLLAMA_API", "True").lower() == "true",
 )
 
-OLLAMA_API_BASE_URL = os.environ.get(
+OLLAMA_API_BASE_URL = get_secret(
     "OLLAMA_API_BASE_URL", "http://localhost:11434/api"
 )
 
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "")
+OLLAMA_BASE_URL = get_secret("OLLAMA_BASE_URL", "")
 if OLLAMA_BASE_URL:
     # Remove trailing slash
     OLLAMA_BASE_URL = (
@@ -971,8 +972,8 @@ if OLLAMA_BASE_URL:
     )
 
 
-K8S_FLAG = os.environ.get("K8S_FLAG", "")
-USE_OLLAMA_DOCKER = os.environ.get("USE_OLLAMA_DOCKER", "false")
+K8S_FLAG = get_secret("K8S_FLAG", "")
+USE_OLLAMA_DOCKER = get_secret("USE_OLLAMA_DOCKER", "false")
 
 if OLLAMA_BASE_URL == "" and OLLAMA_API_BASE_URL != "":
     OLLAMA_BASE_URL = (
@@ -993,7 +994,7 @@ if ENV == "prod":
         OLLAMA_BASE_URL = "http://ollama-service.open-webui.svc.cluster.local:11434"
 
 
-OLLAMA_BASE_URLS = os.environ.get("OLLAMA_BASE_URLS", "")
+OLLAMA_BASE_URLS = get_secret("OLLAMA_BASE_URLS", "")
 OLLAMA_BASE_URLS = OLLAMA_BASE_URLS if OLLAMA_BASE_URLS != "" else OLLAMA_BASE_URL
 
 OLLAMA_BASE_URLS = [url.strip() for url in OLLAMA_BASE_URLS.split(";")]
@@ -1077,7 +1078,7 @@ OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 ENABLE_BASE_MODELS_CACHE = PersistentConfig(
     "ENABLE_BASE_MODELS_CACHE",
     "models.base_models_cache",
-    os.environ.get("ENABLE_BASE_MODELS_CACHE", "False").lower() == "true",
+    get_secret("ENABLE_BASE_MODELS_CACHE", "False").lower() == "true",
 )
 
 
@@ -1087,7 +1088,7 @@ ENABLE_BASE_MODELS_CACHE = PersistentConfig(
 
 try:
     tool_server_connections = json.loads(
-        os.environ.get("TOOL_SERVER_CONNECTIONS", "[]")
+        get_secret("TOOL_SERVER_CONNECTIONS", "[]")
     )
 except Exception as e:
     log.exception(f"Error loading TOOL_SERVER_CONNECTIONS: {e}")
@@ -1212,52 +1213,52 @@ RESPONSE_WATERMARK = PersistentConfig(
 
 
 USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS = (
-    os.environ.get("USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS", "False").lower()
+    get_secret("USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS", "False").lower()
     == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS = (
-    os.environ.get("USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS", "False").lower()
+    get_secret("USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS", "False").lower()
     == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS = (
-    os.environ.get("USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS", "False").lower()
+    get_secret("USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS", "False").lower()
     == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS = (
-    os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS", "False").lower() == "true"
+    get_secret("USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS", "False").lower() == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING = (
-    os.environ.get(
+    get_secret(
         "USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING", "False"
     ).lower()
     == "true"
 )
 
 USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING = (
-    os.environ.get("USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING", "False").lower()
+    get_secret("USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING", "False").lower()
     == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_PUBLIC_SHARING = (
-    os.environ.get(
+    get_secret(
         "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_PUBLIC_SHARING", "False"
     ).lower()
     == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING = (
-    os.environ.get(
+    get_secret(
         "USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING", "False"
     ).lower()
     == "true"
 )
 
 USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING = (
-    os.environ.get(
+    get_secret(
         "USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING", "False"
     ).lower()
     == "true"
@@ -1265,105 +1266,105 @@ USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING = (
 
 
 USER_PERMISSIONS_CHAT_CONTROLS = (
-    os.environ.get("USER_PERMISSIONS_CHAT_CONTROLS", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_CONTROLS", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_VALVES = (
-    os.environ.get("USER_PERMISSIONS_CHAT_VALVES", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_VALVES", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_SYSTEM_PROMPT = (
-    os.environ.get("USER_PERMISSIONS_CHAT_SYSTEM_PROMPT", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_SYSTEM_PROMPT", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_PARAMS = (
-    os.environ.get("USER_PERMISSIONS_CHAT_PARAMS", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_PARAMS", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_FILE_UPLOAD = (
-    os.environ.get("USER_PERMISSIONS_CHAT_FILE_UPLOAD", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_FILE_UPLOAD", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_DELETE = (
-    os.environ.get("USER_PERMISSIONS_CHAT_DELETE", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_DELETE", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_DELETE_MESSAGE = (
-    os.environ.get("USER_PERMISSIONS_CHAT_DELETE_MESSAGE", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_DELETE_MESSAGE", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE = (
-    os.environ.get("USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE = (
-    os.environ.get("USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE", "True").lower()
+    get_secret("USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE", "True").lower()
     == "true"
 )
 
 USER_PERMISSIONS_CHAT_RATE_RESPONSE = (
-    os.environ.get("USER_PERMISSIONS_CHAT_RATE_RESPONSE", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_RATE_RESPONSE", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_EDIT = (
-    os.environ.get("USER_PERMISSIONS_CHAT_EDIT", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_EDIT", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_SHARE = (
-    os.environ.get("USER_PERMISSIONS_CHAT_SHARE", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_SHARE", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_EXPORT = (
-    os.environ.get("USER_PERMISSIONS_CHAT_EXPORT", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_EXPORT", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_STT = (
-    os.environ.get("USER_PERMISSIONS_CHAT_STT", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_STT", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_TTS = (
-    os.environ.get("USER_PERMISSIONS_CHAT_TTS", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_TTS", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_CALL = (
-    os.environ.get("USER_PERMISSIONS_CHAT_CALL", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_CALL", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_MULTIPLE_MODELS = (
-    os.environ.get("USER_PERMISSIONS_CHAT_MULTIPLE_MODELS", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_MULTIPLE_MODELS", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_TEMPORARY = (
-    os.environ.get("USER_PERMISSIONS_CHAT_TEMPORARY", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_CHAT_TEMPORARY", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_CHAT_TEMPORARY_ENFORCED = (
-    os.environ.get("USER_PERMISSIONS_CHAT_TEMPORARY_ENFORCED", "False").lower()
+    get_secret("USER_PERMISSIONS_CHAT_TEMPORARY_ENFORCED", "False").lower()
     == "true"
 )
 
 
 USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS", "False").lower()
+    get_secret("USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS", "False").lower()
     == "true"
 )
 
 USER_PERMISSIONS_FEATURES_WEB_SEARCH = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_WEB_SEARCH", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_FEATURES_WEB_SEARCH", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_FEATURES_IMAGE_GENERATION = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_IMAGE_GENERATION", "True").lower()
+    get_secret("USER_PERMISSIONS_FEATURES_IMAGE_GENERATION", "True").lower()
     == "true"
 )
 
 USER_PERMISSIONS_FEATURES_CODE_INTERPRETER = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_CODE_INTERPRETER", "True").lower()
+    get_secret("USER_PERMISSIONS_FEATURES_CODE_INTERPRETER", "True").lower()
     == "true"
 )
 
 USER_PERMISSIONS_FEATURES_NOTES = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_NOTES", "True").lower() == "true"
+    get_secret("USER_PERMISSIONS_FEATURES_NOTES", "True").lower() == "true"
 )
 
 
@@ -1972,7 +1973,7 @@ CODE_INTERPRETER_JUPYTER_TIMEOUT = PersistentConfig(
 
 CODE_INTERPRETER_BLOCKED_MODULES = [
     library.strip()
-    for library in os.environ.get("CODE_INTERPRETER_BLOCKED_MODULES", "").split(",")
+    for library in get_secret("CODE_INTERPRETER_BLOCKED_MODULES", "").split(",")
     if library.strip()
 ]
 
@@ -1997,7 +1998,7 @@ Ensure that the tools are effectively utilized to achieve the highest-quality an
 # Vector Database
 ####################################
 
-VECTOR_DB = os.environ.get("VECTOR_DB", "chroma")
+VECTOR_DB = get_secret("VECTOR_DB", "chroma")
 
 # Chroma
 CHROMA_DATA_PATH = f"{DATA_DIR}/vector_db"
@@ -2005,75 +2006,75 @@ CHROMA_DATA_PATH = f"{DATA_DIR}/vector_db"
 if VECTOR_DB == "chroma":
     import chromadb
 
-    CHROMA_TENANT = os.environ.get("CHROMA_TENANT", chromadb.DEFAULT_TENANT)
-    CHROMA_DATABASE = os.environ.get("CHROMA_DATABASE", chromadb.DEFAULT_DATABASE)
-    CHROMA_HTTP_HOST = os.environ.get("CHROMA_HTTP_HOST", "")
-    CHROMA_HTTP_PORT = int(os.environ.get("CHROMA_HTTP_PORT", "8000"))
-    CHROMA_CLIENT_AUTH_PROVIDER = os.environ.get("CHROMA_CLIENT_AUTH_PROVIDER", "")
-    CHROMA_CLIENT_AUTH_CREDENTIALS = os.environ.get(
+    CHROMA_TENANT = get_secret("CHROMA_TENANT", chromadb.DEFAULT_TENANT)
+    CHROMA_DATABASE = get_secret("CHROMA_DATABASE", chromadb.DEFAULT_DATABASE)
+    CHROMA_HTTP_HOST = get_secret("CHROMA_HTTP_HOST", "")
+    CHROMA_HTTP_PORT = int(get_secret("CHROMA_HTTP_PORT", "8000"))
+    CHROMA_CLIENT_AUTH_PROVIDER = get_secret("CHROMA_CLIENT_AUTH_PROVIDER", "")
+    CHROMA_CLIENT_AUTH_CREDENTIALS = get_secret(
         "CHROMA_CLIENT_AUTH_CREDENTIALS", ""
     )
     # Comma-separated list of header=value pairs
-    CHROMA_HTTP_HEADERS = os.environ.get("CHROMA_HTTP_HEADERS", "")
+    CHROMA_HTTP_HEADERS = get_secret("CHROMA_HTTP_HEADERS", "")
     if CHROMA_HTTP_HEADERS:
         CHROMA_HTTP_HEADERS = dict(
             [pair.split("=") for pair in CHROMA_HTTP_HEADERS.split(",")]
         )
     else:
         CHROMA_HTTP_HEADERS = None
-    CHROMA_HTTP_SSL = os.environ.get("CHROMA_HTTP_SSL", "false").lower() == "true"
+    CHROMA_HTTP_SSL = get_secret("CHROMA_HTTP_SSL", "false").lower() == "true"
 # this uses the model defined in the Dockerfile ENV variable. If you dont use docker or docker based deployments such as k8s, the default embedding model will be used (sentence-transformers/all-MiniLM-L6-v2)
 
 # Milvus
-MILVUS_URI = os.environ.get("MILVUS_URI", f"{DATA_DIR}/vector_db/milvus.db")
-MILVUS_DB = os.environ.get("MILVUS_DB", "default")
-MILVUS_TOKEN = os.environ.get("MILVUS_TOKEN", None)
-MILVUS_INDEX_TYPE = os.environ.get("MILVUS_INDEX_TYPE", "HNSW")
-MILVUS_METRIC_TYPE = os.environ.get("MILVUS_METRIC_TYPE", "COSINE")
-MILVUS_HNSW_M = int(os.environ.get("MILVUS_HNSW_M", "16"))
-MILVUS_HNSW_EFCONSTRUCTION = int(os.environ.get("MILVUS_HNSW_EFCONSTRUCTION", "100"))
-MILVUS_IVF_FLAT_NLIST = int(os.environ.get("MILVUS_IVF_FLAT_NLIST", "128"))
-MILVUS_DISKANN_MAX_DEGREE = int(os.environ.get("MILVUS_DISKANN_MAX_DEGREE", "56"))
+MILVUS_URI = get_secret("MILVUS_URI", f"{DATA_DIR}/vector_db/milvus.db")
+MILVUS_DB = get_secret("MILVUS_DB", "default")
+MILVUS_TOKEN = get_secret("MILVUS_TOKEN", None)
+MILVUS_INDEX_TYPE = get_secret("MILVUS_INDEX_TYPE", "HNSW")
+MILVUS_METRIC_TYPE = get_secret("MILVUS_METRIC_TYPE", "COSINE")
+MILVUS_HNSW_M = int(get_secret("MILVUS_HNSW_M", "16"))
+MILVUS_HNSW_EFCONSTRUCTION = int(get_secret("MILVUS_HNSW_EFCONSTRUCTION", "100"))
+MILVUS_IVF_FLAT_NLIST = int(get_secret("MILVUS_IVF_FLAT_NLIST", "128"))
+MILVUS_DISKANN_MAX_DEGREE = int(get_secret("MILVUS_DISKANN_MAX_DEGREE", "56"))
 MILVUS_DISKANN_SEARCH_LIST_SIZE = int(
-    os.environ.get("MILVUS_DISKANN_SEARCH_LIST_SIZE", "100")
+    get_secret("MILVUS_DISKANN_SEARCH_LIST_SIZE", "100")
 )
 ENABLE_MILVUS_MULTITENANCY_MODE = (
-    os.environ.get("ENABLE_MILVUS_MULTITENANCY_MODE", "false").lower() == "true"
+    get_secret("ENABLE_MILVUS_MULTITENANCY_MODE", "false").lower() == "true"
 )
 # Hyphens not allowed, need to use underscores in collection names
-MILVUS_COLLECTION_PREFIX = os.environ.get("MILVUS_COLLECTION_PREFIX", "open_webui")
+MILVUS_COLLECTION_PREFIX = get_secret("MILVUS_COLLECTION_PREFIX", "open_webui")
 
 # Qdrant
-QDRANT_URI = os.environ.get("QDRANT_URI", None)
-QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", None)
-QDRANT_ON_DISK = os.environ.get("QDRANT_ON_DISK", "false").lower() == "true"
-QDRANT_PREFER_GRPC = os.environ.get("QDRANT_PREFER_GRPC", "false").lower() == "true"
-QDRANT_GRPC_PORT = int(os.environ.get("QDRANT_GRPC_PORT", "6334"))
-QDRANT_TIMEOUT = int(os.environ.get("QDRANT_TIMEOUT", "5"))
-QDRANT_HNSW_M = int(os.environ.get("QDRANT_HNSW_M", "16"))
+QDRANT_URI = get_secret("QDRANT_URI", None)
+QDRANT_API_KEY = get_secret("QDRANT_API_KEY", None)
+QDRANT_ON_DISK = get_secret("QDRANT_ON_DISK", "false").lower() == "true"
+QDRANT_PREFER_GRPC = get_secret("QDRANT_PREFER_GRPC", "false").lower() == "true"
+QDRANT_GRPC_PORT = int(get_secret("QDRANT_GRPC_PORT", "6334"))
+QDRANT_TIMEOUT = int(get_secret("QDRANT_TIMEOUT", "5"))
+QDRANT_HNSW_M = int(get_secret("QDRANT_HNSW_M", "16"))
 ENABLE_QDRANT_MULTITENANCY_MODE = (
-    os.environ.get("ENABLE_QDRANT_MULTITENANCY_MODE", "true").lower() == "true"
+    get_secret("ENABLE_QDRANT_MULTITENANCY_MODE", "true").lower() == "true"
 )
-QDRANT_COLLECTION_PREFIX = os.environ.get("QDRANT_COLLECTION_PREFIX", "open-webui")
+QDRANT_COLLECTION_PREFIX = get_secret("QDRANT_COLLECTION_PREFIX", "open-webui")
 
 # OpenSearch
-OPENSEARCH_URI = os.environ.get("OPENSEARCH_URI", "https://localhost:9200")
-OPENSEARCH_SSL = os.environ.get("OPENSEARCH_SSL", "true").lower() == "true"
+OPENSEARCH_URI = get_secret("OPENSEARCH_URI", "https://localhost:9200")
+OPENSEARCH_SSL = get_secret("OPENSEARCH_SSL", "true").lower() == "true"
 OPENSEARCH_CERT_VERIFY = (
-    os.environ.get("OPENSEARCH_CERT_VERIFY", "false").lower() == "true"
+    get_secret("OPENSEARCH_CERT_VERIFY", "false").lower() == "true"
 )
-OPENSEARCH_USERNAME = os.environ.get("OPENSEARCH_USERNAME", None)
-OPENSEARCH_PASSWORD = os.environ.get("OPENSEARCH_PASSWORD", None)
+OPENSEARCH_USERNAME = get_secret("OPENSEARCH_USERNAME", None)
+OPENSEARCH_PASSWORD = get_secret("OPENSEARCH_PASSWORD", None)
 
 # ElasticSearch
-ELASTICSEARCH_URL = os.environ.get("ELASTICSEARCH_URL", "https://localhost:9200")
-ELASTICSEARCH_CA_CERTS = os.environ.get("ELASTICSEARCH_CA_CERTS", None)
-ELASTICSEARCH_API_KEY = os.environ.get("ELASTICSEARCH_API_KEY", None)
-ELASTICSEARCH_USERNAME = os.environ.get("ELASTICSEARCH_USERNAME", None)
-ELASTICSEARCH_PASSWORD = os.environ.get("ELASTICSEARCH_PASSWORD", None)
-ELASTICSEARCH_CLOUD_ID = os.environ.get("ELASTICSEARCH_CLOUD_ID", None)
-SSL_ASSERT_FINGERPRINT = os.environ.get("SSL_ASSERT_FINGERPRINT", None)
-ELASTICSEARCH_INDEX_PREFIX = os.environ.get(
+ELASTICSEARCH_URL = get_secret("ELASTICSEARCH_URL", "https://localhost:9200")
+ELASTICSEARCH_CA_CERTS = get_secret("ELASTICSEARCH_CA_CERTS", None)
+ELASTICSEARCH_API_KEY = get_secret("ELASTICSEARCH_API_KEY", None)
+ELASTICSEARCH_USERNAME = get_secret("ELASTICSEARCH_USERNAME", None)
+ELASTICSEARCH_PASSWORD = get_secret("ELASTICSEARCH_PASSWORD", None)
+ELASTICSEARCH_CLOUD_ID = get_secret("ELASTICSEARCH_CLOUD_ID", None)
+SSL_ASSERT_FINGERPRINT = get_secret("SSL_ASSERT_FINGERPRINT", None)
+ELASTICSEARCH_INDEX_PREFIX = get_secret(
     "ELASTICSEARCH_INDEX_PREFIX", "open_webui_collections"
 )
 # Pgvector
@@ -2136,26 +2137,26 @@ else:
         PGVECTOR_POOL_RECYCLE = 3600
 
 # Pinecone
-PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY", None)
-PINECONE_ENVIRONMENT = os.environ.get("PINECONE_ENVIRONMENT", None)
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "open-webui-index")
-PINECONE_DIMENSION = int(os.getenv("PINECONE_DIMENSION", 1536))  # or 3072, 1024, 768
-PINECONE_METRIC = os.getenv("PINECONE_METRIC", "cosine")
-PINECONE_CLOUD = os.getenv("PINECONE_CLOUD", "aws")  # or "gcp" or "azure"
+PINECONE_API_KEY = get_secret("PINECONE_API_KEY", None)
+PINECONE_ENVIRONMENT = get_secret("PINECONE_ENVIRONMENT", None)
+PINECONE_INDEX_NAME = get_secret("PINECONE_INDEX_NAME", "open-webui-index")
+PINECONE_DIMENSION = int(get_secret("PINECONE_DIMENSION", 1536))  # or 3072, 1024, 768
+PINECONE_METRIC = get_secret("PINECONE_METRIC", "cosine")
+PINECONE_CLOUD = get_secret("PINECONE_CLOUD", "aws")  # or "gcp" or "azure"
 
 # ORACLE23AI (Oracle23ai Vector Search)
 
-ORACLE_DB_USE_WALLET = os.environ.get("ORACLE_DB_USE_WALLET", "false").lower() == "true"
-ORACLE_DB_USER = os.environ.get("ORACLE_DB_USER", None)  #
-ORACLE_DB_PASSWORD = os.environ.get("ORACLE_DB_PASSWORD", None)  #
-ORACLE_DB_DSN = os.environ.get("ORACLE_DB_DSN", None)  #
-ORACLE_WALLET_DIR = os.environ.get("ORACLE_WALLET_DIR", None)
-ORACLE_WALLET_PASSWORD = os.environ.get("ORACLE_WALLET_PASSWORD", None)
-ORACLE_VECTOR_LENGTH = os.environ.get("ORACLE_VECTOR_LENGTH", 768)
+ORACLE_DB_USE_WALLET = get_secret("ORACLE_DB_USE_WALLET", "false").lower() == "true"
+ORACLE_DB_USER = get_secret("ORACLE_DB_USER", None)  #
+ORACLE_DB_PASSWORD = get_secret("ORACLE_DB_PASSWORD", None)  #
+ORACLE_DB_DSN = get_secret("ORACLE_DB_DSN", None)  #
+ORACLE_WALLET_DIR = get_secret("ORACLE_WALLET_DIR", None)
+ORACLE_WALLET_PASSWORD = get_secret("ORACLE_WALLET_PASSWORD", None)
+ORACLE_VECTOR_LENGTH = int(get_secret("ORACLE_VECTOR_LENGTH", 768))
 
-ORACLE_DB_POOL_MIN = int(os.environ.get("ORACLE_DB_POOL_MIN", 2))
-ORACLE_DB_POOL_MAX = int(os.environ.get("ORACLE_DB_POOL_MAX", 10))
-ORACLE_DB_POOL_INCREMENT = int(os.environ.get("ORACLE_DB_POOL_INCREMENT", 1))
+ORACLE_DB_POOL_MIN = int(get_secret("ORACLE_DB_POOL_MIN", 2))
+ORACLE_DB_POOL_MAX = int(get_secret("ORACLE_DB_POOL_MAX", 10))
+ORACLE_DB_POOL_INCREMENT = int(get_secret("ORACLE_DB_POOL_INCREMENT", 1))
 
 
 if VECTOR_DB == "oracle23ai":
@@ -3658,6 +3659,7 @@ LDAP_CIPHERS = PersistentConfig(
 # For LDAP Group Management
 ENABLE_LDAP_GROUP_MANAGEMENT = PersistentConfig(
     "ENABLE_LDAP_GROUP_MANAGEMENT",
+
     "ldap.group.enable_management",
     os.environ.get("ENABLE_LDAP_GROUP_MANAGEMENT", "False").lower() == "true",
 )
