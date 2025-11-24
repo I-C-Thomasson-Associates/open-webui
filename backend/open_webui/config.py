@@ -1492,15 +1492,7 @@ USER_PERMISSIONS_FEATURES_FOLDERS = (
 )
 
 USER_PERMISSIONS_FEATURES_NOTES = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_NOTES", "True").lower() == "true"
-)
-
-USER_PERMISSIONS_FEATURES_CHANNELS = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_CHANNELS", "True").lower() == "true"
-)
-
-USER_PERMISSIONS_FEATURES_API_KEYS = (
-    os.environ.get("USER_PERMISSIONS_FEATURES_API_KEYS", "False").lower() == "true"
+    get_secret("USER_PERMISSIONS_FEATURES_NOTES", "True").lower() == "true"
 )
 
 USER_PERMISSIONS_FEATURES_API_KEYS = (
