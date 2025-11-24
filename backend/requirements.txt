@@ -111,7 +111,7 @@ azure-keyvault-secrets==4.9.0
 azure-storage-blob==12.24.1
 
 
-pymongo
+pymongo<4 # Lower version for compatibility with Azure CosmosDB 
 psycopg2-binary==2.9.10
 pgvector==0.4.1
 
