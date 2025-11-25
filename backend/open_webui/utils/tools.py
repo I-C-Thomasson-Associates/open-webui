@@ -150,11 +150,22 @@ async def get_tools(
                     )
 
                     specs = tool_server_data.get("specs", [])
-                    function_name_filter_list = (
+                    function_name_filter_list_raw = (
                         tool_server_connection.get("config", {})
                         .get("function_name_filter_list", "")
-                        .split(",")
                     )
+                    
+                    # Handle both PostgreSQL (returns list) and SQLite (returns string)
+                    if isinstance(function_name_filter_list_raw, list):
+                        function_name_filter_list = function_name_filter_list_raw
+                    elif isinstance(function_name_filter_list_raw, str):
+                        function_name_filter_list = (
+                            function_name_filter_list_raw.split(",") 
+                            if function_name_filter_list_raw 
+                            else []
+                        )
+                    else:
+                        function_name_filter_list = []
 
                     for spec in specs:
                         function_name = spec["name"]
