@@ -114,7 +114,7 @@ azure-storage-blob==12.24.1
 
 
 ## Databases
-pymongo<4 # Lower version for compatibility with Azure CosmosDB 
+pymongo
 psycopg2-binary==2.9.10
 pgvector==0.4.1
 
