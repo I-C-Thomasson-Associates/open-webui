@@ -1409,11 +1409,22 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                         headers=headers if headers else None,
                     )
 
-                    function_name_filter_list = (
+                    function_name_filter_list_raw = (
                         mcp_server_connection.get("config", {})
                         .get("function_name_filter_list", "")
-                        .split(",")
                     )
+                    
+                    # Handle both PostgreSQL (returns list) and SQLite (returns string)
+                    if isinstance(function_name_filter_list_raw, list):
+                        function_name_filter_list = function_name_filter_list_raw
+                    elif isinstance(function_name_filter_list_raw, str):
+                        function_name_filter_list = (
+                            function_name_filter_list_raw.split(",") 
+                            if function_name_filter_list_raw 
+                            else []
+                        )
+                    else:
+                        function_name_filter_list = []
 
                     tool_specs = await mcp_clients[server_id].list_tool_specs()
                     for tool_spec in tool_specs:
