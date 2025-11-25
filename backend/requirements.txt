@@ -42,6 +42,7 @@ mcp==1.25.0
 
 openai
 anthropic
+litellm
 google-genai==1.56.0
 google-generativeai==0.8.6
 
