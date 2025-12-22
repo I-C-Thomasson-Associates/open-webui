@@ -35,7 +35,6 @@ from open_webui.env import (
 from open_webui.internal.db import Base, get_db
 from open_webui.utils.redis import get_redis_connection
 from open_webui.secrets import get_secret
-from open_webui.secrets import get_secret
 
 
 class EndpointFilter(logging.Filter):
@@ -1265,6 +1264,13 @@ USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS = (
     os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS", "False").lower() == "true"
 )
 
+USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING = (
+    get_secret(
+        "USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING", "False"
+    ).lower()
+    == "true"
+)
+
 USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT = (
     os.environ.get("USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT", "False").lower()
     == "true"
@@ -1292,7 +1298,6 @@ USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT = (
 USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT = (
     os.environ.get("USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT", "False").lower() == "true"
 )
-
 
 USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING = (
     os.environ.get("USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING", "False").lower()
@@ -1341,7 +1346,7 @@ USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING = (
 
 USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_SHARING = (
     get_secret(
-        "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_SHARING", "False"
+        "USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_PUBLIC_SHARING", "False"
     ).lower()
     == "true"
 )

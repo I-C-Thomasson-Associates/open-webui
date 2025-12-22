@@ -100,7 +100,6 @@ log_sources = [
     "SOCKET",
     "OAUTH",
     "SECRETS"
-    "SECRETS"
 ]
 
 SRC_LOG_LEVELS = {}
