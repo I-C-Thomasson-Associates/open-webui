@@ -3325,6 +3325,7 @@ async def process_chat_response(
                                                 "messages", []
                                             ),
                                             "__files__": metadata.get("files", []),
+                                            "__active_tool_results__": results,
                                         },
                                     )
 
