@@ -375,25 +375,25 @@ GOOGLE_REDIRECT_URI = PersistentConfig(
 MICROSOFT_CLIENT_ID = PersistentConfig(
     "MICROSOFT_CLIENT_ID",
     "oauth.microsoft.client_id",
-    os.environ.get("MICROSOFT_CLIENT_ID", ""),
+    get_secret("MICROSOFT_CLIENT_ID", ""),
 )
 
 MICROSOFT_CLIENT_SECRET = PersistentConfig(
     "MICROSOFT_CLIENT_SECRET",
     "oauth.microsoft.client_secret",
-    os.environ.get("MICROSOFT_CLIENT_SECRET", ""),
+    get_secret("MICROSOFT_CLIENT_SECRET", ""),
 )
 
 MICROSOFT_CLIENT_TENANT_ID = PersistentConfig(
     "MICROSOFT_CLIENT_TENANT_ID",
     "oauth.microsoft.tenant_id",
-    os.environ.get("MICROSOFT_CLIENT_TENANT_ID", ""),
+    get_secret("MICROSOFT_CLIENT_TENANT_ID", ""),
 )
 
 MICROSOFT_CLIENT_LOGIN_BASE_URL = PersistentConfig(
     "MICROSOFT_CLIENT_LOGIN_BASE_URL",
     "oauth.microsoft.login_base_url",
-    os.environ.get(
+    get_secret(
         "MICROSOFT_CLIENT_LOGIN_BASE_URL", "https://login.microsoftonline.com"
     ),
 )
@@ -411,13 +411,13 @@ MICROSOFT_CLIENT_PICTURE_URL = PersistentConfig(
 MICROSOFT_OAUTH_SCOPE = PersistentConfig(
     "MICROSOFT_OAUTH_SCOPE",
     "oauth.microsoft.scope",
-    os.environ.get("MICROSOFT_OAUTH_SCOPE", "openid email profile"),
+    get_secret("MICROSOFT_OAUTH_SCOPE", "openid email profile"),
 )
 
 MICROSOFT_REDIRECT_URI = PersistentConfig(
     "MICROSOFT_REDIRECT_URI",
     "oauth.microsoft.redirect_uri",
-    os.environ.get("MICROSOFT_REDIRECT_URI", ""),
+    get_secret("MICROSOFT_REDIRECT_URI", ""),
 )
 
 GITHUB_CLIENT_ID = PersistentConfig(
