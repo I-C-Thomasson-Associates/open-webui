@@ -4,6 +4,7 @@ import random
 from pathlib import Path
 
 import typer
+from backend.open_webui.secrets import get_secret
 import uvicorn
 from typing import Optional
 from typing_extensions import Annotated
@@ -36,7 +37,7 @@ def serve(
     port: int = 8080,
 ):
     os.environ["FROM_INIT_PY"] = "true"
-    if os.getenv("WEBUI_SECRET_KEY") is None:
+    if get_secret("WEBUI_SECRET_KEY", "") is None:
         typer.echo(
             "Loading WEBUI_SECRET_KEY from file, not provided as an environment variable."
         )
