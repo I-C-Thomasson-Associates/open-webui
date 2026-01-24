@@ -4,7 +4,7 @@ import random
 from pathlib import Path
 
 import typer
-from backend.open_webui.secrets import get_secret
+from open_webui.secrets import get_secret
 import uvicorn
 from typing import Optional
 from typing_extensions import Annotated
@@ -37,7 +37,8 @@ def serve(
     port: int = 8080,
 ):
     os.environ["FROM_INIT_PY"] = "true"
-    if get_secret("WEBUI_SECRET_KEY", "") is None:
+    webui_secret = get_secret("WEBUI_SECRET_KEY", "")
+    if not webui_secret:
         typer.echo(
             "Loading WEBUI_SECRET_KEY from file, not provided as an environment variable."
         )
@@ -46,6 +47,9 @@ def serve(
             KEY_FILE.write_bytes(base64.b64encode(random.randbytes(12)))
         typer.echo(f"Loading WEBUI_SECRET_KEY from {KEY_FILE}")
         os.environ["WEBUI_SECRET_KEY"] = KEY_FILE.read_text()
+    else:
+        typer.echo(f"WEBUI_SECRET_KEY loaded from Key Vault ({len(webui_secret)} characters)")
+        os.environ["WEBUI_SECRET_KEY"] = webui_secret
 
     if os.getenv("USE_CUDA_DOCKER", "false") == "true":
         typer.echo(
