@@ -128,11 +128,24 @@
 		}
 
 		if (direct) {
+			const fullUrl = path.includes('://') ? path : `${url}${path.startsWith('/') ? '' : '/'}${path}`;
+			const isLocalhost = fullUrl.includes('localhost') || fullUrl.includes('127.0.0.1');
+
 			const res = await getToolServerData(
 				auth_type === 'bearer' ? key : localStorage.token,
-				path.includes('://') ? path : `${url}${path.startsWith('/') ? '' : '/'}${path}`
+				fullUrl
 			).catch((err) => {
-				toast.error($i18n.t('Connection failed'));
+				console.error('Tool server connection error:', err);
+				
+				// Detect if blocked by browser content blocker (Brave Shields, uBlock, etc.)
+				if (isLocalhost && (err instanceof TypeError || err?.message?.includes('Failed to fetch'))) {
+					toast.error(
+						$i18n.t('Connection to local server blocked. Check your browser\'s content blocker or shield settings.'),
+						{ duration: 8000 }
+					);
+				} else {
+					toast.error($i18n.t('Connection failed'));
+				}
 			});
 
 			if (res) {
