@@ -140,11 +140,11 @@
 				// Detect if blocked by browser content blocker (Brave Shields, uBlock, etc.)
 				if (isLocalhost && (err instanceof TypeError || err?.message?.includes('Failed to fetch'))) {
 					toast.error(
-						$i18n.t('Connection to local server blocked. Check your browser\'s content blocker or shield settings.'),
+						$i18n.t('Connection to {{URL}} blocked. Check your browser\'s content blocker or shield settings.', { URL: fullUrl }),
 						{ duration: 8000 }
 					);
 				} else {
-					toast.error($i18n.t('Connection failed'));
+					toast.error($i18n.t('Failed to connect to {{URL}} OpenAPI tool server', { URL: fullUrl }));
 				}
 			});
 

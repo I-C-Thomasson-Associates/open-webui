@@ -338,6 +338,7 @@
 	"Connect to your own OpenAPI compatible external tool servers.": "",
 	"Connection failed": "",
 	"Connection successful": "",
+	"Connection to {{URL}} blocked. Check your browser's content blocker or shield settings.": "",
 	"Connection Type": "",
 	"Connections": "",
 	"Connections saved successfully": "",

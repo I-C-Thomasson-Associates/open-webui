@@ -119,11 +119,23 @@
 		let toolServersData = await getToolServersData($settings?.toolServers ?? []);
 		toolServersData = toolServersData.filter((data) => {
 			if (!data || data.error) {
-				toast.error(
-					$i18n.t(`Failed to connect to {{URL}} OpenAPI tool server`, {
-						URL: data?.url
-					})
-				);
+				const isLocalhost = data?.url?.includes('localhost') || data?.url?.includes('127.0.0.1');
+				const isBlockedError = data?.error instanceof TypeError || 
+					data?.error?.message?.includes('Failed to fetch') ||
+					(typeof data?.error === 'object' && !data?.error?.detail);
+				
+				if (isLocalhost && isBlockedError) {
+					toast.error(
+						$i18n.t('Connection to {{URL}} blocked. Check your browser\'s content blocker or shield settings.', { URL: data?.url }),
+						{ duration: 8000 }
+					);
+				} else {
+					toast.error(
+						$i18n.t(`Failed to connect to {{URL}} OpenAPI tool server`, {
+							URL: data?.url
+						})
+					);
+				}
 				return false;
 			}
 			return true;
