@@ -248,10 +248,11 @@ def upload_file_handler(
             ]
 
             if file_extension not in request.app.state.config.ALLOWED_FILE_EXTENSIONS:
+                allowed = ", ".join(request.app.state.config.ALLOWED_FILE_EXTENSIONS)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=ERROR_MESSAGES.DEFAULT(
-                        f"File type {file_extension} is not allowed"
+                        f"File type '.{file_extension}' is not allowed. Allowed types: {allowed}"
                     ),
                 )
 
@@ -332,6 +333,9 @@ def upload_file_handler(
                     detail=ERROR_MESSAGES.DEFAULT("Error uploading file"),
                 )
 
+    except HTTPException:
+        # Re-raise HTTPExceptions (like file extension errors) without modification
+        raise
     except Exception as e:
         log.exception(e)
         raise HTTPException(
