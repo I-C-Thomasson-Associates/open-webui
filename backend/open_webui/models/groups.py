@@ -164,17 +164,35 @@ class GroupTable:
                 if "share" in filter:
                     share_value = filter["share"]
                     member_id = filter.get("member_id")
-                    json_share = Group.data["config"]["share"]
-                    json_share_bool = json_share.as_boolean()
-                    json_share_str = json_share.as_string()
+                    
+                    # Use dialect-specific JSON extraction for nested paths
+                    dialect_name = db.bind.dialect.name
+                    if dialect_name == "postgresql":
+                        # PostgreSQL needs explicit -> and ->> operators for nested paths
+                        json_config = Group.data["config"]
+                        json_share_str = json_config.op("->>")("share")
+                        json_share_bool = json_share_str.cast(Text)  # For boolean comparison as text
+                    else:
+                        # SQLite uses json_extract() which .as_string() handles
+                        json_share = Group.data["config"]["share"]
+                        json_share_bool = json_share.as_boolean()
+                        json_share_str = json_share.as_string()
 
                     if share_value:
                         # Groups open to anyone: data is null, share is null, or share is true
-                        anyone_can_share = or_(
-                            Group.data.is_(None),
-                            json_share_bool.is_(None),
-                            json_share_bool == True,
-                        )
+                        if dialect_name == "postgresql":
+                            # PostgreSQL ->> returns text, so compare as text
+                            anyone_can_share = or_(
+                                Group.data.is_(None),
+                                json_share_str.is_(None),
+                                json_share_str == "true",
+                            )
+                        else:
+                            anyone_can_share = or_(
+                                Group.data.is_(None),
+                                json_share_bool.is_(None),
+                                json_share_bool == True,
+                            )
 
                         if member_id:
                             # Also include member-only groups where user is a member
@@ -193,9 +211,14 @@ class GroupTable:
                         else:
                             query = query.filter(anyone_can_share)
                     else:
-                        query = query.filter(
-                            and_(Group.data.isnot(None), json_share_bool == False)
-                        )
+                        if dialect_name == "postgresql":
+                            query = query.filter(
+                                and_(Group.data.isnot(None), json_share_str == "false")
+                            )
+                        else:
+                            query = query.filter(
+                                and_(Group.data.isnot(None), json_share_bool == False)
+                            )
 
                 else:
                     # Only apply member_id filter when share filter is NOT present
