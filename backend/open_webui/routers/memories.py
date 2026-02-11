@@ -105,6 +105,63 @@ async def add_memory(
 
 
 ############################
+# BatchAddMemories
+############################
+
+
+class BatchAddMemoryForm(BaseModel):
+    contents: list[str]
+
+
+@router.post("/batch/add", response_model=list[MemoryModel])
+async def batch_add_memories(
+    request: Request,
+    form_data: BatchAddMemoryForm,
+    user=Depends(get_verified_user),
+    db: Session = Depends(get_session),
+):
+    if not request.app.state.config.ENABLE_MEMORIES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    if not has_permission(
+        user.id, "features.memories", request.app.state.config.USER_PERMISSIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
+        )
+
+    memories = Memories.insert_memories_batch(user.id, form_data.contents, db=db)
+
+    # Generate embeddings in batch
+    vectors = await request.app.state.EMBEDDING_FUNCTION(
+        [memory.content for memory in memories], user=user
+    )
+
+    # Batch upsert into vector DB (chunked to avoid exceeding max batch size)
+    VECTOR_DB_BATCH_SIZE = 5000
+    all_items = [
+        {
+            "id": memory.id,
+            "text": memory.content,
+            "vector": vectors[idx],
+            "metadata": {"created_at": memory.created_at},
+        }
+        for idx, memory in enumerate(memories)
+    ]
+    for i in range(0, len(all_items), VECTOR_DB_BATCH_SIZE):
+        VECTOR_DB_CLIENT.upsert(
+            collection_name=f"user-memory-{user.id}",
+            items=all_items[i : i + VECTOR_DB_BATCH_SIZE],
+        )
+
+    return memories
+
+
+############################
 # QueryMemory
 ############################
 

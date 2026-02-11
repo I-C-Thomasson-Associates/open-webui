@@ -137,6 +137,30 @@ class MemoriesTable:
             except Exception:
                 return False
 
+    def insert_memories_batch(
+        self,
+        user_id: str,
+        contents: list[str],
+        db: Optional[Session] = None,
+    ) -> list[MemoryModel]:
+        with get_db_context(db) as db:
+            now = int(time.time())
+            memories = []
+            for content in contents:
+                id = str(uuid.uuid4())
+                memory = MemoryModel(
+                    id=id,
+                    user_id=user_id,
+                    content=content,
+                    created_at=now,
+                    updated_at=now,
+                )
+                result = Memory(**memory.model_dump())
+                db.add(result)
+                memories.append(memory)
+            db.commit()
+            return memories
+
     def delete_memory_by_id_and_user_id(
         self, id: str, user_id: str, db: Optional[Session] = None
     ) -> bool:

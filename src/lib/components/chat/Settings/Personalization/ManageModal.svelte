@@ -7,7 +7,13 @@
 
 	import Modal from '$lib/components/common/Modal.svelte';
 	import AddMemoryModal from './AddMemoryModal.svelte';
-	import { deleteMemoriesByUserId, deleteMemoryById, getMemories } from '$lib/apis/memories';
+	import {
+		addMemoriesBatch,
+		addNewMemory,
+		deleteMemoriesByUserId,
+		deleteMemoryById,
+		getMemories
+	} from '$lib/apis/memories';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { error } from '@sveltejs/kit';
 	import EditMemoryModal from './EditMemoryModal.svelte';
@@ -27,7 +33,67 @@
 
 	let selectedMemory = null;
 
+	let importing = false;
 	let showClearConfirmDialog = false;
+
+	const exportMemories = () => {
+		if (memories.length === 0) {
+			toast.error($i18n.t('No memories to export'));
+			return;
+		}
+
+		const data = JSON.stringify(memories.map((m) => m.content), null, 2);
+		const blob = new Blob([data], { type: 'application/json' });
+		const url = URL.createObjectURL(blob);
+
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `memories-export-${dayjs().format('YYYY-MM-DD')}.json`;
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		URL.revokeObjectURL(url);
+
+		toast.success($i18n.t('Memories exported successfully'));
+	};
+
+	const importMemories = () => {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = '.json';
+		input.onchange = async (e) => {
+			const file = (e.target as HTMLInputElement)?.files?.[0];
+			if (!file) return;
+
+			try {
+				const text = await file.text();
+				const imported = JSON.parse(text);
+
+				if (!Array.isArray(imported) || !imported.every((item) => typeof item === 'string')) {
+					toast.error($i18n.t('Invalid file format. Expected a JSON array of strings.'));
+					return;
+				}
+
+				importing = true;
+				const res = await addMemoriesBatch(localStorage.token, imported).catch((error) => {
+					toast.error(`${error}`);
+					return null;
+				});
+
+				if (res) {
+					memories = await getMemories(localStorage.token);
+					toast.success(
+						$i18n.t('{{count}} memories imported successfully', { count: imported.length })
+					);
+				}
+				importing = false;
+			} catch (err) {
+				importing = false;
+				toast.error($i18n.t('Failed to import memories. Please check the file format.'));
+			}
+		};
+		input.click();
+	};
 
 	let onClearConfirmed = async () => {
 		const res = await deleteMemoriesByUserId(localStorage.token).catch((error) => {
@@ -177,20 +243,37 @@
 				{:else}
 					<div class="text-center flex h-full text-sm w-full">
 						<div class=" my-auto pb-10 px-4 w-full text-gray-500">
-							{$i18n.t('Memories accessible by LLMs will be shown here.')}
+							{#if loading}
+								{$i18n.t('Loading...')}
+							{:else}
+								{$i18n.t('Memories accessible by LLMs will be shown here.')}
+							{/if}
 						</div>
 					</div>
 				{/if}
 			</div>
 			<div class="flex text-sm font-medium gap-1.5">
 				<button
-					class=" px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl"
+					class=" px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
+					disabled={importing}
 					on:click={() => {
 						showAddMemoryModal = true;
 					}}>{$i18n.t('Add Memory')}</button
 				>
 				<button
-					class=" px-3.5 py-1.5 font-medium text-red-500 hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-red-100 dark:outline-red-800 rounded-3xl"
+					class=" px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
+					disabled={importing}
+					on:click={importMemories}
+					>{importing ? $i18n.t('Importing...') : $i18n.t('Import Memories')}</button
+				>
+				<button
+					class=" px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
+					disabled={importing}
+					on:click={exportMemories}>{$i18n.t('Export Memories')}</button
+				>
+				<button
+					class=" px-3.5 py-1.5 font-medium text-red-500 hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-red-100 dark:outline-red-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
+					disabled={importing}
 					on:click={() => {
 						if (memories.length > 0) {
 							showClearConfirmDialog = true;
