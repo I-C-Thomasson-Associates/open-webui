@@ -48,7 +48,7 @@
 	let headers = '';
 
 	let functionNameFilterList = '';
-	let accessControl = {};
+	let accessGrants = [];
 
 	let id = '';
 	let name = '';
@@ -162,7 +162,7 @@
 				key,
 				config: {
 					enable: enable,
-					access_control: accessControl
+					access_grants: accessGrants
 				},
 				info: {
 					id,
@@ -219,7 +219,7 @@
 
 				if (data.config) {
 					enable = data.config.enable ?? true;
-					accessControl = data.config.access_control ?? {};
+					accessGrants = data.config.access_grants ?? [];
 				}
 
 				toast.success($i18n.t('Import successful'));
@@ -318,7 +318,7 @@
 			config: {
 				enable: enable,
 				function_name_filter_list: functionNameFilterList,
-				access_control: accessControl
+				access_grants: accessGrants
 			},
 			info: {
 				id: id,
@@ -352,7 +352,7 @@
 
 		enable = true;
 		functionNameFilterList = '';
-		accessControl = null;
+		accessGrants = [];
 	};
 
 	const init = () => {
@@ -376,7 +376,7 @@
 
 			enable = connection.config?.enable ?? true;
 			functionNameFilterList = connection.config?.function_name_filter_list ?? '';
-			accessControl = connection.config?.access_control ?? null;
+			accessGrants = connection.config?.access_grants ?? [];
 		}
 	};
 
@@ -832,7 +832,7 @@
 							<hr class=" border-gray-100 dark:border-gray-700/10 my-2.5 w-full" />
 
 							<div class="my-2">
-								<AccessControl bind:accessControl />
+								<AccessControl bind:accessGrants />
 							</div>
 						{/if}
 					</div>
