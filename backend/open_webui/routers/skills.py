@@ -178,6 +178,13 @@ async def create_new_skill(
             detail=ERROR_MESSAGES.ID_TAKEN,
         )
 
+    existing_name = Skills.get_skill_by_name(form_data.name, db=db)
+    if existing_name is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.DEFAULT("A skill with this name already exists"),
+        )
+
     try:
         skill = Skills.insert_new_skill(user.id, form_data, db=db)
         if skill:
