@@ -3938,7 +3938,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                 "messages", []
                                             ),
                                             "__files__": metadata.get("files", []),
-                                            "__content_blocks__": content_blocks,
+                                            "__content_blocks__": output,
                                         },
                                     )
 
