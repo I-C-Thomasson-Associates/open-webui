@@ -1084,16 +1084,6 @@ async def generate_chat_completion(
         else:
             request_url = f"{url}/chat/completions"
 
-    # Debug output
-    log.info(f"=== AZURE REQUEST DEBUG ===")
-    log.info(f"Model: {form_data.get('model')}")
-    log.info(f"URL Index: {idx}")
-    log.info(f"Base URL: {url}")
-    log.info(f"Is Responses API: {is_responses}")
-    log.info(f"Final Request URL: {request_url}")
-    log.info(f"API Version: {api_config.get('api_version', 'N/A')}")
-    log.info(f"==========================")
-
     payload = json.dumps(payload)
 
     r = None
