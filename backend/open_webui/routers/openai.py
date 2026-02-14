@@ -1061,8 +1061,7 @@ async def generate_chat_completion(
 
     if api_config.get("azure", False):
         api_version = api_config.get("api_version", "2023-03-15-preview")
-        request_url, payload = convert_to_azure_payload(url, payload, api_version)
-
+        
         # Only set api-key header if not using Azure Entra ID authentication
         auth_type = api_config.get("auth_type", "bearer")
         if auth_type not in ("azure_ad", "microsoft_entra_id"):
@@ -1071,9 +1070,12 @@ async def generate_chat_completion(
         headers["api-version"] = api_version
 
         if is_responses:
+            # Responses API: model in body, not URL
             payload = convert_to_responses_payload(payload)
-            request_url = f"{request_url}/responses?api-version={api_version}"
+            request_url = f"{url}/openai/responses?api-version={api_version}"
         else:
+            # Chat Completions: model in URL path
+            request_url, payload = convert_to_azure_payload(url, payload, api_version)
             request_url = f"{request_url}/chat/completions?api-version={api_version}"
     else:
         if is_responses:
@@ -1081,6 +1083,16 @@ async def generate_chat_completion(
             request_url = f"{url}/responses"
         else:
             request_url = f"{url}/chat/completions"
+
+    # Debug output
+    log.info(f"=== AZURE REQUEST DEBUG ===")
+    log.info(f"Model: {form_data.get('model')}")
+    log.info(f"URL Index: {idx}")
+    log.info(f"Base URL: {url}")
+    log.info(f"Is Responses API: {is_responses}")
+    log.info(f"Final Request URL: {request_url}")
+    log.info(f"API Version: {api_config.get('api_version', 'N/A')}")
+    log.info(f"==========================")
 
     payload = json.dumps(payload)
 
