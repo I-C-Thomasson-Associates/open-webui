@@ -807,3 +807,204 @@ body {
 #note-content-container .ProseMirror {
 	padding-bottom: 2rem; /* space for the bottom toolbar */
 }
+
+/* ============================================
+   Salas O'Brien Brand Theme
+   Brand Colors:
+   - Impact Blue: #00A0E6 (primary)
+   - Reflex Blue: #001489 (deep accent)
+   - Black: #2D2926
+   - Grey 1: #54585A
+   - Grey 2: #A7A8AA
+   - Grey 3: #6D6E71
+   - Grey 4: #939598
+   - Grey 5: #B1B3B3
+   - White: #FFFFFF
+   Secondary (minimal use):
+   - Orange: #E35205
+   - Green: #00843D
+   ============================================ */
+
+/* Salas O'Brien Light Mode */
+html.salas-obrien.light {
+	/* Override the gray palette to match SO brand tones */
+	--color-gray-50: #f7f7f8;
+	--color-gray-100: #ededee;
+	--color-gray-200: #e0e0e1;
+	--color-gray-300: #c8c9ca;
+	--color-gray-400: #A7A8AA;
+	--color-gray-500: #939598;
+	--color-gray-600: #6D6E71;
+	--color-gray-700: #54585A;
+	--color-gray-800: #3a3d3f;
+	--color-gray-850: #2D2926;
+	--color-gray-900: #222120;
+	--color-gray-950: #191817;
+}
+
+/* Salas O'Brien Dark Mode */
+html.salas-obrien.dark {
+	--color-gray-50: #f7f7f8;
+	--color-gray-100: #e0e0e1;
+	--color-gray-200: #c8c9ca;
+	--color-gray-300: #A7A8AA;
+	--color-gray-400: #939598;
+	--color-gray-500: #6D6E71;
+	--color-gray-600: #54585A;
+	--color-gray-700: #44474a;
+	--color-gray-800: #2D2926;
+	--color-gray-850: #231f1c;
+	--color-gray-900: #1a1715;
+	--color-gray-950: #110f0e;
+}
+
+/* Shared SO theme styles (both modes) */
+html.salas-obrien {
+	font-family: 'Arial', -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui,
+		'Segoe UI', Roboto, Ubuntu, Cantarell, 'Noto Sans', sans-serif, 'Helvetica Neue',
+		'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+html.salas-obrien pre {
+	font-family: 'Arial', monospace;
+}
+
+/* SO accent color overrides */
+html.salas-obrien .bg-black {
+	background-color: #2D2926 !important;
+}
+
+html.salas-obrien.light .bg-black {
+	background-color: #001489 !important;
+}
+
+/* Primary action buttons use Reflex Blue in light mode, Impact Blue in dark */
+html.salas-obrien.light .bg-black.text-white,
+html.salas-obrien.light button.bg-black {
+	background-color: #001489 !important;
+}
+
+html.salas-obrien.light .bg-black.text-white:hover,
+html.salas-obrien.light button.bg-black:hover {
+	background-color: #00A0E6 !important;
+}
+
+html.salas-obrien.dark .dark\:bg-white.dark\:text-black,
+html.salas-obrien.dark button.dark\:bg-white {
+	background-color: #00A0E6 !important;
+	color: #FFFFFF !important;
+}
+
+html.salas-obrien.dark .dark\:bg-white.dark\:text-black:hover,
+html.salas-obrien.dark button.dark\:bg-white:hover {
+	background-color: #001489 !important;
+}
+
+/* SO link / accent text color */
+html.salas-obrien a {
+	color: #00A0E6;
+}
+
+html.salas-obrien.light a {
+	color: #001489;
+}
+
+html.salas-obrien.light a:hover {
+	color: #00A0E6;
+}
+
+html.salas-obrien.dark a:hover {
+	color: #001489;
+}
+
+/* SO splash screen backgrounds */
+html.salas-obrien.light #splash-screen {
+	background: #FFFFFF;
+}
+
+html.salas-obrien.dark #splash-screen {
+	background: #1a1715;
+}
+
+/* SO body background */
+html.salas-obrien.light body {
+	background: #FFFFFF;
+	color: #2D2926;
+}
+
+html.salas-obrien.dark body {
+	background: #1a1715;
+	color: #e0e0e1;
+}
+
+/* SO scrollbar styling */
+html.salas-obrien.light ::-webkit-scrollbar-thumb {
+	background-color: rgba(0, 160, 230, 0.35);
+	border-color: rgba(255, 255, 255, 0.8);
+}
+
+html.salas-obrien.dark ::-webkit-scrollbar-thumb {
+	background-color: rgba(0, 160, 230, 0.3);
+	border-color: rgba(0, 0, 0, 0.5);
+}
+
+/* SO checkboxes use Impact Blue when checked */
+html.salas-obrien input[type='checkbox']:checked {
+	background-color: #00A0E6;
+	border-color: #00A0E6;
+}
+
+/* SO selection/highlight color */
+html.salas-obrien ::selection {
+	background-color: rgba(0, 160, 230, 0.25);
+}
+
+/* SO focus rings */
+html.salas-obrien input:focus,
+html.salas-obrien textarea:focus,
+html.salas-obrien select:focus {
+	outline-color: #00A0E6;
+}
+
+/* SO branded progress bar (splash screen) */
+html.salas-obrien #progress-bar {
+	background-color: #00A0E6 !important;
+}
+
+html.salas-obrien #progress-background {
+	background-color: rgba(0, 160, 230, 0.2) !important;
+}
+
+/* SO Tippy tooltips */
+html.salas-obrien .tippy-box[data-theme~='dark'] {
+	background-color: #2D2926;
+	border-color: #44474a;
+}
+
+/* SO code block styling */
+html.salas-obrien.light .codespan {
+	color: #001489;
+	background-color: #f0f6ff;
+}
+
+html.salas-obrien.dark .codespan {
+	color: #00A0E6;
+	background-color: #1e2a3a;
+}
+
+/* SO prose link colors */
+html.salas-obrien .markdown-prose a,
+html.salas-obrien .markdown-prose-sm a,
+html.salas-obrien .markdown-prose-xs a,
+html.salas-obrien .input-prose a,
+html.salas-obrien .input-prose-sm a {
+	color: #00A0E6;
+}
+
+html.salas-obrien.light .markdown-prose a,
+html.salas-obrien.light .markdown-prose-sm a,
+html.salas-obrien.light .markdown-prose-xs a,
+html.salas-obrien.light .input-prose a,
+html.salas-obrien.light .input-prose-sm a {
+	color: #001489;
+}

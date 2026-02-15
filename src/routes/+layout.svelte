@@ -51,6 +51,7 @@
 	import { WEBUI_API_BASE_URL, WEBUI_BASE_URL, WEBUI_HOSTNAME } from '$lib/constants';
 	import { bestMatchingLanguage } from '$lib/utils';
 	import { setTextScale } from '$lib/utils/text-scale';
+	import { isSalasObrienTheme, getThemeStaticBase } from '$lib/utils/themes';
 
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
 	import AppSidebar from '$lib/components/app/AppSidebar.svelte';
@@ -371,7 +372,7 @@
 						if ($settings?.notificationEnabled ?? false) {
 							new Notification(`${displayTitle} • Open WebUI`, {
 								body: content,
-								icon: `${WEBUI_BASE_URL}/static/favicon.png`
+								icon: `${getThemeStaticBase($theme)}/favicon.png`
 							});
 						}
 					}
@@ -874,7 +875,7 @@
 
 <svelte:head>
 	<title>{$WEBUI_NAME}</title>
-	<link crossorigin="anonymous" rel="icon" href="{WEBUI_BASE_URL}/static/favicon.png" />
+	<link crossorigin="anonymous" rel="icon" href="{getThemeStaticBase($theme)}/favicon.png" />
 
 	<meta name="apple-mobile-web-app-title" content={$WEBUI_NAME} />
 	<meta name="description" content={$WEBUI_NAME} />
@@ -914,7 +915,7 @@
 <Toaster
 	theme={$theme.includes('dark')
 		? 'dark'
-		: $theme === 'system'
+		: $theme === 'system' || $theme === 'salas-obrien'
 			? window.matchMedia('(prefers-color-scheme: dark)').matches
 				? 'dark'
 				: 'light'

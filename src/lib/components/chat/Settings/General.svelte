@@ -14,7 +14,7 @@
 	export let getModels: Function;
 
 	// General
-	let themes = ['dark', 'light', 'oled-dark'];
+	let themes = ['dark', 'light', 'oled-dark', 'salas-obrien'];
 	let selectedTheme = 'system';
 
 	let languages: Awaited<ReturnType<typeof getLanguages>> = [];
@@ -130,13 +130,19 @@
 			themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 		}
 
-		if (themeToApply === 'dark' && !_theme.includes('oled')) {
+		// Salas O'Brien theme: auto-detect light/dark from system preference
+		if (_theme === 'salas-obrien') {
+			themeToApply = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+		}
+
+		if (themeToApply === 'dark' && !_theme.includes('oled') && _theme !== 'salas-obrien') {
 			document.documentElement.style.setProperty('--color-gray-800', '#333');
 			document.documentElement.style.setProperty('--color-gray-850', '#262626');
 			document.documentElement.style.setProperty('--color-gray-900', '#171717');
 			document.documentElement.style.setProperty('--color-gray-950', '#0d0d0d');
 		}
 
+		// Remove all theme classes first
 		themes
 			.filter((e) => e !== themeToApply)
 			.forEach((e) => {
@@ -145,9 +151,17 @@
 				});
 			});
 
+		// Also remove salas-obrien class explicitly when switching away
+		document.documentElement.classList.remove('salas-obrien');
+
 		themeToApply.split(' ').forEach((e) => {
 			document.documentElement.classList.add(e);
 		});
+
+		// Add salas-obrien class when that theme is active
+		if (_theme === 'salas-obrien') {
+			document.documentElement.classList.add('salas-obrien');
+		}
 
 		const metaThemeColor = document.querySelector('meta[name="theme-color"]');
 		if (metaThemeColor) {
@@ -157,6 +171,9 @@
 					: 'light';
 				console.log('Setting system meta theme color: ' + systemTheme);
 				metaThemeColor.setAttribute('content', systemTheme === 'light' ? '#ffffff' : '#171717');
+			} else if (_theme === 'salas-obrien') {
+				// Salas O'Brien uses Reflex Blue for meta theme color
+				metaThemeColor.setAttribute('content', '#001489');
 			} else {
 				console.log('Setting meta theme color: ' + _theme);
 				metaThemeColor.setAttribute(
@@ -214,6 +231,7 @@
 						<option value="dark">🌑 {$i18n.t('Dark')}</option>
 						<option value="oled-dark">🌃 {$i18n.t('OLED Dark')}</option>
 						<option value="light">☀️ {$i18n.t('Light')}</option>
+						<option value="salas-obrien">🔷 {$i18n.t('Salas O\'Brien')}</option>
 						{#if $config?.features?.enable_easter_eggs}
 							<option value="her">🌷 Her</option>
 						{/if}
