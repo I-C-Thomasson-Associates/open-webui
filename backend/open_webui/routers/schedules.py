@@ -54,6 +54,17 @@ async def create_new_schedule(
     user=Depends(get_verified_user),
     db: Session = Depends(get_session),
 ):
+    if user.role != "admin" and not has_permission(
+        user.id,
+        "workspace.schedules",
+        request.app.state.config.USER_PERMISSIONS,
+        db=db,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.UNAUTHORIZED,
+        )
+
     schedule_id = str(uuid4())
     schedule = Schedules.insert_new_schedule(schedule_id, user.id, form_data, db=db)
 

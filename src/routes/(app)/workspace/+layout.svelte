@@ -38,6 +38,11 @@
 				goto('/');
 			} else if ($page.url.pathname.includes('/skills') && !$user?.permissions?.workspace?.skills) {
 				goto('/');
+			} else if (
+				$page.url.pathname.includes('/schedules') &&
+				!$user?.permissions?.workspace?.schedules
+			) {
+				goto('/');
 			}
 		}
 
@@ -135,14 +140,16 @@
 							</a>
 						{/if}
 
-						<a
-							class="min-w-fit p-1.5 {$page.url.pathname.includes('/workspace/schedules')
-								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
-							href="/workspace/schedules"
-						>
-							{$i18n.t('Schedules')}
-						</a>
+						{#if $user?.role === 'admin' || $user?.permissions?.workspace?.schedules}
+							<a
+								class="min-w-fit p-1.5 {$page.url.pathname.includes('/workspace/schedules')
+									? ''
+									: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+								href="/workspace/schedules"
+							>
+								{$i18n.t('Schedules')}
+							</a>
+						{/if}
 					</div>
 				</div>
 
