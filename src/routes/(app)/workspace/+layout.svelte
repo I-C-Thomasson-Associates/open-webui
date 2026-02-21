@@ -134,6 +134,15 @@
 								{$i18n.t('Tools')}
 							</a>
 						{/if}
+
+						<a
+							class="min-w-fit p-1.5 {$page.url.pathname.includes('/workspace/schedules')
+								? ''
+								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition"
+							href="/workspace/schedules"
+						>
+							{$i18n.t('Schedules')}
+						</a>
 					</div>
 				</div>
 

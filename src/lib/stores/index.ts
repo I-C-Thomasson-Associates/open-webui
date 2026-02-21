@@ -68,6 +68,7 @@ export const knowledge: Writable<null | Document[]> = writable(null);
 export const tools = writable(null);
 export const skills = writable(null);
 export const functions = writable(null);
+export const schedules = writable(null);
 
 export const toolServers = writable([]);
 
