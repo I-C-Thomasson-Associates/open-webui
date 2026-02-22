@@ -11,6 +11,7 @@
 	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
 	import LockClosed from '$lib/components/icons/LockClosed.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import AccessControlModal from '$lib/components/workspace/common/AccessControlModal.svelte';
@@ -19,6 +20,8 @@
 	import ActionsSelector from '$lib/components/workspace/Models/ActionsSelector.svelte';
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
 	import BuiltinTools from '$lib/components/workspace/Models/BuiltinTools.svelte';
+	import Knowledge from '$lib/components/workspace/Models/Knowledge.svelte';
+	import { toast } from 'svelte-sonner';
 
 	let formElement = null;
 	let loading = false;
@@ -50,6 +53,7 @@
 	let actionIds: string[] = [];
 	let capabilities: Record<string, boolean> = {};
 	let builtinTools: Record<string, boolean> = {};
+	let knowledge: any[] = [];
 
 	$: availableModels = $models ?? [];
 
@@ -65,6 +69,7 @@
 		actionIds = selectedActions ?? [];
 		capabilities = meta?.capabilities ?? {};
 		builtinTools = meta?.builtinTools ?? {};
+		knowledge = meta?.knowledge ?? [];
 
 		if (scheduled_at) {
 			const date = new Date(scheduled_at * 1000);
@@ -113,6 +118,22 @@
 			class="flex flex-col w-full px-1"
 			on:submit|preventDefault={() => {
 				loading = true;
+				if (knowledge.some((item) => item.status === 'uploading')) {
+					toast.error($i18n.t('Please wait until all files are uploaded.'));
+					loading = false;
+					return;
+				}
+				const metaData = {
+					...meta,
+					capabilities,
+					builtinTools,
+					actionIds
+				};
+				if (knowledge.length > 0) {
+					metaData.knowledge = knowledge;
+				} else {
+					delete metaData.knowledge;
+				}
 				onSave({
 					id,
 					name,
@@ -124,12 +145,7 @@
 					frequency,
 					scheduled_at: getScheduledTimestamp(),
 					is_active,
-					meta: {
-						...meta,
-						capabilities,
-						builtinTools,
-						actionIds
-					},
+					meta: metaData,
 					access_grants: accessGrants
 				});
 				loading = false;
@@ -259,16 +275,15 @@
 							</div>
 						</div>
 
-						<div class="my-1 mt-3 flex items-center gap-2">
-							<label class="relative inline-flex items-center cursor-pointer">
-								<input type="checkbox" class="sr-only peer" bind:checked={is_active} />
-								<div
-									class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-black dark:peer-checked:bg-white"
-								></div>
-							</label>
-							<span class="text-xs font-medium">
+						<div class="my-1 mt-3 flex items-center justify-between">
+							<div id="active-label" class="text-xs font-medium">
 								{$i18n.t('Active')}
-							</span>
+							</div>
+							<Switch
+								tooltip={true}
+								ariaLabelledbyId="active-label"
+								bind:state={is_active}
+							/>
 						</div>
 					</div>
 				</div>
@@ -312,6 +327,12 @@
 						<BuiltinTools bind:builtinTools />
 					</div>
 				{/if}
+
+				<hr class="border-gray-100/30 dark:border-gray-850/30 my-4" />
+
+				<div class="my-4">
+					<Knowledge bind:selectedItems={knowledge} />
+				</div>
 
 				<hr class="border-gray-100/30 dark:border-gray-850/30 my-4" />
 

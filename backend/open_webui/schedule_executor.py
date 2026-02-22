@@ -97,6 +97,16 @@ async def _execute_schedule(app, schedule):
             f"Respond thoroughly and completely to the user's request."
         )
 
+        # Build knowledge/files list from meta
+        knowledge_items = meta.get("knowledge", [])
+        files = []
+        for item in knowledge_items:
+            files.append({
+                "id": item.get("id", ""),
+                "name": item.get("name", ""),
+                "type": item.get("type", "file"),
+            })
+
         payload = {
             "model": model_id,
             "messages": [
@@ -107,6 +117,8 @@ async def _execute_schedule(app, schedule):
             "tool_ids": tool_ids,
             "features": features,
         }
+        if files:
+            payload["files"] = files
 
         metadata = {
             "tool_ids": tool_ids,
