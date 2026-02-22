@@ -11,6 +11,7 @@ from open_webui.models.models import Models
 from open_webui.models.users import Users
 from open_webui.utils.middleware import process_chat_payload
 from open_webui.utils.schedule_utils import execute_with_tools
+from open_webui.config import SCHEDULE_RUN_RETENTION_DAYS
 from open_webui.env import SRC_LOG_LEVELS
 
 log = logging.getLogger(__name__)
@@ -137,7 +138,7 @@ async def _execute_schedule(app, schedule):
         result_text = (
             f"## Schedule: {schedule.name}\n\n"
             f"**Model:** {schedule.model_id}\n"
-            f"**Prompt:** {schedule.prompt}\n"
+            f"**Task:** {schedule.prompt}\n"
             f"**Tools:** {tools_text}\n\n"
             f"---\n\n"
             f"## AI Response\n\n"
@@ -162,7 +163,7 @@ async def _execute_schedule(app, schedule):
         error_text = (
             f"## Schedule: {schedule.name}\n\n"
             f"**Model:** {schedule.model_id}\n"
-            f"**Prompt:** {schedule.prompt}\n\n"
+            f"**Task:** {schedule.prompt}\n\n"
             f"---\n\n"
             f"## Error\n\n"
             f"Failed to execute: {str(e)}\n\n"
@@ -192,6 +193,16 @@ async def periodic_schedule_check(app):
     while True:
         try:
             now = int(time.time())
+
+            # Clean up old runs based on retention policy
+            if SCHEDULE_RUN_RETENTION_DAYS > 0:
+                cutoff = now - (SCHEDULE_RUN_RETENTION_DAYS * 86400)
+                deleted = Schedules.delete_runs_older_than(cutoff)
+                if deleted > 0:
+                    log.info(
+                        f"Cleaned up {deleted} schedule run(s) older than {SCHEDULE_RUN_RETENTION_DAYS} days"
+                    )
+
             due_schedules = Schedules.get_due_schedules(now)
 
             if due_schedules:

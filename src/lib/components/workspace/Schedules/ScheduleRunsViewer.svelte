@@ -5,9 +5,12 @@
 	import DOMPurify from 'dompurify';
 	import { toast } from 'svelte-sonner';
 
+	import { deleteScheduleRunById } from '$lib/apis/schedules';
+
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
 	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
+	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Badge from '$lib/components/common/Badge.svelte';
 
@@ -91,6 +94,19 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 			printWindow.print();
 		};
 	};
+
+	const deleteRun = async (runId: string) => {
+		try {
+			await deleteScheduleRunById(localStorage.token, runId);
+			runs = runs.filter((r) => r.id !== runId);
+			if (selectedRun?.id === runId) {
+				selectedRun = runs.length > 0 ? runs[0] : null;
+			}
+			toast.success($i18n.t('Run deleted'));
+		} catch (err) {
+			toast.error($i18n.t('Failed to delete run'));
+		}
+	};
 </script>
 
 <div class="flex flex-col h-full px-1">
@@ -139,12 +155,16 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 			{#if runs.length > 0}
 				<div class="space-y-0 flex-1 overflow-y-auto">
 					{#each runs as run}
-						<button
-							class="flex-1 w-full text-left px-3.5 py-2 mb-1 rounded-2xl transition group
+						<!-- svelte-ignore a11y-no-static-element-interactions -->
+						<div
+							class="flex-1 w-full text-left px-3.5 py-2 mb-1 rounded-2xl transition group cursor-pointer
 								{selectedRun?.id === run.id
 								? 'bg-gray-100/50 dark:bg-gray-850/50'
 								: 'hover:bg-gray-100/50 dark:hover:bg-gray-850/50'}"
 							on:click={() => (selectedRun = run)}
+							on:keydown={(e) => { if (e.key === 'Enter') selectedRun = run; }}
+							role="button"
+							tabindex="0"
 						>
 							<!-- Status + date -->
 							<div class="flex items-center gap-2 mb-1">
@@ -157,7 +177,7 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 												? 'bg-blue-500'
 												: 'bg-gray-400'}"
 								></span>
-								<div class="text-xs text-gray-900 dark:text-white truncate">
+								<div class="text-xs text-gray-900 dark:text-white truncate flex-1">
 									{run.status === 'completed'
 										? $i18n.t('Completed')
 										: run.status === 'failed'
@@ -169,6 +189,13 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 								{#if selectedRun?.id === run.id}
 									<Badge type="info" content={$i18n.t('Selected')} />
 								{/if}
+								<button
+									class="invisible group-hover:visible p-0.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-gray-400 hover:text-red-500"
+									on:click|stopPropagation={() => deleteRun(run.id)}
+									title={$i18n.t('Delete run')}
+								>
+									<GarbageBin className="size-3.5" />
+								</button>
 							</div>
 
 							<!-- Timestamp -->
@@ -177,7 +204,7 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 								<span>•</span>
 								<span class="truncate">{formatDate(run.created_at)}</span>
 							</div>
-						</button>
+						</div>
 					{/each}
 				</div>
 			{:else}

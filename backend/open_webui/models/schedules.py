@@ -395,5 +395,22 @@ class SchedulesTable:
         except Exception:
             return False
 
+    def delete_runs_older_than(
+        self, cutoff_time: int, db: Optional[Session] = None
+    ) -> int:
+        """Delete all schedule runs older than the given cutoff timestamp. Returns count deleted."""
+        try:
+            with get_db_context(db) as db:
+                count = (
+                    db.query(ScheduleRun)
+                    .filter(ScheduleRun.created_at < cutoff_time)
+                    .delete()
+                )
+                db.commit()
+                return count
+        except Exception as e:
+            log.exception(f"Error deleting old schedule runs: {e}")
+            return 0
+
 
 Schedules = SchedulesTable()

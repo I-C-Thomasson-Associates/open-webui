@@ -306,7 +306,7 @@ async def run_schedule(
             result_text = (
                 f"## Schedule: {schedule.name}\n\n"
                 f"**Model:** {schedule.model_id}\n"
-                f"**Prompt:** {schedule.prompt}\n"
+                f"**Task:** {schedule.prompt}\n"
                 f"**Tools:** {tools_text}\n\n"
                 f"---\n\n"
                 f"## AI Response\n\n"
@@ -330,7 +330,7 @@ async def run_schedule(
             error_text = (
                 f"## Schedule: {schedule.name}\n\n"
                 f"**Model:** {schedule.model_id}\n"
-                f"**Prompt:** {schedule.prompt}\n\n"
+                f"**Task:** {schedule.prompt}\n\n"
                 f"---\n\n"
                 f"## Error\n\n"
                 f"Failed to execute: {str(e)}\n\n"
@@ -414,3 +414,37 @@ async def get_schedule_run_by_id(
         )
 
     return run
+
+
+############################
+# DeleteScheduleRunById
+############################
+
+
+@router.delete("/runs/{run_id}/delete", response_model=bool)
+async def delete_schedule_run_by_id(
+    run_id: str,
+    user=Depends(get_verified_user),
+    db: Session = Depends(get_session),
+):
+    run = Schedules.get_run_by_id(run_id, db=db)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    schedule = Schedules.get_schedule_by_id(run.schedule_id, db=db)
+    if not schedule:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ERROR_MESSAGES.NOT_FOUND,
+        )
+
+    if schedule.user_id != user.id and user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=ERROR_MESSAGES.UNAUTHORIZED,
+        )
+
+    return Schedules.delete_run_by_id(run_id, db=db)
