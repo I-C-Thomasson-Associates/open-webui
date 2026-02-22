@@ -13,6 +13,7 @@
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Badge from '$lib/components/common/Badge.svelte';
+	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -21,6 +22,8 @@
 
 	let selectedRun = runs.length > 0 ? runs[0] : null;
 	let contentCopied = false;
+	let showDeleteConfirm = false;
+	let runToDelete = null;
 
 	const renderMarkdown = (text: string) => {
 		if (!text) return '';
@@ -95,17 +98,24 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 		};
 	};
 
-	const deleteRun = async (runId: string) => {
+	const confirmDeleteRun = (run) => {
+		runToDelete = run;
+		showDeleteConfirm = true;
+	};
+
+	const deleteRun = async () => {
+		if (!runToDelete) return;
 		try {
-			await deleteScheduleRunById(localStorage.token, runId);
-			runs = runs.filter((r) => r.id !== runId);
-			if (selectedRun?.id === runId) {
+			await deleteScheduleRunById(localStorage.token, runToDelete.id);
+			runs = runs.filter((r) => r.id !== runToDelete.id);
+			if (selectedRun?.id === runToDelete.id) {
 				selectedRun = runs.length > 0 ? runs[0] : null;
 			}
 			toast.success($i18n.t('Run deleted'));
 		} catch (err) {
 			toast.error($i18n.t('Failed to delete run'));
 		}
+		runToDelete = null;
 	};
 </script>
 
@@ -190,8 +200,8 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 									<Badge type="info" content={$i18n.t('Selected')} />
 								{/if}
 								<button
-									class="invisible group-hover:visible p-0.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-gray-400 hover:text-red-500"
-									on:click|stopPropagation={() => deleteRun(run.id)}
+									class="md:invisible md:group-hover:visible p-0.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition text-gray-400 hover:text-red-500"
+									on:click|stopPropagation={() => confirmDeleteRun(run)}
 									title={$i18n.t('Delete run')}
 								>
 									<GarbageBin className="size-3.5" />
@@ -214,22 +224,33 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 			{/if}
 		</div>
 
-		<!-- Mobile: Runs dropdown (visible on small screens) -->
+		<!-- Mobile: Runs dropdown + delete button (visible on small screens) -->
 		<div class="md:hidden">
 			{#if runs.length > 0}
-				<select
-					class="w-full text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-700 px-3 py-2"
-					on:change={(e) => {
-						selectedRun = runs.find((r) => r.id === e.target.value) || null;
-					}}
-					value={selectedRun?.id}
-				>
-					{#each runs as run}
-						<option value={run.id}>
-							{run.status} — {formatDate(run.created_at)}
-						</option>
-					{/each}
-				</select>
+				<div class="flex items-center gap-2">
+					<select
+						class="flex-1 text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-700 px-3 py-2"
+						on:change={(e) => {
+							selectedRun = runs.find((r) => r.id === e.target.value) || null;
+						}}
+						value={selectedRun?.id}
+					>
+						{#each runs as run}
+							<option value={run.id}>
+								{run.status} — {formatDate(run.created_at)}
+							</option>
+						{/each}
+					</select>
+					{#if selectedRun}
+						<button
+							class="p-2 rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-700 text-gray-400 hover:text-red-500 transition"
+							on:click={() => confirmDeleteRun(selectedRun)}
+							title={$i18n.t('Delete run')}
+						>
+							<GarbageBin className="size-4" />
+						</button>
+					{/if}
+				</div>
 			{:else}
 				<div class="text-xs text-gray-400 text-center py-4 italic">
 					{$i18n.t('No runs yet')}
@@ -348,3 +369,15 @@ hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 		</div>
 	</div>
 </div>
+
+<ConfirmDialog
+	bind:show={showDeleteConfirm}
+	title={$i18n.t('Delete run?')}
+	on:confirm={() => {
+		deleteRun();
+	}}
+>
+	<div class="text-sm text-gray-500">
+		{$i18n.t('Are you sure you want to delete this run? This action cannot be undone.')}
+	</div>
+</ConfirmDialog>
