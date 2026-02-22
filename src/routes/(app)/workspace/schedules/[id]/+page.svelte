@@ -23,9 +23,11 @@
 			});
 
 			if (_schedule) {
-				schedule = _schedule;
-				runs =
+				const _runs =
 					(await getScheduleRuns(localStorage.token, scheduleId).catch(() => [])) ?? [];
+				// Set both atomically so ScheduleRunsViewer sees runs on first render
+				runs = _runs;
+				schedule = _schedule;
 			} else {
 				goto('/workspace/schedules');
 			}

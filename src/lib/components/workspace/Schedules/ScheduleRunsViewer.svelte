@@ -22,6 +22,11 @@
 
 	let selectedRun = runs.length > 0 ? runs[0] : null;
 	let contentCopied = false;
+
+	// Auto-select first run when runs prop updates (e.g. after async fetch)
+	$: if (!selectedRun && runs.length > 0) {
+		selectedRun = runs[0];
+	}
 	let showDeleteConfirm = false;
 	let runToDelete = null;
 

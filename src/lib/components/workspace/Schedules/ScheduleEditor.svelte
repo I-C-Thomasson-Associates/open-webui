@@ -48,12 +48,12 @@
 	let scheduledTime = '';
 	let availableModels = [];
 
-	let toolIds: string[] = [];
-	let filterIds: string[] = [];
-	let actionIds: string[] = [];
-	let capabilities: Record<string, boolean> = {};
-	let builtinTools: Record<string, boolean> = {};
-	let knowledge: any[] = [];
+	let toolIds: string[] = selectedTools ?? [];
+	let filterIds: string[] = selectedFilters ?? [];
+	let actionIds: string[] = selectedActions ?? [];
+	let capabilities: Record<string, boolean> = meta?.capabilities ?? {};
+	let builtinTools: Record<string, boolean> = meta?.builtinTools ?? {};
+	let knowledge: any[] = meta?.knowledge ?? [];
 
 	$: availableModels = $models ?? [];
 
@@ -63,13 +63,6 @@
 
 		const funcs = await getFunctions(localStorage.token);
 		functionsStore.set(funcs ?? []);
-
-		toolIds = selectedTools ?? [];
-		filterIds = selectedFilters ?? [];
-		actionIds = selectedActions ?? [];
-		capabilities = meta?.capabilities ?? {};
-		builtinTools = meta?.builtinTools ?? {};
-		knowledge = meta?.knowledge ?? [];
 
 		if (scheduled_at) {
 			const date = new Date(scheduled_at * 1000);
