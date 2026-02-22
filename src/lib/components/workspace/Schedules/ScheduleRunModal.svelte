@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { getContext } from 'svelte';
+	import { marked } from 'marked';
+	import DOMPurify from 'dompurify';
 	import Modal from '$lib/components/common/Modal.svelte';
 
 	const i18n = getContext('i18n');
@@ -11,9 +13,14 @@
 		if (!timestamp) return 'N/A';
 		return new Date(timestamp * 1000).toLocaleString();
 	};
+
+	const renderMarkdown = (text: string) => {
+		if (!text) return '';
+		return DOMPurify.sanitize(marked.parse(text));
+	};
 </script>
 
-<Modal bind:show size="md">
+<Modal bind:show size="lg">
 	<div>
 		<div class="flex justify-between dark:text-gray-300 px-5 pt-4 pb-2">
 			<div class="text-lg font-medium self-center">{$i18n.t('Run Report')}</div>
@@ -73,13 +80,10 @@
 
 					{#if run.result}
 						<div class="mt-2">
-							<span class="text-sm font-medium text-gray-500 dark:text-gray-400"
-								>{$i18n.t('Report')}:</span
-							>
 							<div
-								class="mt-1 p-4 bg-gray-50 dark:bg-gray-900 rounded-xl text-sm whitespace-pre-wrap"
+								class="mt-1 p-4 bg-gray-50 dark:bg-gray-900 rounded-xl text-sm prose dark:prose-invert max-w-none max-h-[60vh] overflow-y-auto"
 							>
-								{run.result}
+								{@html renderMarkdown(run.result)}
 							</div>
 						</div>
 					{/if}
