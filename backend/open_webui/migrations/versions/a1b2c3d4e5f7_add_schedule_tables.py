@@ -47,6 +47,8 @@ def upgrade() -> None:
         existing_columns = {col["name"] for col in inspector.get_columns("schedule")}
         if "filters" not in existing_columns:
             op.add_column("schedule", sa.Column("filters", sa.Text(), nullable=True))
+        if "meta" not in existing_columns:
+            op.add_column("schedule", sa.Column("meta", sa.Text(), nullable=True))
 
     if "schedule_run" not in existing_tables:
         op.create_table(
