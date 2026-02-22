@@ -2,6 +2,7 @@
 	import { getContext } from 'svelte';
 	import { marked } from 'marked';
 	import DOMPurify from 'dompurify';
+	import { toast } from 'svelte-sonner';
 	import Modal from '$lib/components/common/Modal.svelte';
 
 	const i18n = getContext('i18n');
@@ -17,6 +18,45 @@
 	const renderMarkdown = (text: string) => {
 		if (!text) return '';
 		return DOMPurify.sanitize(marked.parse(text));
+	};
+
+	const downloadMarkdown = () => {
+		if (!run?.result) return;
+		const blob = new Blob([run.result], { type: 'text/markdown' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `schedule-report-${run.id}.md`;
+		a.click();
+		URL.revokeObjectURL(url);
+	};
+
+	const downloadPdf = async () => {
+		if (!run?.result) return;
+		const htmlContent = renderMarkdown(run.result);
+		const printWindow = window.open('', '_blank');
+		if (!printWindow) {
+			toast.error($i18n.t('Popup blocked. Please allow popups to download PDF.'));
+			return;
+		}
+		printWindow.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<title>Schedule Report - ${run.id}</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #333; }
+h1, h2, h3 { margin-top: 1.5em; }
+code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
+pre { background: #f4f4f4; padding: 16px; border-radius: 6px; overflow-x: auto; }
+hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
+</style>
+</head>
+<body>${htmlContent}</body>
+</html>`);
+		printWindow.document.close();
+		printWindow.onload = () => {
+			printWindow.print();
+		};
 	};
 </script>
 
@@ -80,8 +120,27 @@
 
 					{#if run.result}
 						<div class="mt-2">
+							<div class="flex items-center justify-between mb-2">
+								<div class="text-sm font-medium text-gray-500 dark:text-gray-400">
+									{$i18n.t('Report')}
+								</div>
+								<div class="flex gap-2">
+									<button
+										class="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition"
+										on:click={downloadMarkdown}
+									>
+										{$i18n.t('Download Markdown')}
+									</button>
+									<button
+										class="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 transition"
+										on:click={downloadPdf}
+									>
+										{$i18n.t('Download PDF')}
+									</button>
+								</div>
+							</div>
 							<div
-								class="mt-1 p-4 bg-gray-50 dark:bg-gray-900 rounded-xl text-sm prose dark:prose-invert max-w-none max-h-[60vh] overflow-y-auto"
+								class="p-4 bg-gray-50 dark:bg-gray-900 rounded-xl text-sm prose dark:prose-invert max-w-none max-h-[60vh] overflow-y-auto"
 							>
 								{@html renderMarkdown(run.result)}
 							</div>

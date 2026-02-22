@@ -23,7 +23,8 @@
 			frequency: data.frequency,
 			scheduled_at: data.scheduled_at,
 			is_active: data.is_active,
-			meta: data.meta
+			meta: data.meta,
+			access_grants: data.access_grants
 		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
@@ -67,6 +68,7 @@
 		selectedFilters={schedule.filters ?? []}
 		selectedActions={schedule.meta?.actionIds ?? []}
 		meta={schedule.meta ?? {}}
+		accessGrants={schedule.access_grants ?? []}
 		frequency={schedule.frequency}
 		scheduled_at={schedule.scheduled_at}
 		is_active={schedule.is_active}

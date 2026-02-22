@@ -17,6 +17,7 @@ from open_webui.models.schedules import (
     ScheduleRunModel,
     Schedules,
 )
+from open_webui.models.access_grants import AccessGrants
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.chat import generate_chat_completion
@@ -69,9 +70,16 @@ async def create_new_schedule(
         )
 
     schedule_id = str(uuid4())
+    access_grants = form_data.access_grants
+    form_data.access_grants = None  # Don't store in schedule table
+
     schedule = Schedules.insert_new_schedule(schedule_id, user.id, form_data, db=db)
 
     if schedule:
+        if access_grants is not None:
+            AccessGrants.set_access_grants(
+                "schedule", schedule_id, access_grants, db=db
+            )
         return schedule
     else:
         raise HTTPException(
@@ -93,7 +101,11 @@ async def get_schedule_by_id(
 
     if schedule:
         if user.role == "admin" or schedule.user_id == user.id:
-            return schedule
+            grants = AccessGrants.get_grants_by_resource("schedule", id, db=db)
+            return ScheduleUserResponse(
+                **schedule.model_dump(),
+                access_grants=[g.model_dump() for g in grants],
+            )
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -133,9 +145,12 @@ async def update_schedule_by_id(
         )
 
     updated = form_data.model_dump()
+    access_grants = updated.pop("access_grants", None)
     schedule = Schedules.update_schedule_by_id(id, updated, db=db)
 
     if schedule:
+        if access_grants is not None:
+            AccessGrants.set_access_grants("schedule", id, access_grants, db=db)
         return schedule
     else:
         raise HTTPException(

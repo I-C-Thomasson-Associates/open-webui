@@ -101,6 +101,7 @@ class ScheduleResponse(BaseModel):
     scheduled_at: Optional[int] = None
     is_active: bool = True
     meta: Optional[dict] = None
+    access_grants: Optional[list[dict]] = None
 
     updated_at: int
     created_at: int
@@ -108,6 +109,7 @@ class ScheduleResponse(BaseModel):
 
 class ScheduleUserResponse(ScheduleResponse):
     user: Optional[UserResponse] = None
+    access_grants: Optional[list[dict]] = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -141,6 +143,7 @@ class ScheduleForm(BaseModel):
     scheduled_at: Optional[int] = None
     is_active: bool = True
     meta: Optional[dict] = None
+    access_grants: Optional[list[dict]] = None
 
 
 class ScheduleRunForm(BaseModel):
@@ -165,7 +168,7 @@ class SchedulesTable:
             try:
                 result = Schedule(
                     **{
-                        **form_data.model_dump(),
+                        **form_data.model_dump(exclude={"access_grants"}),
                         "id": id,
                         "user_id": user_id,
                         "updated_at": int(time.time()),
