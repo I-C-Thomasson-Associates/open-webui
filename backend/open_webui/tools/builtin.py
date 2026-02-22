@@ -2018,3 +2018,89 @@ async def view_skill(
     except Exception as e:
         log.exception(f"view_skill error: {e}")
         return json.dumps({"error": str(e)})
+
+
+# =============================================================================
+# SCHEDULE TOOLS
+# =============================================================================
+
+
+async def create_schedule(
+    name: str,
+    task: str,
+    model_id: str,
+    frequency: str = "once",
+    scheduled_at: int = 0,
+    __request__: Request = None,
+    __user__: dict = None,
+) -> str:
+    """
+    Create a new scheduled task that will be executed by an AI model at the specified time and frequency.
+
+    :param name: A descriptive name for the scheduled task
+    :param task: The prompt or instructions for the AI model to execute
+    :param model_id: The model identifier to use for execution (e.g. 'gpt-4o', 'claude-3.5-sonnet')
+    :param frequency: How often to repeat: 'once', 'daily', 'weekly', or 'monthly' (default: 'once')
+    :param scheduled_at: Unix timestamp for when to run the task. Use 0 to run within 1 minute (default: 0)
+    :return: JSON with success details including schedule ID, name, and timing
+    """
+    if __request__ is None:
+        return json.dumps({"error": "Request context not available"})
+
+    if not __user__:
+        return json.dumps({"error": "User context not available"})
+
+    try:
+        import time as time_module
+
+        from open_webui.models.schedules import ScheduleForm, Schedules
+
+        user_id = __user__.get("id")
+
+        if frequency not in ("once", "daily", "weekly", "monthly"):
+            return json.dumps(
+                {
+                    "error": f"Invalid frequency '{frequency}'. Must be one of: once, daily, weekly, monthly"
+                }
+            )
+
+        if scheduled_at <= 0:
+            scheduled_at = int(time_module.time()) + 60  # Default: 1 minute from now
+
+        form = ScheduleForm(
+            name=name,
+            description=f"Created by AI agent",
+            model_id=model_id,
+            prompt=task,
+            tools=[],
+            filters=[],
+            frequency=frequency,
+            scheduled_at=scheduled_at,
+            is_active=True,
+            meta={},
+        )
+
+        import uuid
+
+        schedule_id = str(uuid.uuid4())
+        new_schedule = Schedules.insert_new_schedule(schedule_id, user_id, form)
+
+        if not new_schedule:
+            return json.dumps({"error": "Failed to create schedule"})
+
+        return json.dumps(
+            {
+                "status": "success",
+                "id": new_schedule.id,
+                "name": new_schedule.name,
+                "task": new_schedule.prompt,
+                "model_id": new_schedule.model_id,
+                "frequency": new_schedule.frequency,
+                "scheduled_at": new_schedule.scheduled_at,
+                "created_at": new_schedule.created_at,
+            },
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        log.exception(f"create_schedule error: {e}")
+        return json.dumps({"error": str(e)})

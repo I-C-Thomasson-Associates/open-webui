@@ -80,6 +80,7 @@ from open_webui.tools.builtin import (
     view_file,
     view_knowledge_file,
     view_skill,
+    create_schedule,
 )
 
 import copy
@@ -537,6 +538,12 @@ def get_builtin_tools(
                 view_channel_message,
             ]
         )
+
+    # Schedules tools - create scheduled tasks (if builtin category enabled AND schedules enabled globally)
+    if is_builtin_tool_enabled("schedules") and getattr(
+        request.app.state.config, "ENABLE_SCHEDULES", False
+    ):
+        builtin_functions.append(create_schedule)
 
     # Skills tools - view_skill allows model to load full skill instructions on demand
     if extra_params.get("__skill_ids__"):

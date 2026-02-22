@@ -1673,6 +1673,12 @@ ENABLE_NOTES = PersistentConfig(
     get_secret("ENABLE_NOTES", "True").lower() == "true",
 )
 
+ENABLE_SCHEDULES = PersistentConfig(
+    "ENABLE_SCHEDULES",
+    "schedules.enable",
+    get_secret("ENABLE_SCHEDULES", "True").lower() == "true",
+)
+
 ENABLE_USER_STATUS = PersistentConfig(
     "ENABLE_USER_STATUS",
     "users.enable_status",

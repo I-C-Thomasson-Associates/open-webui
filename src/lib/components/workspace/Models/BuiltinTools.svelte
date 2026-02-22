@@ -31,6 +31,10 @@
 			label: $i18n.t('Channels'),
 			description: $i18n.t('Search channels and channel messages')
 		},
+		schedules: {
+			label: $i18n.t('Schedules'),
+			description: $i18n.t('Create scheduled tasks for AI models to execute')
+		},
 		web_search: {
 			label: $i18n.t('Web Search'),
 			description: $i18n.t('Search the web and fetch URLs')
