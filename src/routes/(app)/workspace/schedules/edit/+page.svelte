@@ -19,6 +19,7 @@
 			model_id: data.model_id,
 			prompt: data.prompt,
 			tools: data.tools,
+			filters: data.filters,
 			frequency: data.frequency,
 			scheduled_at: data.scheduled_at,
 			is_active: data.is_active
@@ -62,6 +63,7 @@
 		model_id={schedule.model_id}
 		prompt={schedule.prompt}
 		selectedTools={schedule.tools ?? []}
+		selectedFilters={schedule.filters ?? []}
 		frequency={schedule.frequency}
 		scheduled_at={schedule.scheduled_at}
 		is_active={schedule.is_active}

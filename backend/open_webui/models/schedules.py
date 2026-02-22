@@ -27,6 +27,7 @@ class Schedule(Base):
     model_id = Column(String)
     prompt = Column(Text)
     tools = Column(JSONField, nullable=True)
+    filters = Column(JSONField, nullable=True)
 
     frequency = Column(String)  # once, daily, weekly, monthly
     scheduled_at = Column(BigInteger, nullable=True)
@@ -68,6 +69,7 @@ class ScheduleModel(BaseModel):
     model_id: str
     prompt: str
     tools: Optional[list[str]] = None
+    filters: Optional[list[str]] = None
 
     frequency: str
     scheduled_at: Optional[int] = None
@@ -93,6 +95,7 @@ class ScheduleResponse(BaseModel):
     model_id: str
     prompt: str
     tools: Optional[list[str]] = None
+    filters: Optional[list[str]] = None
 
     frequency: str
     scheduled_at: Optional[int] = None
@@ -133,6 +136,7 @@ class ScheduleForm(BaseModel):
     model_id: str
     prompt: str
     tools: Optional[list[str]] = None
+    filters: Optional[list[str]] = None
     frequency: str  # once, daily, weekly, monthly
     scheduled_at: Optional[int] = None
     is_active: bool = True

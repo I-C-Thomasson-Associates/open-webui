@@ -4,11 +4,14 @@
 	const i18n = getContext('i18n');
 
 	import { goto } from '$app/navigation';
-	import { user, models, tools as toolsStore } from '$lib/stores';
+	import { user, models, tools as toolsStore, functions as functionsStore } from '$lib/stores';
 	import { getTools } from '$lib/apis/tools';
+	import { getFunctions } from '$lib/apis/functions';
 
 	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ToolsSelector from '$lib/components/workspace/Models/ToolsSelector.svelte';
+	import FiltersSelector from '$lib/components/workspace/Models/FiltersSelector.svelte';
 
 	let formElement = null;
 	let loading = false;
@@ -22,6 +25,7 @@
 	export let model_id = '';
 	export let prompt = '';
 	export let selectedTools: string[] = [];
+	export let selectedFilters: string[] = [];
 	export let frequency = 'once';
 	export let scheduled_at: number | null = null;
 	export let is_active = true;
@@ -29,13 +33,21 @@
 	let scheduledDate = '';
 	let scheduledTime = '';
 	let availableModels = [];
-	let availableTools = [];
+
+	let toolIds: string[] = [];
+	let filterIds: string[] = [];
 
 	$: availableModels = $models ?? [];
 
 	onMount(async () => {
-		availableTools = (await getTools(localStorage.token)) ?? [];
-		toolsStore.set(availableTools);
+		const tools = await getTools(localStorage.token);
+		toolsStore.set(tools ?? []);
+
+		const funcs = await getFunctions(localStorage.token);
+		functionsStore.set(funcs ?? []);
+
+		toolIds = selectedTools ?? [];
+		filterIds = selectedFilters ?? [];
 
 		if (scheduled_at) {
 			const date = new Date(scheduled_at * 1000);
@@ -82,7 +94,8 @@
 					description,
 					model_id,
 					prompt,
-					tools: selectedTools,
+					tools: toolIds,
+					filters: filterIds,
 					frequency,
 					scheduled_at: getScheduledTimestamp(),
 					is_active
@@ -152,40 +165,17 @@
 				/>
 			</div>
 
-			<!-- Tools -->
+			<!-- Tools (grouped checkboxes, same as model editor) -->
 			<div>
-				<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-					{$i18n.t('Tools')}
-				</label>
-				<div class="flex flex-wrap gap-2">
-					{#each availableTools as tool}
-						<label
-							class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs cursor-pointer transition {selectedTools.includes(
-								tool.id
-							)
-								? 'bg-black text-white dark:bg-white dark:text-black'
-								: 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'}"
-						>
-							<input
-								type="checkbox"
-								class="hidden"
-								value={tool.id}
-								checked={selectedTools.includes(tool.id)}
-								on:change={(e) => {
-									if (e.target.checked) {
-										selectedTools = [...selectedTools, tool.id];
-									} else {
-										selectedTools = selectedTools.filter((t) => t !== tool.id);
-									}
-								}}
-							/>
-							{tool.name}
-						</label>
-					{/each}
-					{#if availableTools.length === 0}
-						<span class="text-xs text-gray-400">{$i18n.t('No tools available')}</span>
-					{/if}
-				</div>
+				<ToolsSelector bind:selectedToolIds={toolIds} tools={$toolsStore ?? []} />
+			</div>
+
+			<!-- Filters (grouped checkboxes, same as model editor) -->
+			<div>
+				<FiltersSelector
+					bind:selectedFilterIds={filterIds}
+					filters={($functionsStore ?? []).filter((func) => func.type === 'filter')}
+				/>
 			</div>
 
 			<!-- Frequency -->

@@ -32,6 +32,7 @@ def upgrade() -> None:
             sa.Column("model_id", sa.String()),
             sa.Column("prompt", sa.Text()),
             sa.Column("tools", sa.Text(), nullable=True),
+            sa.Column("filters", sa.Text(), nullable=True),
             sa.Column("frequency", sa.String()),
             sa.Column("scheduled_at", sa.BigInteger(), nullable=True),
             sa.Column("is_active", sa.Boolean(), default=True),

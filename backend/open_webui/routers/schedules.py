@@ -220,6 +220,8 @@ async def run_schedule(
                 "model": model_id,
                 "messages": [{"role": "user", "content": schedule.prompt}],
                 "stream": False,
+                "tool_ids": schedule.tools if schedule.tools else [],
+                "filter_ids": schedule.filters if schedule.filters else [],
                 "metadata": {
                     "task": "schedule_run",
                     "schedule_id": id,
