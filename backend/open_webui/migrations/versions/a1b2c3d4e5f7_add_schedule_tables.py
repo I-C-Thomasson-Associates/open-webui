@@ -1,7 +1,7 @@
 """Add schedule tables
 
 Revision ID: a1b2c3d4e5f7
-Revises: 018012973d35
+Revises: b2c3d4e5f6a7
 Create Date: 2026-02-21 17:00:00.000000
 
 """
@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "a1b2c3d4e5f7"
-down_revision = "018012973d35"
+down_revision = "b2c3d4e5f6a7"
 branch_labels = None
 depends_on = None
 
