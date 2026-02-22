@@ -68,6 +68,7 @@ from open_webui.socket.main import (
     get_event_emitter,
     get_models_in_use,
 )
+from open_webui.schedule_executor import periodic_schedule_check
 from open_webui.routers import (
     analytics,
     audio,
@@ -646,6 +647,7 @@ async def lifespan(app: FastAPI):
 
     asyncio.create_task(periodic_usage_pool_cleanup())
     asyncio.create_task(periodic_session_pool_cleanup())
+    asyncio.create_task(periodic_schedule_check(app))
 
     if app.state.config.ENABLE_BASE_MODELS_CACHE:
         try:

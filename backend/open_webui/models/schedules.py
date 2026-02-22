@@ -266,6 +266,55 @@ class SchedulesTable:
         except Exception:
             return False
 
+    def get_due_schedules(
+        self, current_time: int, db: Optional[Session] = None
+    ) -> list[ScheduleModel]:
+        """Get all active schedules whose scheduled_at time has passed."""
+        with get_db_context(db) as db:
+            schedules = (
+                db.query(Schedule)
+                .filter(
+                    Schedule.is_active.is_(True),
+                    Schedule.scheduled_at.isnot(None),
+                    Schedule.scheduled_at <= current_time,
+                )
+                .all()
+            )
+            return [ScheduleModel.model_validate(s) for s in schedules]
+
+    def advance_schedule(
+        self, id: str, db: Optional[Session] = None
+    ) -> Optional[ScheduleModel]:
+        """Advance a recurring schedule to its next run time, or deactivate if 'once'."""
+        import calendar
+        from datetime import datetime
+
+        try:
+            with get_db_context(db) as db:
+                schedule = db.get(Schedule, id)
+                if not schedule:
+                    return None
+
+                if schedule.frequency == "once":
+                    schedule.is_active = False
+                elif schedule.scheduled_at:
+                    if schedule.frequency == "daily":
+                        schedule.scheduled_at += 86400
+                    elif schedule.frequency == "weekly":
+                        schedule.scheduled_at += 604800
+                    elif schedule.frequency == "monthly":
+                        dt = datetime.fromtimestamp(schedule.scheduled_at)
+                        days_in_month = calendar.monthrange(dt.year, dt.month)[1]
+                        schedule.scheduled_at += days_in_month * 86400
+
+                schedule.updated_at = int(time.time())
+                db.commit()
+                db.refresh(schedule)
+                return ScheduleModel.model_validate(schedule)
+        except Exception as e:
+            log.exception(f"Error advancing schedule {id}: {e}")
+            return None
+
     # Schedule Run methods
 
     def insert_new_run(
