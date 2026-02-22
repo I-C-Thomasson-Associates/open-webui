@@ -91,9 +91,19 @@ async def _execute_schedule(app, schedule):
             else "default"
         )
 
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S %Z")
+        system_content = (
+            f"You are executing a scheduled task. "
+            f"Current date and time: {now_str}. "
+            f"Respond thoroughly and completely to the user's request."
+        )
+
         payload = {
             "model": model_id,
-            "messages": [{"role": "user", "content": schedule.prompt}],
+            "messages": [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": schedule.prompt},
+            ],
             "stream": False,
             "tool_ids": tool_ids,
             "features": features,
