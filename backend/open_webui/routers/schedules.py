@@ -17,6 +17,7 @@ from open_webui.models.schedules import (
     ScheduleRunModel,
     Schedules,
 )
+from open_webui.models.models import Models
 from open_webui.models.access_grants import AccessGrants
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.access_control import has_permission
@@ -244,6 +245,19 @@ async def run_schedule(
 
             tool_ids = schedule.tools if schedule.tools else []
 
+            # Determine function_calling mode from model info (same as main.py chat_completion)
+            model_info = Models.get_model_by_id(model_id)
+            model_info_params = (
+                model_info.params.model_dump()
+                if model_info and model_info.params
+                else {}
+            )
+            function_calling = (
+                "native"
+                if model_info_params.get("function_calling") == "native"
+                else "default"
+            )
+
             payload = {
                 "model": model_id,
                 "messages": [{"role": "user", "content": schedule.prompt}],
@@ -257,6 +271,9 @@ async def run_schedule(
                 "features": features,
                 "task": "schedule_run",
                 "schedule_id": id,
+                "params": {
+                    "function_calling": function_calling,
+                },
             }
 
             # Process through middleware pipeline (resolves tools, features)
@@ -286,11 +303,20 @@ async def run_schedule(
             else:
                 ai_content = str(response)
 
+            # Build tools display: user tools + enabled capabilities
+            all_tools_display = list(tool_ids)
+            for key in ["web_search", "code_interpreter", "image_generation"]:
+                if capabilities.get(key):
+                    all_tools_display.append(key)
+            if capabilities.get("builtin_tools"):
+                all_tools_display.append("builtin_tools")
+            tools_text = ", ".join(all_tools_display) if all_tools_display else "None"
+
             result_text = (
                 f"## Schedule: {schedule.name}\n\n"
                 f"**Model:** {schedule.model_id}\n"
                 f"**Prompt:** {schedule.prompt}\n"
-                f"**Tools:** {', '.join(schedule.tools) if schedule.tools else 'None'}\n\n"
+                f"**Tools:** {tools_text}\n\n"
                 f"---\n\n"
                 f"## AI Response\n\n"
                 f"{ai_content}\n\n"
