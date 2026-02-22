@@ -65,12 +65,21 @@ async def _execute_schedule(app, schedule):
 
         request = _create_mock_request(app)
 
+        # Build features dict from capabilities stored in meta
+        meta = schedule.meta or {}
+        capabilities = meta.get("capabilities", {})
+        features = {}
+        for key in ["web_search", "code_interpreter", "image_generation"]:
+            if capabilities.get(key):
+                features[key] = True
+
         payload = {
             "model": model_id,
             "messages": [{"role": "user", "content": schedule.prompt}],
             "stream": False,
             "tool_ids": schedule.tools if schedule.tools else [],
             "filter_ids": schedule.filters if schedule.filters else [],
+            "features": features,
             "metadata": {
                 "task": "schedule_run",
                 "schedule_id": schedule.id,

@@ -12,6 +12,9 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import ToolsSelector from '$lib/components/workspace/Models/ToolsSelector.svelte';
 	import FiltersSelector from '$lib/components/workspace/Models/FiltersSelector.svelte';
+	import ActionsSelector from '$lib/components/workspace/Models/ActionsSelector.svelte';
+	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
+	import BuiltinTools from '$lib/components/workspace/Models/BuiltinTools.svelte';
 
 	let formElement = null;
 	let loading = false;
@@ -26,9 +29,11 @@
 	export let prompt = '';
 	export let selectedTools: string[] = [];
 	export let selectedFilters: string[] = [];
+	export let selectedActions: string[] = [];
 	export let frequency = 'once';
 	export let scheduled_at: number | null = null;
 	export let is_active = true;
+	export let meta: Record<string, any> = {};
 
 	let scheduledDate = '';
 	let scheduledTime = '';
@@ -36,6 +41,9 @@
 
 	let toolIds: string[] = [];
 	let filterIds: string[] = [];
+	let actionIds: string[] = [];
+	let capabilities: Record<string, boolean> = {};
+	let builtinTools: Record<string, boolean> = {};
 
 	$: availableModels = $models ?? [];
 
@@ -48,6 +56,9 @@
 
 		toolIds = selectedTools ?? [];
 		filterIds = selectedFilters ?? [];
+		actionIds = selectedActions ?? [];
+		capabilities = meta?.capabilities ?? {};
+		builtinTools = meta?.builtinTools ?? {};
 
 		if (scheduled_at) {
 			const date = new Date(scheduled_at * 1000);
@@ -98,7 +109,13 @@
 					filters: filterIds,
 					frequency,
 					scheduled_at: getScheduledTimestamp(),
-					is_active
+					is_active,
+					meta: {
+						...meta,
+						capabilities,
+						builtinTools,
+						actionIds
+					}
 				});
 				loading = false;
 			}}
@@ -166,17 +183,47 @@
 			</div>
 
 			<!-- Tools (grouped checkboxes, same as model editor) -->
-			<div>
+			<div class="my-4">
 				<ToolsSelector bind:selectedToolIds={toolIds} tools={$toolsStore ?? []} />
 			</div>
 
-			<!-- Filters (grouped checkboxes, same as model editor) -->
-			<div>
-				<FiltersSelector
-					bind:selectedFilterIds={filterIds}
-					filters={($functionsStore ?? []).filter((func) => func.type === 'filter')}
-				/>
+			<!-- Filters & Actions (conditional, with HR divider — same as model editor) -->
+			{#if ($functionsStore ?? []).filter((func) => func.type === 'filter').length > 0 || ($functionsStore ?? []).filter((func) => func.type === 'action').length > 0}
+				<hr class=" border-gray-100/30 dark:border-gray-850/30 my-4" />
+
+				{#if ($functionsStore ?? []).filter((func) => func.type === 'filter').length > 0}
+					<div class="my-4">
+						<FiltersSelector
+							bind:selectedFilterIds={filterIds}
+							filters={($functionsStore ?? []).filter((func) => func.type === 'filter')}
+						/>
+					</div>
+				{/if}
+
+				{#if ($functionsStore ?? []).filter((func) => func.type === 'action').length > 0}
+					<div class="my-4">
+						<ActionsSelector
+							bind:selectedActionIds={actionIds}
+							actions={($functionsStore ?? []).filter((func) => func.type === 'action')}
+						/>
+					</div>
+				{/if}
+			{/if}
+
+			<hr class=" border-gray-100/30 dark:border-gray-850/30 my-4" />
+
+			<!-- Capabilities (same as model editor) -->
+			<div class="my-4">
+				<Capabilities bind:capabilities />
 			</div>
+
+			{#if capabilities.builtin_tools}
+				<div class="my-4">
+					<BuiltinTools bind:builtinTools />
+				</div>
+			{/if}
+
+			<hr class=" border-gray-100/30 dark:border-gray-850/30 my-4" />
 
 			<!-- Frequency -->
 			<div>

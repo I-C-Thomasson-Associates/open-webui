@@ -19,7 +19,8 @@
 			filters: data.filters,
 			frequency: data.frequency,
 			scheduled_at: data.scheduled_at,
-			is_active: data.is_active
+			is_active: data.is_active,
+			meta: data.meta
 		}).catch((error) => {
 			toast.error(`${error}`);
 			return null;
