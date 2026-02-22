@@ -21,6 +21,7 @@ from open_webui.models.access_grants import AccessGrants
 from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.chat import generate_chat_completion
+from open_webui.utils.middleware import process_chat_payload
 
 from open_webui.constants import ERROR_MESSAGES
 
@@ -231,6 +232,8 @@ async def run_schedule(
             if model_id not in models:
                 raise ValueError(f"Model '{model_id}' not found")
 
+            model = models[model_id]
+
             # Build features dict from capabilities stored in meta
             meta = schedule.meta or {}
             capabilities = meta.get("capabilities", {})
@@ -239,18 +242,27 @@ async def run_schedule(
                 if capabilities.get(key):
                     features[key] = True
 
+            tool_ids = schedule.tools if schedule.tools else []
+
             payload = {
                 "model": model_id,
                 "messages": [{"role": "user", "content": schedule.prompt}],
                 "stream": False,
-                "tool_ids": schedule.tools if schedule.tools else [],
-                "filter_ids": schedule.filters if schedule.filters else [],
+                "tool_ids": tool_ids,
                 "features": features,
-                "metadata": {
-                    "task": "schedule_run",
-                    "schedule_id": id,
-                },
             }
+
+            metadata = {
+                "tool_ids": tool_ids,
+                "features": features,
+                "task": "schedule_run",
+                "schedule_id": id,
+            }
+
+            # Process through middleware pipeline (resolves tools, features)
+            payload, metadata, events = await process_chat_payload(
+                request, payload, user, metadata, model
+            )
 
             response = await generate_chat_completion(
                 request, form_data=payload, user=user
