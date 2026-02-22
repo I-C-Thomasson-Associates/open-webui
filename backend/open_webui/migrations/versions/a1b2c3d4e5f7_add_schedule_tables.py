@@ -41,6 +41,12 @@ def upgrade() -> None:
             sa.Column("created_at", sa.BigInteger()),
             sa.PrimaryKeyConstraint("id"),
         )
+    else:
+        # Add columns that may be missing from earlier versions of this table
+        inspector = sa.inspect(op.get_bind())
+        existing_columns = {col["name"] for col in inspector.get_columns("schedule")}
+        if "filters" not in existing_columns:
+            op.add_column("schedule", sa.Column("filters", sa.Text(), nullable=True))
 
     if "schedule_run" not in existing_tables:
         op.create_table(
