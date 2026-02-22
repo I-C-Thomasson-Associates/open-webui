@@ -10,14 +10,12 @@
 		getSchedules,
 		deleteScheduleById,
 		runScheduleById,
-		getScheduleRuns,
-		getScheduleRunById
+		getScheduleRuns
 	} from '$lib/apis/schedules';
 	import { capitalizeFirstLetter } from '$lib/utils';
 
 	import Tooltip from '../common/Tooltip.svelte';
 	import ScheduleMenu from './Schedules/ScheduleMenu.svelte';
-	import ScheduleRunModal from './Schedules/ScheduleRunModal.svelte';
 	import EllipsisHorizontal from '../icons/EllipsisHorizontal.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import GarbageBin from '../icons/GarbageBin.svelte';
@@ -34,9 +32,6 @@
 
 	let showDeleteConfirm = false;
 	let selectedSchedule = null;
-
-	let showRunModal = false;
-	let selectedRun = null;
 
 	let schedules = [];
 	let filteredItems = [];
@@ -87,23 +82,12 @@
 
 		if (run) {
 			toast.success($i18n.t('Schedule executed successfully'));
-			// Refresh runs for this schedule
-			scheduleRuns[schedule.id] = await getScheduleRuns(localStorage.token, schedule.id);
-			selectedRun = run;
-			showRunModal = true;
+			goto(`/workspace/schedules/${encodeURIComponent(schedule.id)}`);
 		}
 	};
 
-	const viewRunHandler = async (run) => {
-		const fullRun = await getScheduleRunById(localStorage.token, run.id).catch((error) => {
-			toast.error(`${error}`);
-			return null;
-		});
-
-		if (fullRun) {
-			selectedRun = fullRun;
-			showRunModal = true;
-		}
+	const viewRunsHandler = (schedule) => {
+		goto(`/workspace/schedules/${encodeURIComponent(schedule.id)}`);
 	};
 
 	const loadRuns = async (scheduleId) => {
@@ -239,7 +223,7 @@
 						<div class="flex w-full">
 							<a
 								class=" flex flex-1 space-x-3.5 cursor-pointer w-full"
-								href={`/workspace/schedules/edit?id=${encodeURIComponent(schedule.id)}`}
+								href={`/workspace/schedules/${encodeURIComponent(schedule.id)}`}
 							>
 								<div class="flex items-center text-left">
 									<div class=" flex-1 self-center">
@@ -329,7 +313,7 @@
 													? 'bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50'
 													: 'bg-gray-50 text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'}"
 											on:click|stopPropagation={() => {
-												viewRunHandler(run);
+												viewRunsHandler(schedule);
 											}}
 										>
 											<span
@@ -360,8 +344,6 @@
 			</div>
 		{/if}
 	</div>
-
-	<ScheduleRunModal bind:show={showRunModal} run={selectedRun} />
 
 	<DeleteConfirmDialog
 		bind:show={showDeleteConfirm}
