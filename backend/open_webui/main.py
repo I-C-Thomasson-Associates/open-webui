@@ -378,6 +378,7 @@ from open_webui.config import (
     FOLDER_MAX_FILE_COUNT,
     ENABLE_CHANNELS,
     ENABLE_NOTES,
+    ENABLE_SCHEDULES,
     ENABLE_USER_STATUS,
     ENABLE_COMMUNITY_SHARING,
     ENABLE_MESSAGE_RATING,
@@ -850,6 +851,7 @@ app.state.config.ENABLE_FOLDERS = ENABLE_FOLDERS
 app.state.config.FOLDER_MAX_FILE_COUNT = FOLDER_MAX_FILE_COUNT
 app.state.config.ENABLE_CHANNELS = ENABLE_CHANNELS
 app.state.config.ENABLE_NOTES = ENABLE_NOTES
+app.state.config.ENABLE_SCHEDULES = ENABLE_SCHEDULES
 app.state.config.ENABLE_COMMUNITY_SHARING = ENABLE_COMMUNITY_SHARING
 app.state.config.ENABLE_MESSAGE_RATING = ENABLE_MESSAGE_RATING
 app.state.config.ENABLE_USER_WEBHOOKS = ENABLE_USER_WEBHOOKS
@@ -2043,6 +2045,7 @@ async def get_app_config(request: Request):
                     "folder_max_file_count": app.state.config.FOLDER_MAX_FILE_COUNT,
                     "enable_channels": app.state.config.ENABLE_CHANNELS,
                     "enable_notes": app.state.config.ENABLE_NOTES,
+                    "enable_schedules": app.state.config.ENABLE_SCHEDULES,
                     "enable_web_search": app.state.config.ENABLE_WEB_SEARCH,
                     "enable_code_execution": app.state.config.ENABLE_CODE_EXECUTION,
                     "enable_code_interpreter": app.state.config.ENABLE_CODE_INTERPRETER,
