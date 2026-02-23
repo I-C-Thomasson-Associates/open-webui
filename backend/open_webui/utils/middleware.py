@@ -2406,56 +2406,57 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                             headers=headers if headers else None,
                         )
 
-                    function_name_filter_list_raw = (
-                        mcp_server_connection.get("config", {})
-                        .get("function_name_filter_list", "")
-                    )
-                    
-                    # Handle both PostgreSQL (returns list) and SQLite (returns string)
-                    if isinstance(function_name_filter_list_raw, list):
-                        function_name_filter_list = function_name_filter_list_raw
-                    elif isinstance(function_name_filter_list_raw, str):
-                        function_name_filter_list = (
-                            function_name_filter_list_raw.split(",") 
-                            if function_name_filter_list_raw 
-                            else []
+                        function_name_filter_list_raw = (
+                            mcp_server_connection.get("config", {})
+                            .get("function_name_filter_list", "")
                         )
-                    else:
-                        function_name_filter_list = []
-
-                        tool_specs = await mcp_clients[server_id].list_tool_specs()
-                        for tool_spec in tool_specs:
-
-                            def make_tool_function(client, function_name):
-                                async def tool_function(**kwargs):
-                                    return await client.call_tool(
-                                        function_name,
-                                        function_args=kwargs,
-                                    )
-
-                                return tool_function
-
-                            if function_name_filter_list:
-                                if not is_string_allowed(
-                                    tool_spec["name"], function_name_filter_list
-                                ):
-                                    # Skip this function
-                                    continue
-
-                            tool_function = make_tool_function(
-                                mcp_clients[server_id], tool_spec["name"]
+                        
+                        # Handle both PostgreSQL (returns list) and SQLite (returns string)
+                        if isinstance(function_name_filter_list_raw, list):
+                            function_name_filter_list = function_name_filter_list_raw
+                        elif isinstance(function_name_filter_list_raw, str):
+                            function_name_filter_list = (
+                                function_name_filter_list_raw.split(",") 
+                                if function_name_filter_list_raw 
+                                else []
                             )
+                        else:
+                            function_name_filter_list = []
 
-                            mcp_tools_dict[f"{server_id}_{tool_spec['name']}"] = {
-                                "spec": {
-                                    **tool_spec,
-                                    "name": f"{server_id}_{tool_spec['name']}",
-                                },
-                                "callable": tool_function,
-                                "type": "mcp",
-                                "client": mcp_clients[server_id],
-                                "direct": False,
-                            }
+                            tool_specs = await mcp_clients[server_id].list_tool_specs()
+                            for tool_spec in tool_specs:
+
+                                def make_tool_function(client, function_name):
+                                    async def tool_function(**kwargs):
+                                        return await client.call_tool(
+                                            function_name,
+                                            function_args=kwargs,
+                                        )
+
+                                    return tool_function
+
+                                if function_name_filter_list:
+                                    if not is_string_allowed(
+                                        tool_spec["name"], function_name_filter_list
+                                    ):
+                                        # Skip this function
+                                        continue
+
+                                tool_function = make_tool_function(
+                                    mcp_clients[server_id], tool_spec["name"]
+                                )
+
+                                mcp_tools_dict[f"{server_id}_{tool_spec['name']}"] = {
+                                    "spec": {
+                                        **tool_spec,
+                                        "name": f"{server_id}_{tool_spec['name']}",
+                                    },
+                                    "callable": tool_function,
+                                    "type": "mcp",
+                                    "client": mcp_clients[server_id],
+                                    "direct": False,
+                                }
+
                     except Exception as e:
                         log.debug(e)
                         if event_emitter:
