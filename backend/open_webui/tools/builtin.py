@@ -2031,6 +2031,9 @@ async def create_schedule(
     model_id: str,
     frequency: str = "once",
     scheduled_at: int = 0,
+    tool_ids: str = "",
+    skill_ids: str = "",
+    builtin_tools: str = "",
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -2042,6 +2045,9 @@ async def create_schedule(
     :param model_id: The model identifier to use for execution (e.g. 'gpt-4o', 'claude-3.5-sonnet')
     :param frequency: How often to repeat: 'once', 'daily', 'weekly', or 'monthly' (default: 'once')
     :param scheduled_at: Unix timestamp for when to run the task. Use 0 to run within 1 minute (default: 0)
+    :param tool_ids: Comma-separated list of tool IDs to enable for this schedule (default: '')
+    :param skill_ids: Comma-separated list of skill IDs to enable for this schedule (default: '')
+    :param builtin_tools: Comma-separated list of builtin tool categories to enable, e.g. 'web_search,code_interpreter' (default: '')
     :return: JSON with success details including schedule ID, name, and timing
     """
     if __request__ is None:
@@ -2067,17 +2073,34 @@ async def create_schedule(
         if scheduled_at <= 0:
             scheduled_at = int(time_module.time()) + 60  # Default: 1 minute from now
 
+        # Parse comma-separated lists
+        tools_list = [t.strip() for t in tool_ids.split(",") if t.strip()] if tool_ids else []
+        skills_list = [s.strip() for s in skill_ids.split(",") if s.strip()] if skill_ids else []
+        builtin_dict = {}
+        if builtin_tools:
+            for bt in builtin_tools.split(","):
+                bt = bt.strip()
+                if bt:
+                    builtin_dict[bt] = True
+
+        meta = {}
+        if skills_list:
+            meta["skillIds"] = skills_list
+        if builtin_dict:
+            meta["builtinTools"] = builtin_dict
+            meta["capabilities"] = {"builtin_tools": True}
+
         form = ScheduleForm(
             name=name,
-            description=f"Created by AI agent",
+            description="Created by AI agent",
             model_id=model_id,
             prompt=task,
-            tools=[],
+            tools=tools_list,
             filters=[],
             frequency=frequency,
             scheduled_at=scheduled_at,
             is_active=True,
-            meta={},
+            meta=meta,
         )
 
         import uuid
@@ -2207,6 +2230,9 @@ async def update_schedule(
     frequency: str = "",
     scheduled_at: int = 0,
     is_active: bool = True,
+    tool_ids: str = "",
+    skill_ids: str = "",
+    builtin_tools: str = "",
     __request__: Request = None,
     __user__: dict = None,
 ) -> str:
@@ -2220,6 +2246,9 @@ async def update_schedule(
     :param frequency: New frequency: 'once', 'daily', 'weekly', or 'monthly' (leave empty to keep current)
     :param scheduled_at: New Unix timestamp for when to run the task (use 0 to keep current)
     :param is_active: Whether the schedule should be active (default: True)
+    :param tool_ids: Comma-separated list of tool IDs to enable (leave empty to keep current)
+    :param skill_ids: Comma-separated list of skill IDs to enable (leave empty to keep current)
+    :param builtin_tools: Comma-separated list of builtin tool categories to enable, e.g. 'web_search,code_interpreter' (leave empty to keep current)
     :return: JSON with updated schedule details
     """
     if __request__ is None:
@@ -2260,6 +2289,28 @@ async def update_schedule(
         if scheduled_at > 0:
             updated["scheduled_at"] = scheduled_at
         updated["is_active"] = is_active
+
+        # Update tools if provided
+        if tool_ids:
+            updated["tools"] = [t.strip() for t in tool_ids.split(",") if t.strip()]
+
+        # Update meta (skill_ids and builtin_tools) if provided
+        current_meta = schedule.meta if schedule.meta else {}
+        meta_changed = False
+        if skill_ids:
+            current_meta["skillIds"] = [s.strip() for s in skill_ids.split(",") if s.strip()]
+            meta_changed = True
+        if builtin_tools:
+            builtin_dict = {}
+            for bt in builtin_tools.split(","):
+                bt = bt.strip()
+                if bt:
+                    builtin_dict[bt] = True
+            current_meta["builtinTools"] = builtin_dict
+            current_meta.setdefault("capabilities", {})["builtin_tools"] = True
+            meta_changed = True
+        if meta_changed:
+            updated["meta"] = current_meta
 
         result = Schedules.update_schedule_by_id(schedule_id, updated)
 

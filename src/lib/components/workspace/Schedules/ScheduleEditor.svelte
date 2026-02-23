@@ -16,6 +16,7 @@
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import AccessControlModal from '$lib/components/workspace/common/AccessControlModal.svelte';
 	import ToolsSelector from '$lib/components/workspace/Models/ToolsSelector.svelte';
+	import SkillsSelector from '$lib/components/workspace/Models/SkillsSelector.svelte';
 	import FiltersSelector from '$lib/components/workspace/Models/FiltersSelector.svelte';
 	import ActionsSelector from '$lib/components/workspace/Models/ActionsSelector.svelte';
 	import Capabilities from '$lib/components/workspace/Models/Capabilities.svelte';
@@ -49,6 +50,7 @@
 	let availableModels = [];
 
 	let toolIds: string[] = selectedTools ?? [];
+	let skillIds: string[] = meta?.skillIds ?? [];
 	let filterIds: string[] = selectedFilters ?? [];
 	let actionIds: string[] = selectedActions ?? [];
 	let capabilities: Record<string, boolean> = meta?.capabilities ?? {};
@@ -122,6 +124,11 @@
 					builtinTools,
 					actionIds
 				};
+				if (skillIds.length > 0) {
+					metaData.skillIds = skillIds;
+				} else {
+					delete metaData.skillIds;
+				}
 				if (knowledge.length > 0) {
 					metaData.knowledge = knowledge;
 				} else {
@@ -285,6 +292,10 @@
 
 				<div class="my-4">
 					<ToolsSelector bind:selectedToolIds={toolIds} tools={$toolsStore ?? []} />
+				</div>
+
+				<div class="my-4">
+					<SkillsSelector bind:selectedSkillIds={skillIds} />
 				</div>
 
 				{#if ($functionsStore ?? []).filter((func) => func.type === 'filter').length > 0 || ($functionsStore ?? []).filter((func) => func.type === 'action').length > 0}
