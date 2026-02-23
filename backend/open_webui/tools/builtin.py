@@ -2104,3 +2104,229 @@ async def create_schedule(
     except Exception as e:
         log.exception(f"create_schedule error: {e}")
         return json.dumps({"error": str(e)})
+
+
+async def list_schedules(
+    __request__: Request = None,
+    __user__: dict = None,
+) -> str:
+    """
+    List all scheduled tasks owned by the current user.
+
+    :return: JSON array of schedule objects with id, name, task, model_id, frequency, scheduled_at, is_active, created_at, and updated_at
+    """
+    if __request__ is None:
+        return json.dumps({"error": "Request context not available"})
+
+    if not __user__:
+        return json.dumps({"error": "User context not available"})
+
+    try:
+        from open_webui.models.schedules import Schedules
+
+        user_id = __user__.get("id")
+        schedules = Schedules.get_schedules_by_user_id(user_id)
+
+        return json.dumps(
+            [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "task": s.prompt,
+                    "model_id": s.model_id,
+                    "frequency": s.frequency,
+                    "scheduled_at": s.scheduled_at,
+                    "is_active": s.is_active,
+                    "created_at": s.created_at,
+                    "updated_at": s.updated_at,
+                }
+                for s in schedules
+            ],
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        log.exception(f"list_schedules error: {e}")
+        return json.dumps({"error": str(e)})
+
+
+async def get_schedule(
+    schedule_id: str,
+    __request__: Request = None,
+    __user__: dict = None,
+) -> str:
+    """
+    Get details of a specific scheduled task by its ID.
+
+    :param schedule_id: The unique identifier of the schedule to retrieve
+    :return: JSON object with schedule details including id, name, task, model_id, frequency, scheduled_at, is_active, created_at, and updated_at
+    """
+    if __request__ is None:
+        return json.dumps({"error": "Request context not available"})
+
+    if not __user__:
+        return json.dumps({"error": "User context not available"})
+
+    try:
+        from open_webui.models.schedules import Schedules
+
+        user_id = __user__.get("id")
+        schedule = Schedules.get_schedule_by_id(schedule_id)
+
+        if not schedule:
+            return json.dumps({"error": f"Schedule '{schedule_id}' not found"})
+
+        if schedule.user_id != user_id:
+            return json.dumps(
+                {"error": "You do not have permission to view this schedule"}
+            )
+
+        return json.dumps(
+            {
+                "id": schedule.id,
+                "name": schedule.name,
+                "task": schedule.prompt,
+                "model_id": schedule.model_id,
+                "frequency": schedule.frequency,
+                "scheduled_at": schedule.scheduled_at,
+                "is_active": schedule.is_active,
+                "created_at": schedule.created_at,
+                "updated_at": schedule.updated_at,
+            },
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        log.exception(f"get_schedule error: {e}")
+        return json.dumps({"error": str(e)})
+
+
+async def update_schedule(
+    schedule_id: str,
+    name: str = "",
+    task: str = "",
+    model_id: str = "",
+    frequency: str = "",
+    scheduled_at: int = 0,
+    is_active: bool = True,
+    __request__: Request = None,
+    __user__: dict = None,
+) -> str:
+    """
+    Update an existing scheduled task. Only provided (non-empty) fields will be updated.
+
+    :param schedule_id: The unique identifier of the schedule to update
+    :param name: New descriptive name for the scheduled task (leave empty to keep current)
+    :param task: New prompt or instructions for the AI model (leave empty to keep current)
+    :param model_id: New model identifier (leave empty to keep current)
+    :param frequency: New frequency: 'once', 'daily', 'weekly', or 'monthly' (leave empty to keep current)
+    :param scheduled_at: New Unix timestamp for when to run the task (use 0 to keep current)
+    :param is_active: Whether the schedule should be active (default: True)
+    :return: JSON with updated schedule details
+    """
+    if __request__ is None:
+        return json.dumps({"error": "Request context not available"})
+
+    if not __user__:
+        return json.dumps({"error": "User context not available"})
+
+    try:
+        from open_webui.models.schedules import Schedules
+
+        user_id = __user__.get("id")
+        schedule = Schedules.get_schedule_by_id(schedule_id)
+
+        if not schedule:
+            return json.dumps({"error": f"Schedule '{schedule_id}' not found"})
+
+        if schedule.user_id != user_id:
+            return json.dumps(
+                {"error": "You do not have permission to update this schedule"}
+            )
+
+        updated = {}
+        if name:
+            updated["name"] = name
+        if task:
+            updated["prompt"] = task
+        if model_id:
+            updated["model_id"] = model_id
+        if frequency:
+            if frequency not in ("once", "daily", "weekly", "monthly"):
+                return json.dumps(
+                    {
+                        "error": f"Invalid frequency '{frequency}'. Must be one of: once, daily, weekly, monthly"
+                    }
+                )
+            updated["frequency"] = frequency
+        if scheduled_at > 0:
+            updated["scheduled_at"] = scheduled_at
+        updated["is_active"] = is_active
+
+        result = Schedules.update_schedule_by_id(schedule_id, updated)
+
+        if not result:
+            return json.dumps({"error": "Failed to update schedule"})
+
+        return json.dumps(
+            {
+                "status": "success",
+                "id": result.id,
+                "name": result.name,
+                "task": result.prompt,
+                "model_id": result.model_id,
+                "frequency": result.frequency,
+                "scheduled_at": result.scheduled_at,
+                "is_active": result.is_active,
+                "updated_at": result.updated_at,
+            },
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        log.exception(f"update_schedule error: {e}")
+        return json.dumps({"error": str(e)})
+
+
+async def delete_schedule(
+    schedule_id: str,
+    __request__: Request = None,
+    __user__: dict = None,
+) -> str:
+    """
+    Delete a scheduled task by its ID.
+
+    :param schedule_id: The unique identifier of the schedule to delete
+    :return: JSON with success or error status
+    """
+    if __request__ is None:
+        return json.dumps({"error": "Request context not available"})
+
+    if not __user__:
+        return json.dumps({"error": "User context not available"})
+
+    try:
+        from open_webui.models.schedules import Schedules
+
+        user_id = __user__.get("id")
+        schedule = Schedules.get_schedule_by_id(schedule_id)
+
+        if not schedule:
+            return json.dumps({"error": f"Schedule '{schedule_id}' not found"})
+
+        if schedule.user_id != user_id:
+            return json.dumps(
+                {"error": "You do not have permission to delete this schedule"}
+            )
+
+        result = Schedules.delete_schedule_by_id(schedule_id)
+
+        if result:
+            return json.dumps(
+                {
+                    "status": "success",
+                    "message": f"Schedule '{schedule_id}' deleted successfully",
+                }
+            )
+        else:
+            return json.dumps({"error": "Failed to delete schedule"})
+    except Exception as e:
+        log.exception(f"delete_schedule error: {e}")
+        return json.dumps({"error": str(e)})
