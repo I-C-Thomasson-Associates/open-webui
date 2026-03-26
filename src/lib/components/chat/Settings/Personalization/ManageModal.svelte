@@ -23,7 +23,6 @@
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Pencil from '$lib/components/icons/Pencil.svelte';
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
-	import Plus from '$lib/components/icons/Plus.svelte';
 	import Search from '$lib/components/icons/Search.svelte';
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
@@ -84,7 +83,11 @@
 			return;
 		}
 
-		const data = JSON.stringify(memories.map((m) => m.content), null, 2);
+		const data = JSON.stringify(
+			memories.map((m) => m.content),
+			null,
+			2
+		);
 		const blob = new Blob([data], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
 
@@ -321,49 +324,38 @@
 						</div>
 					{/if}
 				{:else}
-					<div class="text-center flex h-full text-sm w-full">
-						<div class=" my-auto pb-10 px-4 w-full text-gray-500">
-							{#if loading}
-								{$i18n.t('Loading...')}
-							{:else}
-								{$i18n.t('Memories accessible by LLMs will be shown here.')}
-							{/if}
-						</div>
+					<div class="w-full flex justify-center items-center min-h-20">
+						<Spinner className="size-4" />
 					</div>
 				{/if}
 			</div>
 
 			<!-- Footer -->
 			<div class="flex justify-between items-center text-sm mt-2">
-				<button
-					class=" px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={importing}
-					on:click={() => {
-						showAddMemoryModal = true;
-					}}>{$i18n.t('Add Memory')}</button
-				>
-				<button
-					class=" px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={importing}
-					on:click={importMemories}
-					>{importing ? $i18n.t('Importing...') : $i18n.t('Import Memories')}</button
-				>
-				<button
-					class=" px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={importing}
-					on:click={exportMemories}>{$i18n.t('Export Memories')}</button
-				>
-				<button
-					class=" px-3.5 py-1.5 font-medium text-red-500 hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-red-100 dark:outline-red-800 rounded-3xl disabled:opacity-50 disabled:cursor-not-allowed"
-					disabled={importing}
-					on:click={() => {
-						if (memories.length > 0) {
-							showClearConfirmDialog = true;
-						} else {
-							toast.error($i18n.t('No memories to clear'));
-						}
-					}}>{$i18n.t('Clear memory')}</button
-				>
+				<div class="flex items-center gap-1.5">
+					<button
+						class="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:underline transition"
+						disabled={importing}
+						on:click={() => {
+							if (memories.length > 0) {
+								showClearConfirmDialog = true;
+							} else {
+								toast.error($i18n.t('No memories to clear'));
+							}
+						}}>{$i18n.t('Clear memory')}</button
+					>
+					<button
+						class="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:underline transition disabled:opacity-50 disabled:cursor-not-allowed"
+						disabled={importing}
+						on:click={importMemories}
+						>{importing ? $i18n.t('Importing...') : $i18n.t('Import')}</button
+					>
+					<button
+						class="px-2 py-1 text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:underline transition disabled:opacity-50 disabled:cursor-not-allowed"
+						disabled={importing}
+						on:click={exportMemories}>{$i18n.t('Export')}</button
+					>
+				</div>
 
 				<button
 					class="px-3.5 py-1.5 font-medium hover:bg-black/5 dark:hover:bg-white/5 outline outline-1 outline-gray-100 dark:outline-gray-800 rounded-3xl"
