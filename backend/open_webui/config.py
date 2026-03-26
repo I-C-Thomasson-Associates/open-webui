@@ -42,11 +42,11 @@ from open_webui.secrets import get_secret
 
 class EndpointFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        return record.getMessage().find("/health") == -1
+        return record.getMessage().find('/health') == -1
 
 
 # Filter out /endpoint
-logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
+logging.getLogger('uvicorn.access').addFilter(EndpointFilter())
 
 ####################################
 # Config helpers
@@ -55,20 +55,20 @@ logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 # Function to run the alembic migrations
 def run_migrations():
-    log.info("Running migrations")
+    log.info('Running migrations')
     try:
         from alembic import command
         from alembic.config import Config
 
-        alembic_cfg = Config(OPEN_WEBUI_DIR / "alembic.ini")
+        alembic_cfg = Config(OPEN_WEBUI_DIR / 'alembic.ini')
 
         # Set the script location dynamically
-        migrations_path = OPEN_WEBUI_DIR / "migrations"
-        alembic_cfg.set_main_option("script_location", str(migrations_path))
+        migrations_path = OPEN_WEBUI_DIR / 'migrations'
+        alembic_cfg.set_main_option('script_location', str(migrations_path))
 
-        command.upgrade(alembic_cfg, "head")
+        command.upgrade(alembic_cfg, 'head')
     except Exception as e:
-        log.exception(f"Error running migrations: {e}")
+        log.exception(f'Error running migrations: {e}')
 
 
 if ENABLE_DB_MIGRATIONS:
@@ -76,7 +76,7 @@ if ENABLE_DB_MIGRATIONS:
 
 
 class Config(Base):
-    __tablename__ = "config"
+    __tablename__ = 'config'
 
     id = Column(Integer, primary_key=True)
     data = Column(JSON, nullable=False)
@@ -86,7 +86,7 @@ class Config(Base):
 
 
 def load_json_config():
-    with open(f"{DATA_DIR}/config.json", "r") as file:
+    with open(f'{DATA_DIR}/config.json', 'r') as file:
         return json.load(file)
 
 
@@ -110,14 +110,14 @@ def reset_config():
 
 
 # When initializing, check if config.json exists and migrate it to the database
-if os.path.exists(f"{DATA_DIR}/config.json"):
+if os.path.exists(f'{DATA_DIR}/config.json'):
     data = load_json_config()
     save_to_db(data)
-    os.rename(f"{DATA_DIR}/config.json", f"{DATA_DIR}/old_config.json")
+    os.rename(f'{DATA_DIR}/config.json', f'{DATA_DIR}/old_config.json')
 
 DEFAULT_CONFIG = {
-    "version": 0,
-    "ui": {},
+    'version': 0,
+    'ui': {},
 }
 
 
@@ -131,7 +131,7 @@ CONFIG_DATA = get_config()
 
 
 def get_config_value(config_path: str):
-    path_parts = config_path.split(".")
+    path_parts = config_path.split('.')
     cur_config = CONFIG_DATA
     for key in path_parts:
         if key in cur_config:
@@ -160,7 +160,7 @@ def save_config(config):
     return True
 
 
-T = TypeVar("T")
+T = TypeVar('T')
 
 ENABLE_PERSISTENT_CONFIG = (
     get_secret('ENABLE_PERSISTENT_CONFIG', 'True').lower() == "true"
@@ -175,13 +175,8 @@ class PersistentConfig(Generic[T]):
         self.config_value = get_config_value(config_path)
 
         if self.config_value is not None and ENABLE_PERSISTENT_CONFIG:
-            if (
-                self.config_path.startswith("oauth.")
-                and not ENABLE_OAUTH_PERSISTENT_CONFIG
-            ):
-                log.info(
-                    f"Skipping loading of '{env_name}' as OAuth persistent config is disabled"
-                )
+            if self.config_path.startswith('oauth.') and not ENABLE_OAUTH_PERSISTENT_CONFIG:
+                log.info(f"Skipping loading of '{env_name}' as OAuth persistent config is disabled")
                 self.value = env_value
             else:
                 log.info(f"'{env_name}' loaded from the latest database entry")
@@ -196,26 +191,22 @@ class PersistentConfig(Generic[T]):
 
     @property
     def __dict__(self):
-        raise TypeError(
-            "PersistentConfig object cannot be converted to dict, use config_get or .value instead."
-        )
+        raise TypeError('PersistentConfig object cannot be converted to dict, use config_get or .value instead.')
 
     def __getattribute__(self, item):
-        if item == "__dict__":
-            raise TypeError(
-                "PersistentConfig object cannot be converted to dict, use config_get or .value instead."
-            )
+        if item == '__dict__':
+            raise TypeError('PersistentConfig object cannot be converted to dict, use config_get or .value instead.')
         return super().__getattribute__(item)
 
     def update(self):
         new_value = get_config_value(self.config_path)
         if new_value is not None:
             self.value = new_value
-            log.info(f"Updated {self.env_name} to new value {self.value}")
+            log.info(f'Updated {self.env_name} to new value {self.value}')
 
     def save(self):
         log.info(f"Saving '{self.env_name}' to the database")
-        path_parts = self.config_path.split(".")
+        path_parts = self.config_path.split('.')
         sub_config = CONFIG_DATA
         for key in path_parts[:-1]:
             if key not in sub_config:
@@ -237,12 +228,12 @@ class AppConfig:
         redis_url: Optional[str] = None,
         redis_sentinels: Optional[list] = [],
         redis_cluster: Optional[bool] = False,
-        redis_key_prefix: str = "open-webui",
+        redis_key_prefix: str = 'open-webui',
     ):
         if redis_url:
-            super().__setattr__("_redis_key_prefix", redis_key_prefix)
+            super().__setattr__('_redis_key_prefix', redis_key_prefix)
             super().__setattr__(
-                "_redis",
+                '_redis',
                 get_redis_connection(
                     redis_url,
                     redis_sentinels,
@@ -251,7 +242,7 @@ class AppConfig:
                 ),
             )
 
-        super().__setattr__("_state", {})
+        super().__setattr__('_state', {})
 
     def __setattr__(self, key, value):
         if isinstance(value, PersistentConfig):
@@ -261,7 +252,7 @@ class AppConfig:
             self._state[key].save()
 
             if self._redis and ENABLE_PERSISTENT_CONFIG:
-                redis_key = f"{self._redis_key_prefix}:config:{key}"
+                redis_key = f'{self._redis_key_prefix}:config:{key}'
                 self._redis.set(redis_key, json.dumps(self._state[key].value))
 
     def __getattr__(self, key):
@@ -270,7 +261,7 @@ class AppConfig:
 
         # If Redis is available and persistent config is enabled, check for an updated value
         if self._redis and ENABLE_PERSISTENT_CONFIG:
-            redis_key = f"{self._redis_key_prefix}:config:{key}"
+            redis_key = f'{self._redis_key_prefix}:config:{key}'
             redis_value = self._redis.get(redis_key)
 
             if redis_value is not None:
@@ -280,10 +271,10 @@ class AppConfig:
                     # Update the in-memory value if different
                     if self._state[key].value != decoded_value:
                         self._state[key].value = decoded_value
-                        log.info(f"Updated {key} from Redis: {decoded_value}")
+                        log.info(f'Updated {key} from Redis: {decoded_value}')
 
                 except json.JSONDecodeError:
-                    log.error(f"Invalid JSON format in Redis for {key}: {redis_value}")
+                    log.error(f'Invalid JSON format in Redis for {key}: {redis_value}')
 
         return self._state[key].value
 
@@ -305,7 +296,7 @@ ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS = PersistentConfig(
         'ENABLE_API_KEYS_ENDPOINT_RESTRICTIONS',
         get_secret('ENABLE_API_KEY_ENDPOINT_RESTRICTIONS', 'False'),
     ).lower()
-    == "true",
+    == 'true',
 )
 
 API_KEYS_ALLOWED_ENDPOINTS = PersistentConfig(
@@ -320,10 +311,10 @@ JWT_EXPIRES_IN = PersistentConfig(
     "JWT_EXPIRES_IN", "auth.jwt_expiry", get_secret('JWT_EXPIRES_IN', '4w')
 )
 
-if JWT_EXPIRES_IN.value == "-1":
+if JWT_EXPIRES_IN.value == '-1':
     log.warning(
         "⚠️  SECURITY WARNING: JWT_EXPIRES_IN is set to '-1'\n"
-        "    See: https://docs.openwebui.com/reference/env-configuration\n"
+        '    See: https://docs.openwebui.com/reference/env-configuration\n'
     )
 
 ####################################
@@ -379,6 +370,30 @@ GOOGLE_REDIRECT_URI = PersistentConfig(
     "oauth.google.redirect_uri",
     get_secret('GOOGLE_REDIRECT_URI', ''),
 )
+
+GOOGLE_OAUTH_AUTHORIZE_PARAMS = {}
+_google_oauth_authorize_params = os.environ.get('GOOGLE_OAUTH_AUTHORIZE_PARAMS', '')
+if _google_oauth_authorize_params:
+    try:
+        _parsed = json.loads(_google_oauth_authorize_params)
+        if isinstance(_parsed, dict):
+            GOOGLE_OAUTH_AUTHORIZE_PARAMS = _parsed
+        else:
+            log.warning('GOOGLE_OAUTH_AUTHORIZE_PARAMS must be a JSON object, ignoring')
+    except (json.JSONDecodeError, TypeError):
+        log.warning('GOOGLE_OAUTH_AUTHORIZE_PARAMS is not valid JSON, ignoring')
+
+GOOGLE_OAUTH_AUTHORIZE_PARAMS = {}
+_google_oauth_authorize_params = os.environ.get('GOOGLE_OAUTH_AUTHORIZE_PARAMS', '')
+if _google_oauth_authorize_params:
+    try:
+        _parsed = json.loads(_google_oauth_authorize_params)
+        if isinstance(_parsed, dict):
+            GOOGLE_OAUTH_AUTHORIZE_PARAMS = _parsed
+        else:
+            log.warning('GOOGLE_OAUTH_AUTHORIZE_PARAMS must be a JSON object, ignoring')
+    except (json.JSONDecodeError, TypeError):
+        log.warning('GOOGLE_OAUTH_AUTHORIZE_PARAMS is not valid JSON, ignoring')
 
 MICROSOFT_CLIENT_ID = PersistentConfig(
     "MICROSOFT_CLIENT_ID",
@@ -590,13 +605,9 @@ oauth_group_default_share = (
     os.environ.get('OAUTH_GROUP_DEFAULT_SHARE', 'true').strip().lower()
 )
 OAUTH_GROUP_DEFAULT_SHARE = PersistentConfig(
-    "OAUTH_GROUP_DEFAULT_SHARE",
-    "oauth.group_default_share",
-    (
-        "members"
-        if oauth_group_default_share == "members"
-        else oauth_group_default_share == "true"
-    ),
+    'OAUTH_GROUP_DEFAULT_SHARE',
+    'oauth.group_default_share',
+    ('members' if oauth_group_default_share == 'members' else oauth_group_default_share == 'true'),
 )
 
 
@@ -617,8 +628,8 @@ OAUTH_ROLES_CLAIM = PersistentConfig(
 OAUTH_ROLES_SEPARATOR = get_secret('OAUTH_ROLES_SEPARATOR', ',')
 
 OAUTH_ALLOWED_ROLES = PersistentConfig(
-    "OAUTH_ALLOWED_ROLES",
-    "oauth.allowed_roles",
+    'OAUTH_ALLOWED_ROLES',
+    'oauth.allowed_roles',
     [
         role.strip()
         for role in get_secret(
@@ -678,6 +689,30 @@ OAUTH_AUDIENCE = PersistentConfig(
     get_secret('OAUTH_AUDIENCE', ''),
 )
 
+OAUTH_AUTHORIZE_PARAMS = {}
+_oauth_authorize_params = os.environ.get('OAUTH_AUTHORIZE_PARAMS', '')
+if _oauth_authorize_params:
+    try:
+        _parsed = json.loads(_oauth_authorize_params)
+        if isinstance(_parsed, dict):
+            OAUTH_AUTHORIZE_PARAMS = _parsed
+        else:
+            log.warning('OAUTH_AUTHORIZE_PARAMS must be a JSON object, ignoring')
+    except (json.JSONDecodeError, TypeError):
+        log.warning('OAUTH_AUTHORIZE_PARAMS is not valid JSON, ignoring')
+
+OAUTH_AUTHORIZE_PARAMS = {}
+_oauth_authorize_params = os.environ.get('OAUTH_AUTHORIZE_PARAMS', '')
+if _oauth_authorize_params:
+    try:
+        _parsed = json.loads(_oauth_authorize_params)
+        if isinstance(_parsed, dict):
+            OAUTH_AUTHORIZE_PARAMS = _parsed
+        else:
+            log.warning('OAUTH_AUTHORIZE_PARAMS must be a JSON object, ignoring')
+    except (json.JSONDecodeError, TypeError):
+        log.warning('OAUTH_AUTHORIZE_PARAMS is not valid JSON, ignoring')
+
 
 def load_oauth_providers():
     OAUTH_PROVIDERS.clear()
@@ -685,84 +720,69 @@ def load_oauth_providers():
 
         def google_oauth_register(oauth: OAuth):
             client = oauth.register(
-                name="google",
+                name='google',
                 client_id=GOOGLE_CLIENT_ID.value,
                 client_secret=GOOGLE_CLIENT_SECRET.value,
-                server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+                server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
                 client_kwargs={
-                    "scope": GOOGLE_OAUTH_SCOPE.value,
-                    **(
-                        {"timeout": int(OAUTH_TIMEOUT.value)}
-                        if OAUTH_TIMEOUT.value
-                        else {}
-                    ),
+                    'scope': GOOGLE_OAUTH_SCOPE.value,
+                    **({'timeout': int(OAUTH_TIMEOUT.value)} if OAUTH_TIMEOUT.value else {}),
                 },
                 redirect_uri=GOOGLE_REDIRECT_URI.value,
+                **({'authorize_params': GOOGLE_OAUTH_AUTHORIZE_PARAMS} if GOOGLE_OAUTH_AUTHORIZE_PARAMS else {}),
             )
             return client
 
-        OAUTH_PROVIDERS["google"] = {
-            "redirect_uri": GOOGLE_REDIRECT_URI.value,
-            "register": google_oauth_register,
+        OAUTH_PROVIDERS['google'] = {
+            'redirect_uri': GOOGLE_REDIRECT_URI.value,
+            'register': google_oauth_register,
         }
 
-    if (
-        MICROSOFT_CLIENT_ID.value
-        and MICROSOFT_CLIENT_SECRET.value
-        and MICROSOFT_CLIENT_TENANT_ID.value
-    ):
+    if MICROSOFT_CLIENT_ID.value and MICROSOFT_CLIENT_SECRET.value and MICROSOFT_CLIENT_TENANT_ID.value:
 
         def microsoft_oauth_register(oauth: OAuth):
             client = oauth.register(
-                name="microsoft",
+                name='microsoft',
                 client_id=MICROSOFT_CLIENT_ID.value,
                 client_secret=MICROSOFT_CLIENT_SECRET.value,
-                server_metadata_url=f"{MICROSOFT_CLIENT_LOGIN_BASE_URL.value}/{MICROSOFT_CLIENT_TENANT_ID.value}/v2.0/.well-known/openid-configuration?appid={MICROSOFT_CLIENT_ID.value}",
+                server_metadata_url=f'{MICROSOFT_CLIENT_LOGIN_BASE_URL.value}/{MICROSOFT_CLIENT_TENANT_ID.value}/v2.0/.well-known/openid-configuration?appid={MICROSOFT_CLIENT_ID.value}',
                 client_kwargs={
-                    "scope": MICROSOFT_OAUTH_SCOPE.value,
-                    **(
-                        {"timeout": int(OAUTH_TIMEOUT.value)}
-                        if OAUTH_TIMEOUT.value
-                        else {}
-                    ),
+                    'scope': MICROSOFT_OAUTH_SCOPE.value,
+                    **({'timeout': int(OAUTH_TIMEOUT.value)} if OAUTH_TIMEOUT.value else {}),
                 },
                 redirect_uri=MICROSOFT_REDIRECT_URI.value,
             )
             return client
 
-        OAUTH_PROVIDERS["microsoft"] = {
-            "redirect_uri": MICROSOFT_REDIRECT_URI.value,
-            "picture_url": MICROSOFT_CLIENT_PICTURE_URL.value,
-            "register": microsoft_oauth_register,
+        OAUTH_PROVIDERS['microsoft'] = {
+            'redirect_uri': MICROSOFT_REDIRECT_URI.value,
+            'picture_url': MICROSOFT_CLIENT_PICTURE_URL.value,
+            'register': microsoft_oauth_register,
         }
 
     if GITHUB_CLIENT_ID.value and GITHUB_CLIENT_SECRET.value:
 
         def github_oauth_register(oauth: OAuth):
             client = oauth.register(
-                name="github",
+                name='github',
                 client_id=GITHUB_CLIENT_ID.value,
                 client_secret=GITHUB_CLIENT_SECRET.value,
-                access_token_url="https://github.com/login/oauth/access_token",
-                authorize_url="https://github.com/login/oauth/authorize",
-                api_base_url="https://api.github.com",
-                userinfo_endpoint="https://api.github.com/user",
+                access_token_url='https://github.com/login/oauth/access_token',
+                authorize_url='https://github.com/login/oauth/authorize',
+                api_base_url='https://api.github.com',
+                userinfo_endpoint='https://api.github.com/user',
                 client_kwargs={
-                    "scope": GITHUB_CLIENT_SCOPE.value,
-                    **(
-                        {"timeout": int(OAUTH_TIMEOUT.value)}
-                        if OAUTH_TIMEOUT.value
-                        else {}
-                    ),
+                    'scope': GITHUB_CLIENT_SCOPE.value,
+                    **({'timeout': int(OAUTH_TIMEOUT.value)} if OAUTH_TIMEOUT.value else {}),
                 },
                 redirect_uri=GITHUB_CLIENT_REDIRECT_URI.value,
             )
             return client
 
-        OAUTH_PROVIDERS["github"] = {
-            "redirect_uri": GITHUB_CLIENT_REDIRECT_URI.value,
-            "register": github_oauth_register,
-            "sub_claim": "id",
+        OAUTH_PROVIDERS['github'] = {
+            'redirect_uri': GITHUB_CLIENT_REDIRECT_URI.value,
+            'register': github_oauth_register,
+            'sub_claim': 'id',
         }
 
     if (
@@ -773,32 +793,25 @@ def load_oauth_providers():
 
         def oidc_oauth_register(oauth: OAuth):
             client_kwargs = {
-                "scope": OAUTH_SCOPES.value,
+                'scope': OAUTH_SCOPES.value,
                 **(
-                    {
-                        "token_endpoint_auth_method": OAUTH_TOKEN_ENDPOINT_AUTH_METHOD.value
-                    }
+                    {'token_endpoint_auth_method': OAUTH_TOKEN_ENDPOINT_AUTH_METHOD.value}
                     if OAUTH_TOKEN_ENDPOINT_AUTH_METHOD.value
                     else {}
                 ),
-                **(
-                    {"timeout": int(OAUTH_TIMEOUT.value)} if OAUTH_TIMEOUT.value else {}
-                ),
+                **({'timeout': int(OAUTH_TIMEOUT.value)} if OAUTH_TIMEOUT.value else {}),
             }
 
-            if (
-                OAUTH_CODE_CHALLENGE_METHOD.value
-                and OAUTH_CODE_CHALLENGE_METHOD.value == "S256"
-            ):
-                client_kwargs["code_challenge_method"] = "S256"
+            if OAUTH_CODE_CHALLENGE_METHOD.value and OAUTH_CODE_CHALLENGE_METHOD.value == 'S256':
+                client_kwargs['code_challenge_method'] = 'S256'
             elif OAUTH_CODE_CHALLENGE_METHOD.value:
                 raise Exception(
                     'Code challenge methods other than "%s" not supported. Given: "%s"'
-                    % ("S256", OAUTH_CODE_CHALLENGE_METHOD.value)
+                    % ('S256', OAUTH_CODE_CHALLENGE_METHOD.value)
                 )
 
             client = oauth.register(
-                name="oidc",
+                name='oidc',
                 client_id=OAUTH_CLIENT_ID.value,
                 client_secret=OAUTH_CLIENT_SECRET.value,
                 server_metadata_url=OPENID_PROVIDER_URL.value,
@@ -807,62 +820,54 @@ def load_oauth_providers():
             )
             return client
 
-        OAUTH_PROVIDERS["oidc"] = {
-            "name": OAUTH_PROVIDER_NAME.value,
-            "redirect_uri": OPENID_REDIRECT_URI.value,
-            "register": oidc_oauth_register,
+        OAUTH_PROVIDERS['oidc'] = {
+            'name': OAUTH_PROVIDER_NAME.value,
+            'redirect_uri': OPENID_REDIRECT_URI.value,
+            'register': oidc_oauth_register,
         }
 
     if FEISHU_CLIENT_ID.value and FEISHU_CLIENT_SECRET.value:
 
         def feishu_oauth_register(oauth: OAuth):
             client = oauth.register(
-                name="feishu",
+                name='feishu',
                 client_id=FEISHU_CLIENT_ID.value,
                 client_secret=FEISHU_CLIENT_SECRET.value,
-                access_token_url="https://open.feishu.cn/open-apis/authen/v2/oauth/token",
-                authorize_url="https://accounts.feishu.cn/open-apis/authen/v1/authorize",
-                api_base_url="https://open.feishu.cn/open-apis",
-                userinfo_endpoint="https://open.feishu.cn/open-apis/authen/v1/user_info",
+                access_token_url='https://open.feishu.cn/open-apis/authen/v2/oauth/token',
+                authorize_url='https://accounts.feishu.cn/open-apis/authen/v1/authorize',
+                api_base_url='https://open.feishu.cn/open-apis',
+                userinfo_endpoint='https://open.feishu.cn/open-apis/authen/v1/user_info',
                 client_kwargs={
-                    "scope": FEISHU_OAUTH_SCOPE.value,
-                    **(
-                        {"timeout": int(OAUTH_TIMEOUT.value)}
-                        if OAUTH_TIMEOUT.value
-                        else {}
-                    ),
+                    'scope': FEISHU_OAUTH_SCOPE.value,
+                    **({'timeout': int(OAUTH_TIMEOUT.value)} if OAUTH_TIMEOUT.value else {}),
                 },
                 redirect_uri=FEISHU_REDIRECT_URI.value,
             )
             return client
 
-        OAUTH_PROVIDERS["feishu"] = {
-            "register": feishu_oauth_register,
-            "sub_claim": "user_id",
+        OAUTH_PROVIDERS['feishu'] = {
+            'register': feishu_oauth_register,
+            'sub_claim': 'user_id',
         }
 
     configured_providers = []
     if GOOGLE_CLIENT_ID.value:
-        configured_providers.append("Google")
+        configured_providers.append('Google')
     if MICROSOFT_CLIENT_ID.value:
-        configured_providers.append("Microsoft")
+        configured_providers.append('Microsoft')
     if GITHUB_CLIENT_ID.value:
-        configured_providers.append("GitHub")
+        configured_providers.append('GitHub')
     if FEISHU_CLIENT_ID.value:
-        configured_providers.append("Feishu")
+        configured_providers.append('Feishu')
 
-    if (
-        configured_providers
-        and not OPENID_PROVIDER_URL.value
-        and not OPENID_END_SESSION_ENDPOINT.value
-    ):
-        provider_list = ", ".join(configured_providers)
+    if configured_providers and not OPENID_PROVIDER_URL.value and not OPENID_END_SESSION_ENDPOINT.value:
+        provider_list = ', '.join(configured_providers)
         log.warning(
-            f"⚠️  OAuth providers configured ({provider_list}) but OPENID_PROVIDER_URL not set - logout will not work!"
+            f'⚠️  OAuth providers configured ({provider_list}) but OPENID_PROVIDER_URL not set - logout will not work!'
         )
         log.warning(
             f"Set OPENID_PROVIDER_URL to your OAuth provider's OpenID Connect discovery endpoint,"
-            f" or set OPENID_END_SESSION_ENDPOINT to a custom logout URL to fix logout functionality."
+            f' or set OPENID_END_SESSION_ENDPOINT to a custom logout URL to fix logout functionality.'
         )
 
 
@@ -885,40 +890,38 @@ try:
 except Exception as e:
     pass
 
-for file_path in (FRONTEND_BUILD_DIR / "static").glob("**/*"):
+for file_path in (FRONTEND_BUILD_DIR / 'static').glob('**/*'):
     if file_path.is_file():
-        target_path = STATIC_DIR / file_path.relative_to(
-            (FRONTEND_BUILD_DIR / "static")
-        )
+        target_path = STATIC_DIR / file_path.relative_to((FRONTEND_BUILD_DIR / 'static'))
         target_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copyfile(file_path, target_path)
         except Exception as e:
-            logging.error(f"An error occurred: {e}")
+            logging.error(f'An error occurred: {e}')
 
-frontend_favicon = FRONTEND_BUILD_DIR / "static" / "favicon.png"
+frontend_favicon = FRONTEND_BUILD_DIR / 'static' / 'favicon.png'
 
 if frontend_favicon.exists():
     try:
-        shutil.copyfile(frontend_favicon, STATIC_DIR / "favicon.png")
+        shutil.copyfile(frontend_favicon, STATIC_DIR / 'favicon.png')
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        logging.error(f'An error occurred: {e}')
 
-frontend_splash = FRONTEND_BUILD_DIR / "static" / "splash.png"
+frontend_splash = FRONTEND_BUILD_DIR / 'static' / 'splash.png'
 
 if frontend_splash.exists():
     try:
-        shutil.copyfile(frontend_splash, STATIC_DIR / "splash.png")
+        shutil.copyfile(frontend_splash, STATIC_DIR / 'splash.png')
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        logging.error(f'An error occurred: {e}')
 
-frontend_loader = FRONTEND_BUILD_DIR / "static" / "loader.js"
+frontend_loader = FRONTEND_BUILD_DIR / 'static' / 'loader.js'
 
 if frontend_loader.exists():
     try:
-        shutil.copyfile(frontend_loader, STATIC_DIR / "loader.js")
+        shutil.copyfile(frontend_loader, STATIC_DIR / 'loader.js')
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        logging.error(f'An error occurred: {e}')
 
 
 ####################################
@@ -929,36 +932,30 @@ CUSTOM_NAME = get_secret('CUSTOM_NAME', '')
 
 if CUSTOM_NAME:
     try:
-        r = requests.get(f"https://api.openwebui.com/api/v1/custom/{CUSTOM_NAME}")
+        r = requests.get(f'https://api.openwebui.com/api/v1/custom/{CUSTOM_NAME}')
         data = r.json()
         if r.ok:
-            if "logo" in data:
+            if 'logo' in data:
                 WEBUI_FAVICON_URL = url = (
-                    f"https://api.openwebui.com{data['logo']}"
-                    if data["logo"][0] == "/"
-                    else data["logo"]
+                    f'https://api.openwebui.com{data["logo"]}' if data['logo'][0] == '/' else data['logo']
                 )
 
                 r = requests.get(url, stream=True)
                 if r.status_code == 200:
-                    with open(f"{STATIC_DIR}/favicon.png", "wb") as f:
+                    with open(f'{STATIC_DIR}/favicon.png', 'wb') as f:
                         r.raw.decode_content = True
                         shutil.copyfileobj(r.raw, f)
 
-            if "splash" in data:
-                url = (
-                    f"https://api.openwebui.com{data['splash']}"
-                    if data["splash"][0] == "/"
-                    else data["splash"]
-                )
+            if 'splash' in data:
+                url = f'https://api.openwebui.com{data["splash"]}' if data['splash'][0] == '/' else data['splash']
 
                 r = requests.get(url, stream=True)
                 if r.status_code == 200:
-                    with open(f"{STATIC_DIR}/splash.png", "wb") as f:
+                    with open(f'{STATIC_DIR}/splash.png', 'wb') as f:
                         r.raw.decode_content = True
                         shutil.copyfileobj(r.raw, f)
 
-            WEBUI_NAME = data["name"]
+            WEBUI_NAME = data['name']
     except Exception as e:
         log.exception(e)
         pass
@@ -995,7 +992,7 @@ AZURE_STORAGE_KEY = get_secret('AZURE_STORAGE_KEY', None)
 # File Upload DIR
 ####################################
 
-UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_DIR = DATA_DIR / 'uploads'
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -1003,7 +1000,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # Cache DIR
 ####################################
 
-CACHE_DIR = DATA_DIR / "cache"
+CACHE_DIR = DATA_DIR / 'cache'
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -1034,31 +1031,25 @@ OLLAMA_API_BASE_URL = get_secret(
 OLLAMA_BASE_URL = get_secret('OLLAMA_BASE_URL', '')
 if OLLAMA_BASE_URL:
     # Remove trailing slash
-    OLLAMA_BASE_URL = (
-        OLLAMA_BASE_URL[:-1] if OLLAMA_BASE_URL.endswith("/") else OLLAMA_BASE_URL
-    )
+    OLLAMA_BASE_URL = OLLAMA_BASE_URL[:-1] if OLLAMA_BASE_URL.endswith('/') else OLLAMA_BASE_URL
 
 
 K8S_FLAG = get_secret('K8S_FLAG', '')
 USE_OLLAMA_DOCKER = get_secret('USE_OLLAMA_DOCKER', 'false')
 
-if OLLAMA_BASE_URL == "" and OLLAMA_API_BASE_URL != "":
-    OLLAMA_BASE_URL = (
-        OLLAMA_API_BASE_URL[:-4]
-        if OLLAMA_API_BASE_URL.endswith("/api")
-        else OLLAMA_API_BASE_URL
-    )
+if OLLAMA_BASE_URL == '' and OLLAMA_API_BASE_URL != '':
+    OLLAMA_BASE_URL = OLLAMA_API_BASE_URL[:-4] if OLLAMA_API_BASE_URL.endswith('/api') else OLLAMA_API_BASE_URL
 
-if ENV == "prod":
-    if OLLAMA_BASE_URL == "/ollama" and not K8S_FLAG:
-        if USE_OLLAMA_DOCKER.lower() == "true":
+if ENV == 'prod':
+    if OLLAMA_BASE_URL == '/ollama' and not K8S_FLAG:
+        if USE_OLLAMA_DOCKER.lower() == 'true':
             # if you use all-in-one docker container (Open WebUI + Ollama)
             # with the docker build arg USE_OLLAMA=true (--build-arg="USE_OLLAMA=true") this only works with http://localhost:11434
-            OLLAMA_BASE_URL = "http://localhost:11434"
+            OLLAMA_BASE_URL = 'http://localhost:11434'
         else:
-            OLLAMA_BASE_URL = "http://host.docker.internal:11434"
+            OLLAMA_BASE_URL = 'http://host.docker.internal:11434'
     elif K8S_FLAG:
-        OLLAMA_BASE_URL = "http://ollama-service.open-webui.svc.cluster.local:11434"
+        OLLAMA_BASE_URL = 'http://ollama-service.open-webui.svc.cluster.local:11434'
 
 
 def _resolve_ollama_base_url(url: str) -> str:
@@ -1071,17 +1062,17 @@ def _resolve_ollama_base_url(url: str) -> str:
         except (OSError, TimeoutError):
             return False
 
-    host = urlparse(url).hostname or "localhost"
+    host = urlparse(url).hostname or 'localhost'
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         default = pool.submit(reachable, host, 11434)
         fallback = pool.submit(reachable, host, 12434)
 
     if not default.result() and fallback.result():
-        url = url.replace(":11434", ":12434")
-        log.info(f"Ollama port 11434 unreachable on {host}, falling back to 12434")
+        url = url.replace(':11434', ':12434')
+        log.info(f'Ollama port 11434 unreachable on {host}, falling back to 12434')
     elif not default.result():
-        log.info(f"Ollama ports 11434 and 12434 both unreachable on {host}")
+        log.info(f'Ollama ports 11434 and 12434 both unreachable on {host}')
 
     return url
 
@@ -1097,14 +1088,12 @@ if os.environ.get('OLLAMA_BASE_URL', '') in ("", "/ollama") and not os.environ.g
 OLLAMA_BASE_URLS = get_secret('OLLAMA_BASE_URLS', '')
 OLLAMA_BASE_URLS = OLLAMA_BASE_URLS if OLLAMA_BASE_URLS != "" else OLLAMA_BASE_URL
 
-OLLAMA_BASE_URLS = [url.strip() for url in OLLAMA_BASE_URLS.split(";")]
-OLLAMA_BASE_URLS = PersistentConfig(
-    "OLLAMA_BASE_URLS", "ollama.base_urls", OLLAMA_BASE_URLS
-)
+OLLAMA_BASE_URLS = [url.strip() for url in OLLAMA_BASE_URLS.split(';')]
+OLLAMA_BASE_URLS = PersistentConfig('OLLAMA_BASE_URLS', 'ollama.base_urls', OLLAMA_BASE_URLS)
 
 OLLAMA_API_CONFIGS = PersistentConfig(
-    "OLLAMA_API_CONFIGS",
-    "ollama.api_configs",
+    'OLLAMA_API_CONFIGS',
+    'ollama.api_configs',
     {},
 )
 
@@ -1127,19 +1116,17 @@ GEMINI_API_KEY = get_secret('GEMINI_API_KEY', '')
 GEMINI_API_BASE_URL = get_secret('GEMINI_API_BASE_URL', '')
 
 
-if OPENAI_API_BASE_URL == "":
-    OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+if OPENAI_API_BASE_URL == '':
+    OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
 else:
-    if OPENAI_API_BASE_URL.endswith("/"):
+    if OPENAI_API_BASE_URL.endswith('/'):
         OPENAI_API_BASE_URL = OPENAI_API_BASE_URL[:-1]
 
 OPENAI_API_KEYS = get_secret('OPENAI_API_KEYS', '')
 OPENAI_API_KEYS = OPENAI_API_KEYS if OPENAI_API_KEYS != "" else OPENAI_API_KEY
 
-OPENAI_API_KEYS = [url.strip() for url in OPENAI_API_KEYS.split(";")]
-OPENAI_API_KEYS = PersistentConfig(
-    "OPENAI_API_KEYS", "openai.api_keys", OPENAI_API_KEYS
-)
+OPENAI_API_KEYS = [url.strip() for url in OPENAI_API_KEYS.split(';')]
+OPENAI_API_KEYS = PersistentConfig('OPENAI_API_KEYS', 'openai.api_keys', OPENAI_API_KEYS)
 
 OPENAI_API_BASE_URLS = get_secret('OPENAI_API_BASE_URLS', '')
 OPENAI_API_BASE_URLS = (
@@ -1147,28 +1134,23 @@ OPENAI_API_BASE_URLS = (
 )
 
 OPENAI_API_BASE_URLS = [
-    url.strip() if url != "" else "https://api.openai.com/v1"
-    for url in OPENAI_API_BASE_URLS.split(";")
+    url.strip() if url != '' else 'https://api.openai.com/v1' for url in OPENAI_API_BASE_URLS.split(';')
 ]
-OPENAI_API_BASE_URLS = PersistentConfig(
-    "OPENAI_API_BASE_URLS", "openai.api_base_urls", OPENAI_API_BASE_URLS
-)
+OPENAI_API_BASE_URLS = PersistentConfig('OPENAI_API_BASE_URLS', 'openai.api_base_urls', OPENAI_API_BASE_URLS)
 
 OPENAI_API_CONFIGS = PersistentConfig(
-    "OPENAI_API_CONFIGS",
-    "openai.api_configs",
+    'OPENAI_API_CONFIGS',
+    'openai.api_configs',
     {},
 )
 
 # Get the actual OpenAI API key based on the base URL
-OPENAI_API_KEY = ""
+OPENAI_API_KEY = ''
 try:
-    OPENAI_API_KEY = OPENAI_API_KEYS.value[
-        OPENAI_API_BASE_URLS.value.index("https://api.openai.com/v1")
-    ]
+    OPENAI_API_KEY = OPENAI_API_KEYS.value[OPENAI_API_BASE_URLS.value.index('https://api.openai.com/v1')]
 except Exception:
     pass
-OPENAI_API_BASE_URL = "https://api.openai.com/v1"
+OPENAI_API_BASE_URL = 'https://api.openai.com/v1'
 
 
 ####################################
@@ -1191,13 +1173,13 @@ try:
         get_secret('TOOL_SERVER_CONNECTIONS', '[]')
     )
 except Exception as e:
-    log.exception(f"Error loading TOOL_SERVER_CONNECTIONS: {e}")
+    log.exception(f'Error loading TOOL_SERVER_CONNECTIONS: {e}')
     tool_server_connections = []
 
 
 TOOL_SERVER_CONNECTIONS = PersistentConfig(
-    "TOOL_SERVER_CONNECTIONS",
-    "tool_server.connections",
+    'TOOL_SERVER_CONNECTIONS',
+    'tool_server.connections',
     tool_server_connections,
 )
 
@@ -1210,8 +1192,8 @@ terminal_server_connections = json.loads(
 )
 
 TERMINAL_SERVER_CONNECTIONS = PersistentConfig(
-    "TERMINAL_SERVER_CONNECTIONS",
-    "terminal_server.connections",
+    'TERMINAL_SERVER_CONNECTIONS',
+    'terminal_server.connections',
     terminal_server_connections,
 )
 
@@ -1262,60 +1244,60 @@ try:
         get_secret('DEFAULT_PROMPT_SUGGESTIONS', '[]')
     )
 except Exception as e:
-    log.exception(f"Error loading DEFAULT_PROMPT_SUGGESTIONS: {e}")
+    log.exception(f'Error loading DEFAULT_PROMPT_SUGGESTIONS: {e}')
     default_prompt_suggestions = []
 if default_prompt_suggestions == []:
     default_prompt_suggestions = [
         {
-            "title": ["Help me study", "vocabulary for a college entrance exam"],
-            "content": "Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.",
+            'title': ['Help me study', 'vocabulary for a college entrance exam'],
+            'content': "Help me study vocabulary: write a sentence for me to fill in the blank, and I'll try to pick the correct option.",
         },
         {
-            "title": ["Give me ideas", "for what to do with my kids' art"],
-            "content": "What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.",
+            'title': ['Give me ideas', "for what to do with my kids' art"],
+            'content': "What are 5 creative things I could do with my kids' art? I don't want to throw them away, but it's also so much clutter.",
         },
         {
-            "title": ["Tell me a fun fact", "about the Roman Empire"],
-            "content": "Tell me a random fun fact about the Roman Empire",
+            'title': ['Tell me a fun fact', 'about the Roman Empire'],
+            'content': 'Tell me a random fun fact about the Roman Empire',
         },
         {
-            "title": ["Show me a code snippet", "of a website's sticky header"],
-            "content": "Show me a code snippet of a website's sticky header in CSS and JavaScript.",
+            'title': ['Show me a code snippet', "of a website's sticky header"],
+            'content': "Show me a code snippet of a website's sticky header in CSS and JavaScript.",
         },
         {
-            "title": [
-                "Explain options trading",
+            'title': [
+                'Explain options trading',
                 "if I'm familiar with buying and selling stocks",
             ],
-            "content": "Explain options trading in simple terms if I'm familiar with buying and selling stocks.",
+            'content': "Explain options trading in simple terms if I'm familiar with buying and selling stocks.",
         },
         {
-            "title": ["Overcome procrastination", "give me tips"],
-            "content": "Could you start by asking me about instances when I procrastinate the most and then give me some suggestions to overcome it?",
+            'title': ['Overcome procrastination', 'give me tips'],
+            'content': 'Could you start by asking me about instances when I procrastinate the most and then give me some suggestions to overcome it?',
         },
     ]
 
 DEFAULT_PROMPT_SUGGESTIONS = PersistentConfig(
-    "DEFAULT_PROMPT_SUGGESTIONS",
-    "ui.prompt_suggestions",
+    'DEFAULT_PROMPT_SUGGESTIONS',
+    'ui.prompt_suggestions',
     default_prompt_suggestions,
 )
 
 MODEL_ORDER_LIST = PersistentConfig(
-    "MODEL_ORDER_LIST",
-    "ui.model_order_list",
+    'MODEL_ORDER_LIST',
+    'ui.model_order_list',
     [],
 )
 
 DEFAULT_MODEL_METADATA = PersistentConfig(
-    "DEFAULT_MODEL_METADATA",
-    "models.default_metadata",
+    'DEFAULT_MODEL_METADATA',
+    'models.default_metadata',
     {},
 )
 
 DEFAULT_MODEL_PARAMS = PersistentConfig(
-    "DEFAULT_MODEL_PARAMS",
-    "models.default_params",
+    'DEFAULT_MODEL_PARAMS',
+    'models.default_params',
     {},
 )
 
@@ -1649,79 +1631,79 @@ USER_PERMISSIONS_SETTINGS_INTERFACE = (
 
 
 DEFAULT_USER_PERMISSIONS = {
-    "workspace": {
-        "models": USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS,
-        "knowledge": USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS,
-        "prompts": USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS,
-        "tools": USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS,
-        "skills": USER_PERMISSIONS_WORKSPACE_SKILLS_ACCESS,
-        "models_import": USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT,
-        "models_export": USER_PERMISSIONS_WORKSPACE_MODELS_EXPORT,
-        "prompts_import": USER_PERMISSIONS_WORKSPACE_PROMPTS_IMPORT,
-        "prompts_export": USER_PERMISSIONS_WORKSPACE_PROMPTS_EXPORT,
-        "tools_import": USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT,
-        "tools_export": USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT,
+    'workspace': {
+        'models': USER_PERMISSIONS_WORKSPACE_MODELS_ACCESS,
+        'knowledge': USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ACCESS,
+        'prompts': USER_PERMISSIONS_WORKSPACE_PROMPTS_ACCESS,
+        'tools': USER_PERMISSIONS_WORKSPACE_TOOLS_ACCESS,
+        'skills': USER_PERMISSIONS_WORKSPACE_SKILLS_ACCESS,
+        'models_import': USER_PERMISSIONS_WORKSPACE_MODELS_IMPORT,
+        'models_export': USER_PERMISSIONS_WORKSPACE_MODELS_EXPORT,
+        'prompts_import': USER_PERMISSIONS_WORKSPACE_PROMPTS_IMPORT,
+        'prompts_export': USER_PERMISSIONS_WORKSPACE_PROMPTS_EXPORT,
+        'tools_import': USER_PERMISSIONS_WORKSPACE_TOOLS_IMPORT,
+        'tools_export': USER_PERMISSIONS_WORKSPACE_TOOLS_EXPORT,
     },
-    "sharing": {
-        "models": USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING,
-        "public_models": USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING,
-        "knowledge": USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_SHARING,
-        "public_knowledge": USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_PUBLIC_SHARING,
-        "prompts": USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_SHARING,
-        "public_prompts": USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING,
-        "tools": USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_SHARING,
-        "public_tools": USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING,
-        "skills": USER_PERMISSIONS_WORKSPACE_SKILLS_ALLOW_SHARING,
-        "public_skills": USER_PERMISSIONS_WORKSPACE_SKILLS_ALLOW_PUBLIC_SHARING,
-        "notes": USER_PERMISSIONS_NOTES_ALLOW_SHARING,
-        "public_notes": USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING,
+    'sharing': {
+        'models': USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_SHARING,
+        'public_models': USER_PERMISSIONS_WORKSPACE_MODELS_ALLOW_PUBLIC_SHARING,
+        'knowledge': USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_SHARING,
+        'public_knowledge': USER_PERMISSIONS_WORKSPACE_KNOWLEDGE_ALLOW_PUBLIC_SHARING,
+        'prompts': USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_SHARING,
+        'public_prompts': USER_PERMISSIONS_WORKSPACE_PROMPTS_ALLOW_PUBLIC_SHARING,
+        'tools': USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_SHARING,
+        'public_tools': USER_PERMISSIONS_WORKSPACE_TOOLS_ALLOW_PUBLIC_SHARING,
+        'skills': USER_PERMISSIONS_WORKSPACE_SKILLS_ALLOW_SHARING,
+        'public_skills': USER_PERMISSIONS_WORKSPACE_SKILLS_ALLOW_PUBLIC_SHARING,
+        'notes': USER_PERMISSIONS_NOTES_ALLOW_SHARING,
+        'public_notes': USER_PERMISSIONS_NOTES_ALLOW_PUBLIC_SHARING,
     },
-    "access_grants": {
-        "allow_users": USER_PERMISSIONS_ACCESS_GRANTS_ALLOW_USERS,
+    'access_grants': {
+        'allow_users': USER_PERMISSIONS_ACCESS_GRANTS_ALLOW_USERS,
     },
-    "chat": {
-        "controls": USER_PERMISSIONS_CHAT_CONTROLS,
-        "valves": USER_PERMISSIONS_CHAT_VALVES,
-        "system_prompt": USER_PERMISSIONS_CHAT_SYSTEM_PROMPT,
-        "params": USER_PERMISSIONS_CHAT_PARAMS,
-        "file_upload": USER_PERMISSIONS_CHAT_FILE_UPLOAD,
-        "web_upload": USER_PERMISSIONS_CHAT_WEB_UPLOAD,
-        "delete": USER_PERMISSIONS_CHAT_DELETE,
-        "delete_message": USER_PERMISSIONS_CHAT_DELETE_MESSAGE,
-        "continue_response": USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE,
-        "regenerate_response": USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE,
-        "rate_response": USER_PERMISSIONS_CHAT_RATE_RESPONSE,
-        "edit": USER_PERMISSIONS_CHAT_EDIT,
-        "share": USER_PERMISSIONS_CHAT_SHARE,
-        "export": USER_PERMISSIONS_CHAT_EXPORT,
-        "stt": USER_PERMISSIONS_CHAT_STT,
-        "tts": USER_PERMISSIONS_CHAT_TTS,
-        "call": USER_PERMISSIONS_CHAT_CALL,
-        "multiple_models": USER_PERMISSIONS_CHAT_MULTIPLE_MODELS,
-        "temporary": USER_PERMISSIONS_CHAT_TEMPORARY,
-        "temporary_enforced": USER_PERMISSIONS_CHAT_TEMPORARY_ENFORCED,
+    'chat': {
+        'controls': USER_PERMISSIONS_CHAT_CONTROLS,
+        'valves': USER_PERMISSIONS_CHAT_VALVES,
+        'system_prompt': USER_PERMISSIONS_CHAT_SYSTEM_PROMPT,
+        'params': USER_PERMISSIONS_CHAT_PARAMS,
+        'file_upload': USER_PERMISSIONS_CHAT_FILE_UPLOAD,
+        'web_upload': USER_PERMISSIONS_CHAT_WEB_UPLOAD,
+        'delete': USER_PERMISSIONS_CHAT_DELETE,
+        'delete_message': USER_PERMISSIONS_CHAT_DELETE_MESSAGE,
+        'continue_response': USER_PERMISSIONS_CHAT_CONTINUE_RESPONSE,
+        'regenerate_response': USER_PERMISSIONS_CHAT_REGENERATE_RESPONSE,
+        'rate_response': USER_PERMISSIONS_CHAT_RATE_RESPONSE,
+        'edit': USER_PERMISSIONS_CHAT_EDIT,
+        'share': USER_PERMISSIONS_CHAT_SHARE,
+        'export': USER_PERMISSIONS_CHAT_EXPORT,
+        'stt': USER_PERMISSIONS_CHAT_STT,
+        'tts': USER_PERMISSIONS_CHAT_TTS,
+        'call': USER_PERMISSIONS_CHAT_CALL,
+        'multiple_models': USER_PERMISSIONS_CHAT_MULTIPLE_MODELS,
+        'temporary': USER_PERMISSIONS_CHAT_TEMPORARY,
+        'temporary_enforced': USER_PERMISSIONS_CHAT_TEMPORARY_ENFORCED,
     },
-    "features": {
+    'features': {
         # General features
-        "api_keys": USER_PERMISSIONS_FEATURES_API_KEYS,
-        "notes": USER_PERMISSIONS_FEATURES_NOTES,
-        "folders": USER_PERMISSIONS_FEATURES_FOLDERS,
-        "channels": USER_PERMISSIONS_FEATURES_CHANNELS,
-        "direct_tool_servers": USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS,
+        'api_keys': USER_PERMISSIONS_FEATURES_API_KEYS,
+        'notes': USER_PERMISSIONS_FEATURES_NOTES,
+        'folders': USER_PERMISSIONS_FEATURES_FOLDERS,
+        'channels': USER_PERMISSIONS_FEATURES_CHANNELS,
+        'direct_tool_servers': USER_PERMISSIONS_FEATURES_DIRECT_TOOL_SERVERS,
         # Chat features
-        "web_search": USER_PERMISSIONS_FEATURES_WEB_SEARCH,
-        "image_generation": USER_PERMISSIONS_FEATURES_IMAGE_GENERATION,
-        "code_interpreter": USER_PERMISSIONS_FEATURES_CODE_INTERPRETER,
-        "memories": USER_PERMISSIONS_FEATURES_MEMORIES,
+        'web_search': USER_PERMISSIONS_FEATURES_WEB_SEARCH,
+        'image_generation': USER_PERMISSIONS_FEATURES_IMAGE_GENERATION,
+        'code_interpreter': USER_PERMISSIONS_FEATURES_CODE_INTERPRETER,
+        'memories': USER_PERMISSIONS_FEATURES_MEMORIES,
     },
-    "settings": {
-        "interface": USER_PERMISSIONS_SETTINGS_INTERFACE,
+    'settings': {
+        'interface': USER_PERMISSIONS_SETTINGS_INTERFACE,
     },
 }
 
 USER_PERMISSIONS = PersistentConfig(
-    "USER_PERMISSIONS",
-    "user.permissions",
+    'USER_PERMISSIONS',
+    'user.permissions',
     DEFAULT_USER_PERMISSIONS,
 )
 
@@ -1761,18 +1743,18 @@ ENABLE_EVALUATION_ARENA_MODELS = PersistentConfig(
     get_secret('ENABLE_EVALUATION_ARENA_MODELS', 'True').lower() == "true",
 )
 EVALUATION_ARENA_MODELS = PersistentConfig(
-    "EVALUATION_ARENA_MODELS",
-    "evaluation.arena.models",
+    'EVALUATION_ARENA_MODELS',
+    'evaluation.arena.models',
     [],
 )
 
 DEFAULT_ARENA_MODEL = {
-    "id": "arena-model",
-    "name": "Arena Model",
-    "meta": {
-        "profile_image_url": "/favicon.png",
-        "description": "Submit your questions to anonymous AI chatbots and vote on the best response.",
-        "model_ids": None,
+    'id': 'arena-model',
+    'name': 'Arena Model',
+    'meta': {
+        'profile_image_url': '/favicon.png',
+        'description': 'Submit your questions to anonymous AI chatbots and vote on the best response.',
+        'model_ids': None,
     },
 }
 
@@ -1791,7 +1773,7 @@ BYPASS_ADMIN_ACCESS_CONTROL = (
         'BYPASS_ADMIN_ACCESS_CONTROL',
         get_secret('ENABLE_ADMIN_WORKSPACE_CONTENT_ACCESS', 'True'),
     ).lower()
-    == "true"
+    == 'true'
 )
 
 ENABLE_ADMIN_CHAT_ACCESS = (
@@ -1826,14 +1808,13 @@ ENABLE_USER_WEBHOOKS = PersistentConfig(
 
 # FastAPI / AnyIO settings
 THREAD_POOL_SIZE = os.getenv('THREAD_POOL_SIZE', None)
+THREAD_POOL_SIZE = os.getenv('THREAD_POOL_SIZE', None)
 
 if THREAD_POOL_SIZE is not None and isinstance(THREAD_POOL_SIZE, str):
     try:
         THREAD_POOL_SIZE = int(THREAD_POOL_SIZE)
     except ValueError:
-        log.warning(
-            f"THREAD_POOL_SIZE is not a valid integer: {THREAD_POOL_SIZE}. Defaulting to None."
-        )
+        log.warning(f'THREAD_POOL_SIZE is not a valid integer: {THREAD_POOL_SIZE}. Defaulting to None.')
         THREAD_POOL_SIZE = None
 
 
@@ -1841,7 +1822,7 @@ def validate_cors_origin(origin):
     parsed_url = urlparse(origin)
 
     # Check if the scheme is either http or https, or a custom scheme
-    schemes = ["http", "https"] + CORS_ALLOW_CUSTOM_SCHEME
+    schemes = ['http', 'https'] + CORS_ALLOW_CUSTOM_SCHEME
     if parsed_url.scheme not in schemes:
         raise ValueError(
             f"Invalid scheme in CORS_ALLOW_ORIGIN: '{origin}'. Only 'http' and 'https' and CORS_ALLOW_CUSTOM_SCHEME are allowed."
@@ -1864,10 +1845,8 @@ CORS_ALLOW_ORIGIN = get_secret('CORS_ALLOW_ORIGIN', '*').split(";")
 # Provide a semicolon-separated list of allowed schemes in the environment variable CORS_ALLOW_CUSTOM_SCHEMES.
 CORS_ALLOW_CUSTOM_SCHEME = get_secret('CORS_ALLOW_CUSTOM_SCHEME', '').split(";")
 
-if CORS_ALLOW_ORIGIN == ["*"]:
-    log.warning(
-        "\n\nWARNING: CORS_ALLOW_ORIGIN IS SET TO '*' - NOT RECOMMENDED FOR PRODUCTION DEPLOYMENTS.\n"
-    )
+if CORS_ALLOW_ORIGIN == ['*']:
+    log.warning("\n\nWARNING: CORS_ALLOW_ORIGIN IS SET TO '*' - NOT RECOMMENDED FOR PRODUCTION DEPLOYMENTS.\n")
 else:
     # You have to pick between a single wildcard or a list of origins.
     # Doing both will result in CORS errors in the browser.
@@ -1888,10 +1867,10 @@ try:
     banners = json.loads(get_secret('WEBUI_BANNERS', '[]'))
     banners = [BannerModel(**banner) for banner in banners]
 except Exception as e:
-    log.exception(f"Error loading WEBUI_BANNERS: {e}")
+    log.exception(f'Error loading WEBUI_BANNERS: {e}')
     banners = []
 
-WEBUI_BANNERS = PersistentConfig("WEBUI_BANNERS", "ui.banners", banners)
+WEBUI_BANNERS = PersistentConfig('WEBUI_BANNERS', 'ui.banners', banners)
 
 
 SHOW_ADMIN_DETAILS = PersistentConfig(
@@ -2322,8 +2301,8 @@ CODE_INTERPRETER_JUPYTER_AUTH_PASSWORD = PersistentConfig(
 
 
 CODE_INTERPRETER_JUPYTER_TIMEOUT = PersistentConfig(
-    "CODE_INTERPRETER_JUPYTER_TIMEOUT",
-    "code_interpreter.jupyter.timeout",
+    'CODE_INTERPRETER_JUPYTER_TIMEOUT',
+    'code_interpreter.jupyter.timeout',
     int(
         get_secret(
             'CODE_INTERPRETER_JUPYTER_TIMEOUT',
@@ -2378,9 +2357,9 @@ CODE_INTERPRETER_PYODIDE_PROMPT = """
 VECTOR_DB = get_secret('VECTOR_DB', 'chroma')
 
 # Chroma
-CHROMA_DATA_PATH = f"{DATA_DIR}/vector_db"
+CHROMA_DATA_PATH = f'{DATA_DIR}/vector_db'
 
-if VECTOR_DB == "chroma":
+if VECTOR_DB == 'chroma':
     import chromadb
 
     CHROMA_TENANT = get_secret('CHROMA_TENANT', chromadb.DEFAULT_TENANT)
@@ -2394,9 +2373,7 @@ if VECTOR_DB == "chroma":
     # Comma-separated list of header=value pairs
     CHROMA_HTTP_HEADERS = get_secret('CHROMA_HTTP_HEADERS', '')
     if CHROMA_HTTP_HEADERS:
-        CHROMA_HTTP_HEADERS = dict(
-            [pair.split("=") for pair in CHROMA_HTTP_HEADERS.split(",")]
-        )
+        CHROMA_HTTP_HEADERS = dict([pair.split('=') for pair in CHROMA_HTTP_HEADERS.split(',')])
     else:
         CHROMA_HTTP_HEADERS = None
     CHROMA_HTTP_SSL = get_secret('CHROMA_HTTP_SSL', 'false').lower() == "true"
@@ -2404,6 +2381,7 @@ if VECTOR_DB == "chroma":
 
 
 # MariaDB Vector (mariadb-vector)
+MARIADB_VECTOR_DB_URL = os.environ.get('MARIADB_VECTOR_DB_URL', '').strip()
 MARIADB_VECTOR_DB_URL = os.environ.get('MARIADB_VECTOR_DB_URL', '').strip()
 
 MARIADB_VECTOR_INITIALIZE_MAX_VECTOR_LENGTH = int(
@@ -2425,6 +2403,7 @@ MARIADB_VECTOR_INDEX_M = int(
 
 # Pooling (MariaDB-Vector)
 MARIADB_VECTOR_POOL_SIZE = os.environ.get('MARIADB_VECTOR_POOL_SIZE', None)
+MARIADB_VECTOR_POOL_SIZE = os.environ.get('MARIADB_VECTOR_POOL_SIZE', None)
 
 if MARIADB_VECTOR_POOL_SIZE != None:
     try:
@@ -2433,8 +2412,9 @@ if MARIADB_VECTOR_POOL_SIZE != None:
         MARIADB_VECTOR_POOL_SIZE = None
 
 MARIADB_VECTOR_POOL_MAX_OVERFLOW = os.environ.get('MARIADB_VECTOR_POOL_MAX_OVERFLOW', 0)
+MARIADB_VECTOR_POOL_MAX_OVERFLOW = os.environ.get('MARIADB_VECTOR_POOL_MAX_OVERFLOW', 0)
 
-if MARIADB_VECTOR_POOL_MAX_OVERFLOW == "":
+if MARIADB_VECTOR_POOL_MAX_OVERFLOW == '':
     MARIADB_VECTOR_POOL_MAX_OVERFLOW = 0
 else:
     try:
@@ -2443,8 +2423,9 @@ else:
         MARIADB_VECTOR_POOL_MAX_OVERFLOW = 0
 
 MARIADB_VECTOR_POOL_TIMEOUT = os.environ.get('MARIADB_VECTOR_POOL_TIMEOUT', 30)
+MARIADB_VECTOR_POOL_TIMEOUT = os.environ.get('MARIADB_VECTOR_POOL_TIMEOUT', 30)
 
-if MARIADB_VECTOR_POOL_TIMEOUT == "":
+if MARIADB_VECTOR_POOL_TIMEOUT == '':
     MARIADB_VECTOR_POOL_TIMEOUT = 30
 else:
     try:
@@ -2453,8 +2434,9 @@ else:
         MARIADB_VECTOR_POOL_TIMEOUT = 30
 
 MARIADB_VECTOR_POOL_RECYCLE = os.environ.get('MARIADB_VECTOR_POOL_RECYCLE', 3600)
+MARIADB_VECTOR_POOL_RECYCLE = os.environ.get('MARIADB_VECTOR_POOL_RECYCLE', 3600)
 
-if MARIADB_VECTOR_POOL_RECYCLE == "":
+if MARIADB_VECTOR_POOL_RECYCLE == '':
     MARIADB_VECTOR_POOL_RECYCLE = 3600
 else:
     try:
@@ -2463,15 +2445,15 @@ else:
         MARIADB_VECTOR_POOL_RECYCLE = 3600
 
 ENABLE_MARIADB_VECTOR = True
-if VECTOR_DB == "mariadb-vector":
+if VECTOR_DB == 'mariadb-vector':
     if not MARIADB_VECTOR_DB_URL:
         ENABLE_MARIADB_VECTOR = False
     else:
         try:
             parsed = urlparse(MARIADB_VECTOR_DB_URL)
-            scheme = (parsed.scheme or "").lower()
+            scheme = (parsed.scheme or '').lower()
             # Require official driver so VECTOR binds as float32 bytes correctly
-            if scheme != "mariadb+mariadbconnector":
+            if scheme != 'mariadb+mariadbconnector':
                 ENABLE_MARIADB_VECTOR = False
         except Exception:
             ENABLE_MARIADB_VECTOR = False
@@ -2544,7 +2526,7 @@ ELASTICSEARCH_INDEX_PREFIX = get_secret(
 PGVECTOR_DB_URL = get_secret('PGVECTOR_DB_URL', DATABASE_URL)
 if VECTOR_DB == "pgvector" and not PGVECTOR_DB_URL.startswith("postgres"):
     raise ValueError(
-        "Pgvector requires setting PGVECTOR_DB_URL or using Postgres with vector extension as the primary database."
+        'Pgvector requires setting PGVECTOR_DB_URL or using Postgres with vector extension as the primary database.'
     )
 PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH = int(
     get_secret('PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH', '1536')
@@ -2554,10 +2536,10 @@ PGVECTOR_USE_HALFVEC = get_secret('PGVECTOR_USE_HALFVEC', 'false').lower() == "t
 
 if PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH > 2000 and not PGVECTOR_USE_HALFVEC:
     raise ValueError(
-        "PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH is set to "
-        f"{PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH}, which exceeds the 2000 dimension limit of the "
+        'PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH is set to '
+        f'{PGVECTOR_INITIALIZE_MAX_VECTOR_LENGTH}, which exceeds the 2000 dimension limit of the '
         "'vector' type. Set PGVECTOR_USE_HALFVEC=true to enable the 'halfvec' "
-        "type required for high-dimensional embeddings."
+        'type required for high-dimensional embeddings.'
     )
 
 PGVECTOR_CREATE_EXTENSION = (
@@ -2566,9 +2548,7 @@ PGVECTOR_CREATE_EXTENSION = (
 PGVECTOR_PGCRYPTO = get_secret('PGVECTOR_PGCRYPTO', 'false').lower() == "true"
 PGVECTOR_PGCRYPTO_KEY = get_secret('PGVECTOR_PGCRYPTO_KEY', None)
 if PGVECTOR_PGCRYPTO and not PGVECTOR_PGCRYPTO_KEY:
-    raise ValueError(
-        "PGVECTOR_PGCRYPTO is enabled but PGVECTOR_PGCRYPTO_KEY is not set. Please provide a valid key."
-    )
+    raise ValueError('PGVECTOR_PGCRYPTO is enabled but PGVECTOR_PGCRYPTO_KEY is not set. Please provide a valid key.')
 
 
 PGVECTOR_POOL_SIZE = get_secret('PGVECTOR_POOL_SIZE', None)
@@ -2581,7 +2561,7 @@ if PGVECTOR_POOL_SIZE != None:
 
 PGVECTOR_POOL_MAX_OVERFLOW = get_secret('PGVECTOR_POOL_MAX_OVERFLOW', 0)
 
-if PGVECTOR_POOL_MAX_OVERFLOW == "":
+if PGVECTOR_POOL_MAX_OVERFLOW == '':
     PGVECTOR_POOL_MAX_OVERFLOW = 0
 else:
     try:
@@ -2591,7 +2571,7 @@ else:
 
 PGVECTOR_POOL_TIMEOUT = get_secret('PGVECTOR_POOL_TIMEOUT', 30)
 
-if PGVECTOR_POOL_TIMEOUT == "":
+if PGVECTOR_POOL_TIMEOUT == '':
     PGVECTOR_POOL_TIMEOUT = 30
 else:
     try:
@@ -2601,7 +2581,7 @@ else:
 
 PGVECTOR_POOL_RECYCLE = get_secret('PGVECTOR_POOL_RECYCLE', 3600)
 
-if PGVECTOR_POOL_RECYCLE == "":
+if PGVECTOR_POOL_RECYCLE == '':
     PGVECTOR_POOL_RECYCLE = 3600
 else:
     try:
@@ -2615,7 +2595,7 @@ if PGVECTOR_INDEX_METHOD not in ("ivfflat", "hnsw", ""):
 
 PGVECTOR_HNSW_M = get_secret('PGVECTOR_HNSW_M', 16)
 
-if PGVECTOR_HNSW_M == "":
+if PGVECTOR_HNSW_M == '':
     PGVECTOR_HNSW_M = 16
 else:
     try:
@@ -2625,7 +2605,7 @@ else:
 
 PGVECTOR_HNSW_EF_CONSTRUCTION = get_secret('PGVECTOR_HNSW_EF_CONSTRUCTION', 64)
 
-if PGVECTOR_HNSW_EF_CONSTRUCTION == "":
+if PGVECTOR_HNSW_EF_CONSTRUCTION == '':
     PGVECTOR_HNSW_EF_CONSTRUCTION = 64
 else:
     try:
@@ -2635,7 +2615,7 @@ else:
 
 PGVECTOR_IVFFLAT_LISTS = get_secret('PGVECTOR_IVFFLAT_LISTS', 100)
 
-if PGVECTOR_IVFFLAT_LISTS == "":
+if PGVECTOR_IVFFLAT_LISTS == '':
     PGVECTOR_IVFFLAT_LISTS = 100
 else:
     try:
@@ -2660,7 +2640,7 @@ if OPENGAUSS_POOL_SIZE != None:
 
 OPENGAUSS_POOL_MAX_OVERFLOW = get_secret('OPENGAUSS_POOL_MAX_OVERFLOW', 0)
 
-if OPENGAUSS_POOL_MAX_OVERFLOW == "":
+if OPENGAUSS_POOL_MAX_OVERFLOW == '':
     OPENGAUSS_POOL_MAX_OVERFLOW = 0
 else:
     try:
@@ -2670,7 +2650,7 @@ else:
 
 OPENGAUSS_POOL_TIMEOUT = get_secret('OPENGAUSS_POOL_TIMEOUT', 30)
 
-if OPENGAUSS_POOL_TIMEOUT == "":
+if OPENGAUSS_POOL_TIMEOUT == '':
     OPENGAUSS_POOL_TIMEOUT = 30
 else:
     try:
@@ -2680,7 +2660,7 @@ else:
 
 OPENGAUSS_POOL_RECYCLE = get_secret('OPENGAUSS_POOL_RECYCLE', 3600)
 
-if OPENGAUSS_POOL_RECYCLE == "":
+if OPENGAUSS_POOL_RECYCLE == '':
     OPENGAUSS_POOL_RECYCLE = 3600
 else:
     try:
@@ -2711,17 +2691,15 @@ ORACLE_DB_POOL_MAX = int(get_secret('ORACLE_DB_POOL_MAX', 10))
 ORACLE_DB_POOL_INCREMENT = int(get_secret('ORACLE_DB_POOL_INCREMENT', 1))
 
 
-if VECTOR_DB == "oracle23ai":
+if VECTOR_DB == 'oracle23ai':
     if not ORACLE_DB_USER or not ORACLE_DB_PASSWORD or not ORACLE_DB_DSN:
-        raise ValueError(
-            "Oracle23ai requires setting ORACLE_DB_USER, ORACLE_DB_PASSWORD, and ORACLE_DB_DSN."
-        )
+        raise ValueError('Oracle23ai requires setting ORACLE_DB_USER, ORACLE_DB_PASSWORD, and ORACLE_DB_DSN.')
     if ORACLE_DB_USE_WALLET and (not ORACLE_WALLET_DIR or not ORACLE_WALLET_PASSWORD):
         raise ValueError(
-            "Oracle23ai requires setting ORACLE_WALLET_DIR and ORACLE_WALLET_PASSWORD when using wallet authentication."
+            'Oracle23ai requires setting ORACLE_WALLET_DIR and ORACLE_WALLET_PASSWORD when using wallet authentication.'
         )
 
-log.info(f"VECTOR_DB: {VECTOR_DB}")
+log.info(f'VECTOR_DB: {VECTOR_DB}')
 
 # S3 Vector
 S3_VECTOR_BUCKET_NAME = get_secret('S3_VECTOR_BUCKET_NAME', None)
@@ -2884,14 +2862,15 @@ MINERU_API_KEY = PersistentConfig(
 )
 
 mineru_params = os.getenv('MINERU_PARAMS', '')
+mineru_params = os.getenv('MINERU_PARAMS', '')
 try:
     mineru_params = json.loads(mineru_params)
 except json.JSONDecodeError:
     mineru_params = {}
 
 MINERU_PARAMS = PersistentConfig(
-    "MINERU_PARAMS",
-    "rag.mineru_params",
+    'MINERU_PARAMS',
+    'rag.mineru_params',
     mineru_params,
 )
 
@@ -2926,14 +2905,15 @@ DOCLING_API_KEY = PersistentConfig(
 )
 
 docling_params = os.getenv('DOCLING_PARAMS', '')
+docling_params = os.getenv('DOCLING_PARAMS', '')
 try:
     docling_params = json.loads(docling_params)
 except json.JSONDecodeError:
     docling_params = {}
 
 DOCLING_PARAMS = PersistentConfig(
-    "DOCLING_PARAMS",
-    "rag.docling_params",
+    'DOCLING_PARAMS',
+    'rag.docling_params',
     docling_params,
 )
 
@@ -3086,7 +3066,7 @@ RAG_EMBEDDING_MODEL = PersistentConfig(
     "rag.embedding_model",
     get_secret('RAG_EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2'),
 )
-log.info(f"Embedding model set: {RAG_EMBEDDING_MODEL.value}")
+log.info(f'Embedding model set: {RAG_EMBEDDING_MODEL.value}')
 
 RAG_EMBEDDING_MODEL_AUTO_UPDATE = (
     not OFFLINE_MODE
@@ -3143,8 +3123,8 @@ RAG_RERANKING_MODEL = PersistentConfig(
     "rag.reranking_model",
     get_secret('RAG_RERANKING_MODEL', ''),
 )
-if RAG_RERANKING_MODEL.value != "":
-    log.info(f"Reranking model set: {RAG_RERANKING_MODEL.value}")
+if RAG_RERANKING_MODEL.value != '':
+    log.info(f'Reranking model set: {RAG_RERANKING_MODEL.value}')
 
 
 RAG_RERANKING_MODEL_AUTO_UPDATE = (
@@ -3290,20 +3270,18 @@ ENABLE_RAG_LOCAL_WEB_FETCH = (
 
 
 DEFAULT_WEB_FETCH_FILTER_LIST = [
-    "!169.254.169.254",
-    "!fd00:ec2::254",
-    "!metadata.google.internal",
-    "!metadata.azure.com",
-    "!100.100.100.200",
+    '!169.254.169.254',
+    '!fd00:ec2::254',
+    '!metadata.google.internal',
+    '!metadata.azure.com',
+    '!100.100.100.200',
 ]
 
 web_fetch_filter_list = os.getenv('WEB_FETCH_FILTER_LIST', '')
 if web_fetch_filter_list == "":
     web_fetch_filter_list = []
 else:
-    web_fetch_filter_list = [
-        item.strip() for item in web_fetch_filter_list.split(",") if item.strip()
-    ]
+    web_fetch_filter_list = [item.strip() for item in web_fetch_filter_list.split(',') if item.strip()]
 
 WEB_FETCH_FILTER_LIST = list(set(DEFAULT_WEB_FETCH_FILTER_LIST + web_fetch_filter_list))
 
@@ -3372,8 +3350,8 @@ except Exception as e:
 # You can provide a list of your own websites to filter after performing a web search.
 # This ensures the highest level of safety and reliability of the information sources.
 WEB_SEARCH_DOMAIN_FILTER_LIST = PersistentConfig(
-    "WEB_SEARCH_DOMAIN_FILTER_LIST",
-    "rag.web.search.domain.filter_list",
+    'WEB_SEARCH_DOMAIN_FILTER_LIST',
+    'rag.web.search.domain.filter_list',
     web_search_domain_filter_list,
 )
 
@@ -3383,6 +3361,11 @@ WEB_SEARCH_CONCURRENT_REQUESTS = PersistentConfig(
     int(os.getenv('WEB_SEARCH_CONCURRENT_REQUESTS', '0')),
 )
 
+WEB_FETCH_MAX_CONTENT_LENGTH = PersistentConfig(
+    'WEB_FETCH_MAX_CONTENT_LENGTH',
+    'rag.web.search.fetch_url_max_content_length',
+    (int(os.environ.get('WEB_FETCH_MAX_CONTENT_LENGTH')) if os.environ.get('WEB_FETCH_MAX_CONTENT_LENGTH') else None),
+)
 
 WEB_LOADER_ENGINE = PersistentConfig(
     "WEB_LOADER_ENGINE",
@@ -3777,14 +3760,15 @@ AUTOMATIC1111_API_AUTH = PersistentConfig(
 )
 
 automatic1111_params = os.getenv('AUTOMATIC1111_PARAMS', '')
+automatic1111_params = os.getenv('AUTOMATIC1111_PARAMS', '')
 try:
     automatic1111_params = json.loads(automatic1111_params)
 except json.JSONDecodeError:
     automatic1111_params = {}
 
 AUTOMATIC1111_PARAMS = PersistentConfig(
-    "AUTOMATIC1111_PARAMS",
-    "image_generation.automatic1111.api_params",
+    'AUTOMATIC1111_PARAMS',
+    'image_generation.automatic1111.api_params',
     automatic1111_params,
 )
 
@@ -3918,14 +3902,15 @@ COMFYUI_WORKFLOW = PersistentConfig(
 )
 
 comfyui_workflow_nodes = os.getenv('COMFYUI_WORKFLOW_NODES', '')
+comfyui_workflow_nodes = os.getenv('COMFYUI_WORKFLOW_NODES', '')
 try:
     comfyui_workflow_nodes = json.loads(comfyui_workflow_nodes)
 except json.JSONDecodeError:
     comfyui_workflow_nodes = []
 
 COMFYUI_WORKFLOW_NODES = PersistentConfig(
-    "COMFYUI_WORKFLOW_NODES",
-    "image_generation.comfyui.nodes",
+    'COMFYUI_WORKFLOW_NODES',
+    'image_generation.comfyui.nodes',
     comfyui_workflow_nodes,
 )
 
@@ -3947,6 +3932,7 @@ IMAGES_OPENAI_API_KEY = PersistentConfig(
 )
 
 images_openai_params = os.getenv('IMAGES_OPENAI_PARAMS', '')
+images_openai_params = os.getenv('IMAGES_OPENAI_PARAMS', '')
 try:
     images_openai_params = json.loads(images_openai_params)
 except json.JSONDecodeError:
@@ -3954,7 +3940,7 @@ except json.JSONDecodeError:
 
 
 IMAGES_OPENAI_API_PARAMS = PersistentConfig(
-    "IMAGES_OPENAI_API_PARAMS", "image_generation.openai.params", images_openai_params
+    'IMAGES_OPENAI_API_PARAMS', 'image_generation.openai.params', images_openai_params
 )
 
 
@@ -4044,14 +4030,15 @@ IMAGES_EDIT_COMFYUI_WORKFLOW = PersistentConfig(
 )
 
 images_edit_comfyui_workflow_nodes = os.getenv('IMAGES_EDIT_COMFYUI_WORKFLOW_NODES', '')
+images_edit_comfyui_workflow_nodes = os.getenv('IMAGES_EDIT_COMFYUI_WORKFLOW_NODES', '')
 try:
     images_edit_comfyui_workflow_nodes = json.loads(images_edit_comfyui_workflow_nodes)
 except json.JSONDecodeError:
     images_edit_comfyui_workflow_nodes = []
 
 IMAGES_EDIT_COMFYUI_WORKFLOW_NODES = PersistentConfig(
-    "IMAGES_EDIT_COMFYUI_WORKFLOW_NODES",
-    "images.edit.comfyui.nodes",
+    'IMAGES_EDIT_COMFYUI_WORKFLOW_NODES',
+    'images.edit.comfyui.nodes',
     images_edit_comfyui_workflow_nodes,
 )
 
@@ -4077,6 +4064,7 @@ WHISPER_VAD_FILTER = os.getenv('WHISPER_VAD_FILTER', 'False').lower() == "true"
 
 WHISPER_MULTILINGUAL = os.getenv('WHISPER_MULTILINGUAL', 'False').lower() == "true"
 
+WHISPER_LANGUAGE = os.getenv('WHISPER_LANGUAGE', '').lower() or None
 WHISPER_LANGUAGE = os.getenv('WHISPER_LANGUAGE', '').lower() or None
 
 # Add Deepgram configuration
@@ -4116,8 +4104,8 @@ AUDIO_STT_MODEL = PersistentConfig(
 )
 
 AUDIO_STT_SUPPORTED_CONTENT_TYPES = PersistentConfig(
-    "AUDIO_STT_SUPPORTED_CONTENT_TYPES",
-    "audio.stt.supported_content_types",
+    'AUDIO_STT_SUPPORTED_CONTENT_TYPES',
+    'audio.stt.supported_content_types',
     [
         content_type.strip()
         for content_type in get_secret(
@@ -4187,14 +4175,15 @@ AUDIO_TTS_OPENAI_API_KEY = PersistentConfig(
 )
 
 audio_tts_openai_params = os.getenv('AUDIO_TTS_OPENAI_PARAMS', '')
+audio_tts_openai_params = os.getenv('AUDIO_TTS_OPENAI_PARAMS', '')
 try:
     audio_tts_openai_params = json.loads(audio_tts_openai_params)
 except json.JSONDecodeError:
     audio_tts_openai_params = {}
 
 AUDIO_TTS_OPENAI_PARAMS = PersistentConfig(
-    "AUDIO_TTS_OPENAI_PARAMS",
-    "audio.tts.openai.params",
+    'AUDIO_TTS_OPENAI_PARAMS',
+    'audio.tts.openai.params',
     audio_tts_openai_params,
 )
 
