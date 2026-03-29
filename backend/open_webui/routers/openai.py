@@ -1146,8 +1146,7 @@ async def generate_chat_completion(
             payload = convert_to_responses_payload(payload)
             request_url = f'{request_url}/responses?api-version={api_version}'
         else:
-            # Chat Completions: model in URL path
-            request_url, payload = convert_to_azure_payload(url, payload, api_version)
+            # Chat Completions: append suffix to request_url already built above
             request_url = f'{request_url}/chat/completions?api-version={api_version}'
     else:
         if is_responses:
