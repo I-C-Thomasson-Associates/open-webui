@@ -109,28 +109,29 @@ class BatchAddMemoryForm(BaseModel):
     contents: list[str]
 
 
-@router.post("/batch/add", response_model=list[MemoryModel])
+@router.post('/batch/add', response_model=list[MemoryModel])
 async def batch_add_memories(
     request: Request,
     form_data: BatchAddMemoryForm,
     user=Depends(get_verified_user),
-    db: Session = Depends(get_session),
 ):
+    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
+    # Database operations (insert_memories_batch) manage their own short-lived sessions.
+    # This prevents holding a connection during EMBEDDING_FUNCTION()
+    # which makes external embedding API calls (1-5+ seconds).
     if not request.app.state.config.ENABLE_MEMORIES:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
-    if not has_permission(
-        user.id, "features.memories", request.app.state.config.USER_PERMISSIONS
-    ):
+    if not await has_permission(user.id, 'features.memories', request.app.state.config.USER_PERMISSIONS):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    memories = Memories.insert_memories_batch(user.id, form_data.contents, db=db)
+    memories = await Memories.insert_memories_batch(user.id, form_data.contents)
 
     # Generate embeddings in batch
     vectors = await request.app.state.EMBEDDING_FUNCTION(
@@ -141,16 +142,16 @@ async def batch_add_memories(
     VECTOR_DB_BATCH_SIZE = 5000
     all_items = [
         {
-            "id": memory.id,
-            "text": memory.content,
-            "vector": vectors[idx],
-            "metadata": {"created_at": memory.created_at},
+            'id': memory.id,
+            'text': memory.content,
+            'vector': vectors[idx],
+            'metadata': {'created_at': memory.created_at},
         }
         for idx, memory in enumerate(memories)
     ]
     for i in range(0, len(all_items), VECTOR_DB_BATCH_SIZE):
-        VECTOR_DB_CLIENT.upsert(
-            collection_name=f"user-memory-{user.id}",
+        await ASYNC_VECTOR_DB_CLIENT.upsert(
+            collection_name=f'user-memory-{user.id}',
             items=all_items[i : i + VECTOR_DB_BATCH_SIZE],
         )
 
