@@ -15,7 +15,7 @@ from open_webui.models.chats import Chat
 from open_webui.models.groups import Group, GroupMember, Groups
 from open_webui.models.users import User
 from open_webui.utils.auth import get_admin_user
-from open_webui.utils.salasobrien_cost import resolve_cost
+from open_webui.utils.salasobrien_cost import load_foundry_rates, resolve_cost
 
 log = logging.getLogger(__name__)
 
@@ -178,6 +178,8 @@ async def get_analytics(
         last = rows[-1]
         next_cursor = _encode_cursor(int(last.created_at), last.id)
 
+    foundry_rates = load_foundry_rates()
+
     distinct_user_ids = list({row.user_id for row in rows})
     user_groups_map = await Groups.get_groups_by_member_ids(distinct_user_ids, db=db)
 
@@ -205,7 +207,7 @@ async def get_analytics(
             usage.get('completion_tokens', usage.get('output_tokens'))
         )
         total_tokens = _coerce_int(usage.get('total_tokens'))
-        cost_usd = resolve_cost(row.model_id, usage)
+        cost_usd = resolve_cost(row.model_id, usage, foundry_rates)
 
         result_rows.append(
             AnalyticsRow(

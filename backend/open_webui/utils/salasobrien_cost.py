@@ -1,57 +1,44 @@
 """Per-message cost resolution for Salas O'Brien analytics.
 
 OpenRouter returns `cost` in the usage block; Azure Foundry does not, so
-Foundry costs are computed from token counts × FOUNDRY_RATES. Update rates
-from the Azure portal pricing tab when they change.
+Foundry costs are computed from token counts × rates loaded on every call
+from Key Vault secret `FOUNDRY-MODEL-RATES`.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Optional
+
+from open_webui.secrets import get_secret_uncached
 
 log = logging.getLogger(__name__)
 
 
+FOUNDRY_RATES_SECRET_KEY = 'FOUNDRY_MODEL_RATES'
+
+
 ####################
-# Rate Table
+# Rate Loading
 ####################
 
-# USD per million tokens, Standard Global pricing. Verified 2026-04.
-FOUNDRY_RATES: dict[str, dict[str, float]] = {
-    'gpt-5.5': {
-        'input': 5.00,
-        'cached_input': 0.50,
-        'output': 30.00,
-    },
-    # gpt-5.4 has tiered pricing above 272K input tokens.
-    'gpt-5.4': {
-        'input': 2.50,
-        'cached_input': 0.25,
-        'output': 15.00,
-        'input_long': 5.00,
-        'cached_input_long': 0.50,
-        'output_long': 22.50,
-    },
-    'gpt-5.4-mini': {
-        'input': 0.75,
-        'cached_input': 0.08,
-        'output': 4.50,
-    },
-    'gpt-5.3-chat': {
-        'input': 1.75,
-        'cached_input': 0.18,
-        'output': 14.00,
-    },
-    # DeepSeek V3.2: no separate cached-input rate published.
-    'deepseek-v3.2': {
-        'input': 0.58,
-        'cached_input': 0.58,
-        'output': 1.68,
-    },
-}
 
-GPT_5_4_TIER_THRESHOLD = 272_000
+def load_foundry_rates() -> dict[str, dict[str, float]]:
+    """Fetch the Foundry rate table from Key Vault. Empty dict on any failure."""
+    raw = get_secret_uncached(FOUNDRY_RATES_SECRET_KEY, '')
+    if not raw:
+        log.warning('foundry rates secret %s is empty or missing', FOUNDRY_RATES_SECRET_KEY)
+        return {}
+    try:
+        rates = json.loads(raw)
+    except (TypeError, ValueError) as e:
+        log.warning('foundry rates secret is not valid JSON: %s', e)
+        return {}
+    if not isinstance(rates, dict):
+        log.warning('foundry rates secret must be a JSON object, got %s', type(rates).__name__)
+        return {}
+    return rates
 
 
 ####################
@@ -93,8 +80,12 @@ def _normalize_model_id(model_id: Optional[str]) -> Optional[str]:
     return canonical if canonical else None
 
 
-def _foundry_cost(canonical_id: str, usage: dict) -> Optional[float]:
-    rates = FOUNDRY_RATES.get(canonical_id)
+def _foundry_cost(
+    canonical_id: str,
+    usage: dict,
+    foundry_rates: dict[str, dict[str, float]],
+) -> Optional[float]:
+    rates = foundry_rates.get(canonical_id)
     if rates is None:
         return None
 
@@ -114,9 +105,11 @@ def _foundry_cost(canonical_id: str, usage: dict) -> Optional[float]:
         cached_tokens = prompt_tokens
     non_cached_prompt = prompt_tokens - cached_tokens
 
+    # Tiered pricing: rate entry can declare a `tier_threshold` and `*_long` rates.
+    threshold = rates.get('tier_threshold')
     use_long_tier = (
-        canonical_id == 'gpt-5.4'
-        and prompt_tokens > GPT_5_4_TIER_THRESHOLD
+        isinstance(threshold, (int, float))
+        and prompt_tokens > threshold
         and 'input_long' in rates
     )
     input_rate = rates['input_long'] if use_long_tier else rates['input']
@@ -137,7 +130,11 @@ def _foundry_cost(canonical_id: str, usage: dict) -> Optional[float]:
 ####################
 
 
-def resolve_cost(model_id: Optional[str], usage: Any) -> Optional[float]:
+def resolve_cost(
+    model_id: Optional[str],
+    usage: Any,
+    foundry_rates: dict[str, dict[str, float]],
+) -> Optional[float]:
     """Resolve USD cost for an assistant message; None if no rate available."""
     if not isinstance(usage, dict):
         return None
@@ -151,4 +148,4 @@ def resolve_cost(model_id: Optional[str], usage: Any) -> Optional[float]:
     if canonical is None:
         return None
 
-    return _foundry_cost(canonical, usage)
+    return _foundry_cost(canonical, usage, foundry_rates)

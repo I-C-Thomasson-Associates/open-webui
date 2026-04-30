@@ -37,10 +37,9 @@ except Exception as e:
     )
 
 
-@lru_cache(maxsize=256)
-def get_secret(key: str, default: str = "") -> str:
+def _fetch_secret(key: str, default: str = "") -> str:
     """
-    Retrieve a secret from Azure Key Vault or environment variables.
+    Retrieve a secret from Azure Key Vault or environment variables. No caching.
 
     Priority:
     1. Azure Key Vault (if enabled and secret exists)
@@ -73,6 +72,17 @@ def get_secret(key: str, default: str = "") -> str:
         log.debug(f"Retrieved '{key}' from environment variable")
 
     return value
+
+
+@lru_cache(maxsize=256)
+def get_secret(key: str, default: str = "") -> str:
+    """Retrieve a secret with process-lifetime caching."""
+    return _fetch_secret(key, default)
+
+
+def get_secret_uncached(key: str, default: str = "") -> str:
+    """Retrieve a secret on every call. Use when staleness is unacceptable."""
+    return _fetch_secret(key, default)
 
 
 def clear_secret_cache():
