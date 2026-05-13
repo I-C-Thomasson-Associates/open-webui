@@ -58,6 +58,7 @@ from open_webui.env import (
     REDIS_KEY_PREFIX,
 )
 from open_webui.utils.headers import include_user_info_headers, get_custom_headers
+from open_webui.ext.terminal_persist_tool import persist_terminal_file_to_platform
 from open_webui.tools.builtin import (
     search_web,
     fetch_url,
@@ -1195,6 +1196,41 @@ async def get_terminal_tools(
             'spec': tool_spec,
             'type': 'terminal',
         }
+
+    async def persist_file_to_chat(path: str):
+        return await persist_terminal_file_to_platform(
+            request=request,
+            user=user,
+            base_url=server_data['url'],
+            headers=headers,
+            cookies=cookies,
+            path=path,
+            metadata=metadata,
+        )
+
+    persist_file_tool_callable = await get_async_tool_function_and_apply_extra_params(persist_file_to_chat, {})
+    tools_dict['persist_file_to_chat'] = {
+        'tool_id': f'terminal:{terminal_id}',
+        'callable': persist_file_tool_callable,
+        'spec': {
+            'name': 'persist_file_to_chat',
+            'description': (
+                'Upload a file from the terminal environment to the AI platform storage and return the file_id. '
+                'Only files are supported. If the target is a directory, zip it first and then upload the zip file.'
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'path': {
+                        'type': 'string',
+                        'description': 'Path to a file in the terminal environment. Directories are not supported.',
+                    }
+                },
+                'required': ['path'],
+            },
+        },
+        'type': 'terminal',
+    }
 
     return tools_dict, system_prompt
 
