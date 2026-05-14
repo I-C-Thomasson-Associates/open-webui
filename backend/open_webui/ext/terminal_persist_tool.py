@@ -211,6 +211,12 @@ async def transfer_platform_file_to_terminal(
     query = urlencode({'directory': directory})
     upload_url = f'{base}/files/upload?{query}'
 
+    upload_headers = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in ('content-type', 'content-length')
+    }
+
     form = aiohttp.FormData()
     form.add_field('file', file_bytes, filename=target_filename, content_type=content_type)
 
@@ -219,7 +225,7 @@ async def transfer_platform_file_to_terminal(
     async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
         async with session.post(
             upload_url,
-            headers=headers,
+            headers=upload_headers,
             cookies=cookies,
             data=form,
             ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
