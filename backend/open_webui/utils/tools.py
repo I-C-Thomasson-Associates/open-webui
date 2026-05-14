@@ -58,7 +58,10 @@ from open_webui.env import (
     REDIS_KEY_PREFIX,
 )
 from open_webui.utils.headers import include_user_info_headers, get_custom_headers
-from open_webui.ext.terminal_persist_tool import persist_terminal_file_to_platform
+from open_webui.ext.terminal_persist_tool import (
+    persist_terminal_file_to_platform,
+    transfer_platform_file_to_terminal,
+)
 from open_webui.tools.builtin import (
     search_web,
     fetch_url,
@@ -1208,6 +1211,17 @@ async def get_terminal_tools(
             metadata=metadata,
         )
 
+    async def transfer_file_to_terminal(file_id: str, path: str):
+        return await transfer_platform_file_to_terminal(
+            request=request,
+            user=user,
+            base_url=server_data['url'],
+            headers=headers,
+            cookies=cookies,
+            file_id=file_id,
+            path=path,
+        )
+
     persist_file_tool_callable = await get_async_tool_function_and_apply_extra_params(persist_file_to_chat, {})
     tools_dict['persist_file_to_chat'] = {
         'tool_id': f'terminal:{terminal_id}',
@@ -1215,7 +1229,8 @@ async def get_terminal_tools(
         'spec': {
             'name': 'persist_file_to_chat',
             'description': (
-                'Upload a file from the terminal environment to the AI platform storage and return the file_id. '
+                'Upload a file from the terminal environment to AI platform storage and return file metadata. '
+                'Always include the returned `download_markdown` value in your user-facing response. '
                 'Only files are supported. If the target is a directory, zip it first and then upload the zip file.'
             ),
             'parameters': {
@@ -1227,6 +1242,35 @@ async def get_terminal_tools(
                     }
                 },
                 'required': ['path'],
+            },
+        },
+        'type': 'terminal',
+    }
+
+    transfer_file_tool_callable = await get_async_tool_function_and_apply_extra_params(transfer_file_to_terminal, {})
+    tools_dict['transfer_file_to_terminal'] = {
+        'tool_id': f'terminal:{terminal_id}',
+        'callable': transfer_file_tool_callable,
+        'spec': {
+            'name': 'transfer_file_to_terminal',
+            'description': (
+                'Transfer a stored chat file back to the terminal machine. '
+                'Provide a destination `path`; if it ends with a slash, it is treated as a directory, '
+                'otherwise it is treated as the full target file path.'
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'file_id': {
+                        'type': 'string',
+                        'description': 'ID of a file stored in AI platform storage.',
+                    },
+                    'path': {
+                        'type': 'string',
+                        'description': 'Destination path in the terminal environment.',
+                    },
+                },
+                'required': ['file_id', 'path'],
             },
         },
         'type': 'terminal',

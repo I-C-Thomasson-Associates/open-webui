@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 from typing import Any, Optional
@@ -11,8 +12,11 @@ from open_webui.env import (
     AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
     AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER,
 )
+from open_webui.models.files import Files
 from open_webui.models.users import UserModel
 from open_webui.routers.files import upload_file_handler
+from open_webui.storage.provider import Storage
+from open_webui.utils.access_control.files import has_access_to_file
 
 
 def _safe_filename_from_path(path: str) -> str:
@@ -32,6 +36,28 @@ def _filename_from_disposition(content_disposition: str, fallback: str) -> str:
         return value or fallback
 
     return fallback
+
+
+def _resolve_terminal_upload_target(path: str, fallback_filename: str) -> tuple[str, str]:
+    normalized = path.strip()
+
+    if normalized.endswith(('/', '\\')):
+        directory = normalized.rstrip('/\\')
+        if not directory:
+            directory = '/'
+        return directory, fallback_filename
+
+    separator_index = max(normalized.rfind('/'), normalized.rfind('\\'))
+    if separator_index < 0:
+        return '.', normalized
+
+    directory = normalized[:separator_index]
+    filename = normalized[separator_index + 1 :]
+
+    if not directory:
+        directory = '/' if normalized.startswith(('/', '\\')) else '.'
+
+    return directory, filename or fallback_filename
 
 
 async def persist_terminal_file_to_platform(
@@ -125,4 +151,102 @@ async def persist_terminal_file_to_platform(
     return {
         'message': 'file uploaded to ai platform',
         'file_id': file_item.id,
+        'download_url': f'/api/v1/files/{file_item.id}/content',
+        'download_markdown': f'[Download {file_item.filename}](/api/v1/files/{file_item.id}/content)',
+    }
+
+
+async def transfer_platform_file_to_terminal(
+    request: Request,
+    user: UserModel,
+    base_url: str,
+    headers: dict[str, str],
+    cookies: dict[str, str],
+    file_id: str,
+    path: str,
+) -> dict[str, Any]:
+    if not isinstance(file_id, str) or not file_id.strip():
+        raise HTTPException(status_code=400, detail='A file_id is required.')
+    if not isinstance(path, str) or not path.strip():
+        raise HTTPException(status_code=400, detail='A destination path is required.')
+
+    normalized_file_id = file_id.strip()
+    source_file = await Files.get_file_by_id(normalized_file_id)
+    if not source_file:
+        raise HTTPException(status_code=404, detail='File not found.')
+
+    can_read = source_file.user_id == user.id or user.role == 'admin' or await has_access_to_file(
+        normalized_file_id,
+        'read',
+        user,
+    )
+    if not can_read:
+        raise HTTPException(status_code=404, detail='File not found.')
+
+    source_filename = source_file.filename or 'download.bin'
+    content_type = 'application/octet-stream'
+    if isinstance(source_file.meta, dict) and isinstance(source_file.meta.get('content_type'), str):
+        content_type = source_file.meta.get('content_type')
+
+    directory, target_filename = _resolve_terminal_upload_target(path, source_filename)
+
+    if source_file.path:
+        try:
+            source_path = await asyncio.to_thread(Storage.get_file, source_file.path)
+            with open(source_path, 'rb') as f:
+                file_bytes = f.read()
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail='Stored file content not found.')
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f'Failed to read stored file: {str(e)}')
+    else:
+        content = ''
+        if isinstance(source_file.data, dict):
+            content = source_file.data.get('content', '')
+        file_bytes = str(content or '').encode('utf-8')
+        if content_type == 'application/octet-stream':
+            content_type = 'text/plain'
+
+    base = base_url.rstrip('/')
+    query = urlencode({'directory': directory})
+    upload_url = f'{base}/files/upload?{query}'
+
+    form = aiohttp.FormData()
+    form.add_field('file', file_bytes, filename=target_filename, content_type=content_type)
+
+    timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER)
+
+    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+        async with session.post(
+            upload_url,
+            headers=headers,
+            cookies=cookies,
+            data=form,
+            ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
+            allow_redirects=AIOHTTP_CLIENT_ALLOW_REDIRECTS,
+        ) as upload_response:
+            if upload_response.status in (401, 403):
+                body = await upload_response.text()
+                raise HTTPException(
+                    status_code=502,
+                    detail=f'Terminal authorization failed: HTTP {upload_response.status}: {body[:300]}',
+                )
+            if upload_response.status >= 400:
+                body = await upload_response.text()
+                raise HTTPException(
+                    status_code=502,
+                    detail=f'Failed to transfer file to terminal: HTTP {upload_response.status}: {body[:300]}',
+                )
+
+            try:
+                response_data = await upload_response.json(content_type=None)
+            except Exception:
+                response_data = {}
+
+    return {
+        'message': 'file transferred to terminal',
+        'file_id': normalized_file_id,
+        'path': response_data.get('path', path),
+        'filename': target_filename,
+        'size': len(file_bytes),
     }
