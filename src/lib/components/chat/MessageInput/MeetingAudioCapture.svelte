@@ -14,29 +14,53 @@
 	export let onConfirm = (data: { file: File; text: string; errors: string[] }) => {};
 
 	type CaptureStatus = 'idle' | 'starting' | 'recording' | 'stopping' | 'transcribing';
+	type CaptureSource = 'shared' | 'mic';
+
+	type SourceState = {
+		source: CaptureSource;
+		stream: MediaStream;
+	};
+
+	type RecorderState = {
+		recorder: MediaRecorder;
+		stopped: Promise<void>;
+	};
+
+	type TranscriptionSegment = {
+		source: CaptureSource;
+		speaker: string;
+		text: string;
+		start: number | null;
+		end: number | null;
+		chunkIndex: number;
+	};
+
+	type ProviderSegment = {
+		speaker?: string | null;
+		text?: string | null;
+		start?: number | null;
+		end?: number | null;
+	};
 
 	let status: CaptureStatus = 'idle';
 	let displayStream: MediaStream | null = null;
 	let micStream: MediaStream | null = null;
-	let mixedStream: MediaStream | null = null;
-	let audioContext: AudioContext | null = null;
-	let mediaRecorder: MediaRecorder | null = null;
 
 	let durationSeconds = 0;
 	let durationCounter: ReturnType<typeof setInterval> | null = null;
 	let chunkTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let chunkIndex = 0;
-	let activeChunkParts: Blob[] = [];
-	let transcriptChunks: string[] = [];
+	let activeSources: SourceState[] = [];
+	let currentRecorders: RecorderState[] = [];
+	let transcriptSegments: TranscriptionSegment[] = [];
 	let transcriptionErrors: string[] = [];
 	let pendingTranscriptions = 0;
 	let transcribedChunks = 0;
 	let failedChunks = 0;
 	let retryingTranscriptions = 0;
 	let transcriptionChain = Promise.resolve();
-	let currentRecorderStopped = Promise.resolve();
-	let resolveCurrentRecorderStopped: (() => void) | null = null;
+	let stoppingCurrentChunk = Promise.resolve();
 
 	let recordingActive = false;
 	let stopping = false;
@@ -75,11 +99,19 @@
 		return extension || 'webm';
 	};
 
-	const formatChunkRange = (index: number) => {
-		const startSeconds = Math.floor((index * chunkDurationMs) / 1000);
-		const endSeconds = Math.floor(((index + 1) * chunkDurationMs) / 1000);
+	const formatTimestamp = (seconds: number | null) => {
+		if (seconds === null || Number.isNaN(seconds)) {
+			return '--:--';
+		}
 
-		return `[${formatSeconds(startSeconds)}-${formatSeconds(endSeconds)}]`;
+		return formatSeconds(Math.max(0, Math.floor(seconds)));
+	};
+
+	const formatTimestampRange = (segment: TranscriptionSegment) => {
+		const start = formatTimestamp(segment.start);
+		const end = formatTimestamp(segment.end);
+
+		return `[${start}-${end}]`;
 	};
 
 	const clearChunkTimer = () => {
@@ -91,7 +123,7 @@
 
 	const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-	const transcribeChunkWithRetry = async (file: File) => {
+	const transcribeChunkWithRetry = async (file: File, source: CaptureSource) => {
 		let lastError;
 
 		for (let attempt = 0; attempt <= transcriptionRetryDelaysMs.length; attempt++) {
@@ -101,7 +133,7 @@
 
 			try {
 				return await transcribeAudio(localStorage.token, file, $settings?.audio?.stt?.language, {
-					diarize: true
+					diarize: source === 'shared'
 				});
 			} catch (error) {
 				lastError = error;
@@ -182,22 +214,76 @@
 
 		stopTracks(displayStream);
 		stopTracks(micStream);
-		stopTracks(mixedStream);
 
 		displayStream = null;
 		micStream = null;
-		mixedStream = null;
-
-		if (audioContext) {
-			await audioContext.close().catch(() => {});
-			audioContext = null;
-		}
+		activeSources = [];
+		currentRecorders = [];
 	};
 
-	const enqueueTranscription = (blob: Blob, index: number, mimeType: string) => {
+	const normalizeTranscriptionSegments = (
+		res: any,
+		source: CaptureSource,
+		index: number
+	): TranscriptionSegment[] => {
+		const chunkStartSeconds = (index * chunkDurationMs) / 1000;
+		const fallbackSpeaker = source === 'mic' ? $i18n.t('You') : $i18n.t('Call Audio');
+		const segments = Array.isArray(res?.segments) ? res.segments : [];
+
+		if (segments.length > 0) {
+			return segments
+				.map((segment: ProviderSegment) => {
+					const text = (segment.text || '').trim();
+					if (!text) {
+						return null;
+					}
+
+					const start =
+						typeof segment.start === 'number'
+							? chunkStartSeconds + segment.start
+							: chunkStartSeconds;
+					const end = typeof segment.end === 'number' ? chunkStartSeconds + segment.end : null;
+
+					return {
+						source,
+						speaker: source === 'mic' ? fallbackSpeaker : segment.speaker || fallbackSpeaker,
+						text,
+						start,
+						end,
+						chunkIndex: index
+					};
+				})
+				.filter(Boolean) as TranscriptionSegment[];
+		}
+
+		const text = (res?.text || '').trim();
+		if (!text) {
+			return [];
+		}
+
+		return [
+			{
+				source,
+				speaker: fallbackSpeaker,
+				text,
+				start: chunkStartSeconds,
+				end: chunkStartSeconds + chunkDurationMs / 1000,
+				chunkIndex: index
+			}
+		];
+	};
+
+	const enqueueTranscription = (
+		blob: Blob,
+		index: number,
+		mimeType: string,
+		source: CaptureSource
+	) => {
 		pendingTranscriptions += 1;
 		const ext = getExtension(mimeType);
-		const file = new File([blob], `meeting-audio-${index + 1}.${ext}`, { type: mimeType });
+		const file = new File([blob], `meeting-${source}-audio-${index + 1}.${ext}`, {
+			type: mimeType
+		});
 
 		transcriptionChain = transcriptionChain.then(async () => {
 			if (cancelled) {
@@ -206,11 +292,11 @@
 			}
 
 			try {
-				const res = await transcribeChunkWithRetry(file);
+				const res = await transcribeChunkWithRetry(file, source);
+				const segments = normalizeTranscriptionSegments(res, source, index);
 
-				if (!cancelled) {
-					transcriptChunks[index] = res?.text ? `${formatChunkRange(index)}\n${res.text}` : '';
-					transcriptChunks = transcriptChunks;
+				if (!cancelled && segments.length > 0) {
+					transcriptSegments = [...transcriptSegments, ...segments];
 					transcribedChunks += 1;
 				}
 			} catch (error) {
@@ -219,7 +305,10 @@
 					failedChunks += 1;
 					transcriptionErrors = [
 						...transcriptionErrors,
-						$i18n.t('Chunk {{number}} failed to transcribe.', { number: index + 1 })
+						$i18n.t('{{source}} chunk {{number}} failed to transcribe.', {
+							source: source === 'mic' ? $i18n.t('Microphone') : $i18n.t('Shared audio'),
+							number: index + 1
+						})
 					];
 				}
 			} finally {
@@ -228,53 +317,83 @@
 		});
 	};
 
-	const startRecorderChunk = () => {
-		if (!mixedStream || !recordingActive || stopping || cancelled) {
-			return;
+	const createRecorder = (sourceState: SourceState, index: number): RecorderState | null => {
+		if (!hasLiveAudioTracks(sourceState.stream)) {
+			return null;
 		}
 
-		activeChunkParts = [];
+		const parts: Blob[] = [];
 		const mimeType = mimeTypes.find((type) => MediaRecorder.isTypeSupported(type));
 		const recorderOptions = mimeType ? { mimeType } : undefined;
-		const recorder = new MediaRecorder(mixedStream, recorderOptions);
-		const currentChunkIndex = chunkIndex;
-		chunkIndex += 1;
+		const recorder = new MediaRecorder(sourceState.stream, recorderOptions);
 
-		currentRecorderStopped = new Promise((resolve) => {
-			resolveCurrentRecorderStopped = resolve;
+		const stopped = new Promise<void>((resolve) => {
+			recorder.ondataavailable = (event) => {
+				if (event.data.size > 0) {
+					parts.push(event.data);
+				}
+			};
+
+			recorder.onstop = () => {
+				const recordedMimeType = recorder.mimeType || parts[0]?.type || 'audio/webm';
+				if (!cancelled && parts.length > 0) {
+					const blob = new Blob(parts, { type: recordedMimeType });
+					enqueueTranscription(blob, index, recordedMimeType, sourceState.source);
+				}
+
+				resolve();
+			};
 		});
 
-		recorder.ondataavailable = (event) => {
-			if (event.data.size > 0) {
-				activeChunkParts.push(event.data);
-			}
-		};
-
-		recorder.onstop = () => {
-			clearChunkTimer();
-
-			const recordedMimeType = recorder.mimeType || activeChunkParts[0]?.type || 'audio/webm';
-			if (!cancelled && activeChunkParts.length > 0) {
-				const blob = new Blob(activeChunkParts, { type: recordedMimeType });
-				enqueueTranscription(blob, currentChunkIndex, recordedMimeType);
-			}
-
-			activeChunkParts = [];
-			resolveCurrentRecorderStopped?.();
-			resolveCurrentRecorderStopped = null;
-
-			if (recordingActive && !stopping && !cancelled && !sourceEnded) {
-				startRecorderChunk();
-			}
-		};
-
-		mediaRecorder = recorder;
 		recorder.start();
 
-		chunkTimer = setTimeout(() => {
+		return { recorder, stopped };
+	};
+
+	const stopCurrentChunk = async () => {
+		clearChunkTimer();
+
+		const recorders = currentRecorders;
+		currentRecorders = [];
+
+		for (const { recorder } of recorders) {
 			if (recorder.state === 'recording') {
 				recorder.stop();
 			}
+		}
+
+		await Promise.all(recorders.map(({ stopped }) => stopped));
+	};
+
+	const startRecorderChunk = () => {
+		if (!recordingActive || stopping || cancelled) {
+			return;
+		}
+
+		const liveSources = activeSources.filter((source) => hasLiveAudioTracks(source.stream));
+		if (liveSources.length === 0) {
+			sourceEnded = true;
+			toast.warning($i18n.t('Audio capture ended. Finalizing transcript.'));
+			stopCapture();
+			return;
+		}
+
+		const currentChunkIndex = chunkIndex;
+		chunkIndex += 1;
+		currentRecorders = liveSources
+			.map((source) => createRecorder(source, currentChunkIndex))
+			.filter(Boolean) as RecorderState[];
+
+		chunkTimer = setTimeout(() => {
+			if (!recordingActive || stopping || cancelled) {
+				return;
+			}
+
+			stoppingCurrentChunk = stopCurrentChunk().then(() => {
+				if (recordingActive && !stopping && !cancelled && !sourceEnded) {
+					startRecorderChunk();
+				}
+			});
 		}, chunkDurationMs);
 	};
 
@@ -313,13 +432,16 @@
 		stopping = false;
 		sourceEnded = false;
 		chunkIndex = 0;
-		transcriptChunks = [];
+		activeSources = [];
+		currentRecorders = [];
+		transcriptSegments = [];
 		transcriptionErrors = [];
 		pendingTranscriptions = 0;
 		transcribedChunks = 0;
 		failedChunks = 0;
 		retryingTranscriptions = 0;
 		transcriptionChain = Promise.resolve();
+		stoppingCurrentChunk = Promise.resolve();
 		durationSeconds = 0;
 		let displayError: unknown = null;
 		let micError: unknown = null;
@@ -357,7 +479,7 @@
 					audio: {
 						echoCancellation: true,
 						noiseSuppression: true,
-						autoGainControl: true
+						autoGainControl: false
 					}
 				});
 			} catch (error) {
@@ -380,34 +502,26 @@
 				toast.warning($i18n.t('Microphone was blocked. Continuing with shared audio only.'));
 			}
 
-			audioContext = new AudioContext();
-			const destination = audioContext.createMediaStreamDestination();
-			const monoMixer = audioContext.createGain();
-			monoMixer.channelCount = 1;
-			monoMixer.channelCountMode = 'explicit';
-			monoMixer.channelInterpretation = 'speakers';
-
 			if (hasDisplayAudio && displayStream) {
-				const displaySource = audioContext.createMediaStreamSource(
-					new MediaStream(displayStream.getAudioTracks())
-				);
-				displaySource.connect(monoMixer);
+				activeSources = [
+					...activeSources,
+					{
+						source: 'shared',
+						stream: new MediaStream(displayStream.getAudioTracks())
+					}
+				];
 			}
 
 			if (hasMicAudio && micStream) {
-				const micSource = audioContext.createMediaStreamSource(
-					new MediaStream(micStream.getAudioTracks())
-				);
-				micSource.connect(monoMixer);
+				activeSources = [
+					...activeSources,
+					{
+						source: 'mic',
+						stream: new MediaStream(micStream.getAudioTracks())
+					}
+				];
 			}
 
-			monoMixer.connect(destination);
-
-			if (audioContext.state === 'suspended') {
-				await audioContext.resume();
-			}
-
-			mixedStream = destination.stream;
 			recordingActive = true;
 			status = 'recording';
 
@@ -437,16 +551,40 @@
 		}
 	};
 
-	const stopCurrentRecorder = async () => {
-		clearChunkTimer();
-		await releaseWakeLock();
+	const buildTranscript = () => {
+		const sortedSegments = [...transcriptSegments].sort((a, b) => {
+			const startDiff = (a.start ?? Number.MAX_SAFE_INTEGER) - (b.start ?? Number.MAX_SAFE_INTEGER);
+			if (startDiff !== 0) {
+				return startDiff;
+			}
 
-		if (mediaRecorder?.state === 'recording') {
-			mediaRecorder.stop();
-			await currentRecorderStopped;
-		} else {
-			await currentRecorderStopped;
+			return a.source.localeCompare(b.source);
+		});
+
+		const mergedSegments: TranscriptionSegment[] = [];
+		for (const segment of sortedSegments) {
+			const previous = mergedSegments[mergedSegments.length - 1];
+			const gap =
+				previous && previous.end !== null && segment.start !== null
+					? segment.start - previous.end
+					: Number.MAX_VALUE;
+
+			if (
+				previous &&
+				previous.speaker === segment.speaker &&
+				previous.source === segment.source &&
+				gap <= 1.5
+			) {
+				previous.text = `${previous.text} ${segment.text}`;
+				previous.end = segment.end ?? previous.end;
+			} else {
+				mergedSegments.push({ ...segment });
+			}
 		}
+
+		return mergedSegments
+			.map((segment) => `${formatTimestampRange(segment)}\n${segment.speaker}: ${segment.text}`)
+			.join('\n\n');
 	};
 
 	const stopCapture = async () => {
@@ -459,7 +597,8 @@
 		status = 'stopping';
 		stopDurationCounter();
 
-		await stopCurrentRecorder();
+		await stoppingCurrentChunk;
+		await stopCurrentChunk();
 		status = 'transcribing';
 		await transcriptionChain;
 
@@ -467,10 +606,7 @@
 			return;
 		}
 
-		const transcript = transcriptChunks
-			.map((text) => text?.trim())
-			.filter(Boolean)
-			.join('\n\n');
+		const transcript = buildTranscript();
 
 		await cleanup();
 
@@ -501,11 +637,8 @@
 		clearChunkTimer();
 		retryingTranscriptions = 0;
 
-		if (mediaRecorder?.state === 'recording') {
-			mediaRecorder.stop();
-			await currentRecorderStopped;
-		}
-
+		await stoppingCurrentChunk;
+		await stopCurrentChunk();
 		await cleanup();
 		onCancel();
 	};
@@ -534,12 +667,12 @@
 			<div class="mt-1 text-xs text-gray-500 dark:text-gray-400 leading-5">
 				{#if status === 'idle'}
 					{$i18n.t(
-						'Select the Teams tab or window in the browser prompt. You can allow shared audio, microphone, or both.'
+						'Select the Teams tab or window in the browser prompt. Shared audio and microphone are recorded separately, then aligned by timestamp.'
 					)}
 				{:else if status === 'starting'}
 					{$i18n.t('Requesting shared audio and microphone access...')}
 				{:else if status === 'recording'}
-					{$i18n.t('Recording meeting audio and transcribing chunks in the background.')}
+					{$i18n.t('Recording separate audio sources and transcribing chunks in the background.')}
 				{:else}
 					{$i18n.t('Finalizing transcript...')}
 				{/if}
@@ -552,6 +685,9 @@
 					</div>
 					<div class="rounded-full bg-gray-50 dark:bg-gray-800 px-2 py-1">
 						{$i18n.t('Chunks')}: {chunkIndex}
+					</div>
+					<div class="rounded-full bg-gray-50 dark:bg-gray-800 px-2 py-1">
+						{$i18n.t('Sources')}: {activeSources.length}
 					</div>
 					<div class="rounded-full bg-gray-50 dark:bg-gray-800 px-2 py-1">
 						{$i18n.t('Transcribed')}: {transcribedChunks}

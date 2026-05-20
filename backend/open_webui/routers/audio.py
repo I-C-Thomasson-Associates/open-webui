@@ -731,7 +731,11 @@ def transcription_handler(request, file_path, metadata, user=None):
             offset_ms = phrase.get('offsetMilliseconds')
             duration_ms = phrase.get('durationMilliseconds')
             start = offset_ms / 1000 if isinstance(offset_ms, int) else None
-            end = (offset_ms + duration_ms) / 1000 if isinstance(offset_ms, int) and isinstance(duration_ms, int) else None
+            end = (
+                (offset_ms + duration_ms) / 1000
+                if isinstance(offset_ms, int) and isinstance(duration_ms, int)
+                else None
+            )
 
             if grouped_segments and grouped_segments[-1]['speaker'] == label:
                 grouped_segments[-1]['text'] = f'{grouped_segments[-1]["text"]} {text}'
@@ -756,6 +760,35 @@ def transcription_handler(request, file_path, metadata, user=None):
             grouped_segments,
         )
 
+    def _format_phrase_segments(phrases):
+        segments = []
+
+        for phrase in phrases or []:
+            text = (phrase.get('text') or '').strip()
+            if not text:
+                continue
+
+            offset_ms = phrase.get('offsetMilliseconds')
+            duration_ms = phrase.get('durationMilliseconds')
+            start = offset_ms / 1000 if isinstance(offset_ms, int) else None
+            end = (
+                (offset_ms + duration_ms) / 1000
+                if isinstance(offset_ms, int) and isinstance(duration_ms, int)
+                else None
+            )
+
+            segments.append(
+                {
+                    'speaker': None,
+                    'speaker_id': None,
+                    'text': text,
+                    'start': start,
+                    'end': end,
+                }
+            )
+
+        return segments
+
     if request.app.state.config.STT_ENGINE == '':
         if request.app.state.faster_whisper_model is None:
             request.app.state.faster_whisper_model = set_faster_whisper_model(request.app.state.config.WHISPER_MODEL)
@@ -770,8 +803,19 @@ def transcription_handler(request, file_path, metadata, user=None):
         )
         log.info("Detected language '%s' with probability %f" % (info.language, info.language_probability))
 
-        transcript = ''.join([segment.text for segment in list(segments)])
-        data = {'text': transcript.strip()}
+        segment_items = [
+            {
+                'speaker': None,
+                'speaker_id': None,
+                'text': segment.text.strip(),
+                'start': segment.start,
+                'end': segment.end,
+            }
+            for segment in list(segments)
+            if segment.text.strip()
+        ]
+        transcript = ' '.join([segment['text'] for segment in segment_items])
+        data = {'text': transcript.strip(), 'segments': segment_items}
 
         # save the transcript to a json file
         transcript_file = os.path.join(file_dir, f'{id}.json')
@@ -992,6 +1036,9 @@ def transcription_handler(request, file_path, metadata, user=None):
                 'provider': 'azure',
             }
             data = {'text': transcript, 'diarization': diarization}
+            phrase_segments = _format_phrase_segments(response.get('phrases', []))
+            if phrase_segments:
+                data['segments'] = phrase_segments
 
             if metadata.get('diarize'):
                 diarized_text, segments = _format_diarized_phrases(response.get('phrases', []))
@@ -1294,11 +1341,20 @@ def transcribe(request: Request, file_path: str, metadata: Optional[dict] = None
                 except Exception:
                     pass
 
-    return {
+    data = {
         'text': ('\n\n' if metadata.get('diarize') else ' ').join(
             [result['text'] for result in results]
         ),
     }
+
+    segments = []
+    for result in results:
+        segments.extend(result.get('segments') or [])
+
+    if segments:
+        data['segments'] = segments
+
+    return data
 
 
 def compress_audio(file_path):
