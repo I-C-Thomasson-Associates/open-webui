@@ -67,6 +67,7 @@
 
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
+	import MeetingAudioCapture from './MessageInput/MeetingAudioCapture.svelte';
 
 	import ToolServersModal from './ToolServersModal.svelte';
 
@@ -421,6 +422,7 @@
 
 	let loaded = false;
 	let recording = false;
+	let meetingAudioCapture = false;
 
 	let isComposing = false;
 	// Safari has a bug where compositionend is not triggered correctly #16615
@@ -1243,8 +1245,28 @@
 							}}
 						/>
 					</div>
+
+					{#if meetingAudioCapture}
+						<div class="mb-1.5">
+							<MeetingAudioCapture
+								onCancel={async () => {
+									meetingAudioCapture = false;
+
+									await tick();
+									document.getElementById('chat-input')?.focus();
+								}}
+								onConfirm={async (data) => {
+									await uploadFileHandler(data.file, true, { context: 'full' });
+									meetingAudioCapture = false;
+
+									await tick();
+									document.getElementById('chat-input')?.focus();
+								}}
+							/>
+						</div>
+					{/if}
 					<form
-						class="w-full flex flex-col gap-1.5 {recording ? 'hidden' : ''}"
+						class="w-full flex flex-col gap-1.5 {recording || meetingAudioCapture ? 'hidden' : ''}"
 						on:submit|preventDefault={() => {
 							// check if selectedModels support image input
 							dispatch('submit', prompt);
@@ -1613,6 +1635,10 @@
 										selectedModels={atSelectedModel ? [atSelectedModel.id] : selectedModels}
 										{fileUploadCapableModels}
 										{screenCaptureHandler}
+										captureAudioHandler={() => {
+											recording = false;
+											meetingAudioCapture = true;
+										}}
 										{inputFilesHandler}
 										uploadFilesHandler={() => {
 											filesInputElement.click();

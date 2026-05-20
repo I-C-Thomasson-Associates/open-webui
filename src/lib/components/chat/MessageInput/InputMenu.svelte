@@ -21,6 +21,7 @@
 	import ChevronRight from '$lib/components/icons/ChevronRight.svelte';
 	import ChevronLeft from '$lib/components/icons/ChevronLeft.svelte';
 	import PageEdit from '$lib/components/icons/PageEdit.svelte';
+	import CursorArrowRays from '$lib/components/icons/CursorArrowRays.svelte';
 	import Chats from './InputMenu/Chats.svelte';
 	import Files from './InputMenu/Files.svelte';
 	import Notes from './InputMenu/Notes.svelte';
@@ -36,6 +37,7 @@
 	export let fileUploadCapableModels: string[] = [];
 
 	export let screenCaptureHandler: Function;
+	export let captureAudioHandler: Function;
 	export let uploadFilesHandler: Function;
 	export let inputFilesHandler: Function;
 
@@ -182,6 +184,31 @@
 						>
 							<Camera />
 							<div class=" line-clamp-1">{$i18n.t('Capture')}</div>
+						</button>
+					</Tooltip>
+
+					<Tooltip
+						content={fileUploadCapableModels.length !== selectedModels.length
+							? $i18n.t('Model(s) do not support file upload')
+							: !fileUploadEnabled
+								? $i18n.t('You do not have permission to upload files.')
+								: ''}
+						className="w-full"
+					>
+						<button
+							class="flex w-full gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
+								? 'opacity-50'
+								: ''}"
+							type="button"
+							on:click={() => {
+								if (fileUploadEnabled && !detectMobile()) {
+									captureAudioHandler();
+									show = false;
+								}
+							}}
+						>
+							<CursorArrowRays />
+							<div class=" line-clamp-1">{$i18n.t('Capture Audio')}</div>
 						</button>
 					</Tooltip>
 

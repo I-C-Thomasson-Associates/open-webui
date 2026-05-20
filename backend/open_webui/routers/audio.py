@@ -703,6 +703,59 @@ def transcription_handler(request, file_path, metadata, user=None):
         None,  # Always fallback to None in case transcription fails
     ]
 
+    def _get_azure_max_speakers():
+        try:
+            max_speakers = int(request.app.state.config.AUDIO_STT_AZURE_MAX_SPEAKERS or 3)
+        except (TypeError, ValueError):
+            max_speakers = 3
+
+        return max(2, min(max_speakers, 35))
+
+    def _format_diarized_phrases(phrases):
+        voice_labels = {}
+        grouped_segments = []
+
+        for phrase in phrases or []:
+            text = (phrase.get('text') or '').strip()
+            if not text:
+                continue
+
+            speaker = phrase.get('speaker')
+            if speaker is None:
+                label = 'Unknown'
+            else:
+                if speaker not in voice_labels:
+                    voice_labels[speaker] = f'Voice {len(voice_labels) + 1}'
+                label = voice_labels[speaker]
+
+            offset_ms = phrase.get('offsetMilliseconds')
+            duration_ms = phrase.get('durationMilliseconds')
+            start = offset_ms / 1000 if isinstance(offset_ms, int) else None
+            end = (offset_ms + duration_ms) / 1000 if isinstance(offset_ms, int) and isinstance(duration_ms, int) else None
+
+            if grouped_segments and grouped_segments[-1]['speaker'] == label:
+                grouped_segments[-1]['text'] = f'{grouped_segments[-1]["text"]} {text}'
+                grouped_segments[-1]['end'] = end
+            else:
+                grouped_segments.append(
+                    {
+                        'speaker': label,
+                        'speaker_id': speaker,
+                        'text': text,
+                        'start': start,
+                        'end': end,
+                    }
+                )
+
+        diarized_segments = [segment for segment in grouped_segments if segment.get('speaker_id') is not None]
+        if not diarized_segments:
+            return '', []
+
+        return (
+            '\n\n'.join([f'{segment["speaker"]}: {segment["text"]}' for segment in grouped_segments]),
+            grouped_segments,
+        )
+
     if request.app.state.config.STT_ENGINE == '':
         if request.app.state.faster_whisper_model is None:
             request.app.state.faster_whisper_model = set_faster_whisper_model(request.app.state.config.WHISPER_MODEL)
@@ -863,7 +916,7 @@ def transcription_handler(request, file_path, metadata, user=None):
         region = request.app.state.config.AUDIO_STT_AZURE_REGION or 'eastus'
         locales = request.app.state.config.AUDIO_STT_AZURE_LOCALES
         base_url = request.app.state.config.AUDIO_STT_AZURE_BASE_URL
-        max_speakers = request.app.state.config.AUDIO_STT_AZURE_MAX_SPEAKERS or 3
+        max_speakers = _get_azure_max_speakers()
 
         # IF NO LOCALES, USE DEFAULTS
         if len(locales) < 2:
@@ -932,7 +985,27 @@ def transcription_handler(request, file_path, metadata, user=None):
             if not transcript:
                 raise ValueError('Empty transcript in response')
 
-            data = {'text': transcript}
+            diarization = {
+                'requested': bool(metadata.get('diarize')),
+                'supported': True,
+                'applied': False,
+                'provider': 'azure',
+            }
+            data = {'text': transcript, 'diarization': diarization}
+
+            if metadata.get('diarize'):
+                diarized_text, segments = _format_diarized_phrases(response.get('phrases', []))
+                if diarized_text:
+                    data = {
+                        'text': diarized_text,
+                        'segments': segments,
+                        'diarization': {
+                            **diarization,
+                            'applied': True,
+                        },
+                    }
+                else:
+                    data['diarization']['error'] = 'Azure returned no speaker segments'
 
             # Save transcript to json file (consistent with other providers)
             transcript_file = os.path.join(file_dir, f'{id}.json')
@@ -1158,6 +1231,7 @@ def transcription_handler(request, file_path, metadata, user=None):
 
 def transcribe(request: Request, file_path: str, metadata: Optional[dict] = None, user=None):
     log.info(f'transcribe: {file_path} {metadata}')
+    metadata = metadata or {}
 
     if BYPASS_PYDUB_PREPROCESSING:
         log.info('Bypassing pydub preprocessing (BYPASS_PYDUB_PREPROCESSING=true)')
@@ -1221,7 +1295,9 @@ def transcribe(request: Request, file_path: str, metadata: Optional[dict] = None
                     pass
 
     return {
-        'text': ' '.join([result['text'] for result in results]),
+        'text': ('\n\n' if metadata.get('diarize') else ' ').join(
+            [result['text'] for result in results]
+        ),
     }
 
 
@@ -1290,6 +1366,7 @@ async def transcription(
     request: Request,
     file: UploadFile = File(...),
     language: Optional[str] = Form(None),
+    diarize: Optional[bool] = Form(False),
     user=Depends(get_verified_user),
 ):
     if user.role != 'admin' and not await has_permission(
@@ -1336,10 +1413,12 @@ async def transcription(
             f.write(contents)
 
         try:
-            metadata = None
+            metadata = {}
 
             if language:
-                metadata = {'language': language}
+                metadata['language'] = language
+            if diarize:
+                metadata['diarize'] = True
 
             result = await asyncio.to_thread(transcribe, request, file_path, metadata, user)
 
