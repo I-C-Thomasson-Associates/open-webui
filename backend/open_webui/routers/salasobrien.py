@@ -13,6 +13,7 @@ from open_webui.internal.db import get_async_session
 from open_webui.models.chat_messages import ChatMessage
 from open_webui.models.chats import Chat
 from open_webui.models.groups import Group, GroupMember, Groups
+from open_webui.models.models import Model
 from open_webui.models.users import User
 from open_webui.utils.auth import get_admin_user
 from open_webui.utils.salasobrien_cost import load_foundry_rates, resolve_cost
@@ -42,6 +43,7 @@ class AnalyticsRow(BaseModel):
     user_name: Optional[str] = None
     business_unit: Optional[str] = None
     model: Optional[str] = None
+    model_name: Optional[str] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
@@ -134,15 +136,17 @@ async def get_analytics(
             ChatMessage.id,
             ChatMessage.created_at,
             ChatMessage.chat_id,
-            Chat.title,
+            Chat.title.label('chat_title'),
             ChatMessage.user_id,
-            User.email,
-            User.name,
+            User.email.label('user_email'),
+            User.name.label('user_name'),
             ChatMessage.model_id,
+            Model.name.label('model_name'),
             ChatMessage.usage,
         )
         .join(Chat, Chat.id == ChatMessage.chat_id)
         .join(User, User.id == ChatMessage.user_id)
+        .outerjoin(Model, Model.id == ChatMessage.model_id)
         .filter(
             ChatMessage.role == 'assistant',
             ChatMessage.usage.isnot(None),
@@ -213,12 +217,13 @@ async def get_analytics(
             AnalyticsRow(
                 timestamp=int(row.created_at),
                 chat_id=row.chat_id,
-                chat_title=row.title,
+                chat_title=row.chat_title,
                 user_id=row.user_id,
-                user_email=row.email,
-                user_name=row.name,
+                user_email=row.user_email,
+                user_name=row.user_name,
                 business_unit=user_business_unit.get(row.user_id),
                 model=row.model_id,
+                model_name=row.model_name or row.model_id,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
