@@ -4,6 +4,12 @@
 
 	import { config, settings } from '$lib/stores';
 	import { transcribeAudio } from '$lib/apis/audio';
+	import {
+		buildMeetingTranscript,
+		normalizeTranscriptionSegments,
+		type CaptureSource,
+		type TranscriptionSegment
+	} from '$lib/ext/meeting-audio-transcript';
 
 	import XMark from '$lib/components/icons/XMark.svelte';
 
@@ -14,7 +20,6 @@
 	export let onConfirm = (data: { file: File; text: string; errors: string[] }) => {};
 
 	type CaptureStatus = 'idle' | 'starting' | 'recording' | 'stopping' | 'transcribing';
-	type CaptureSource = 'shared' | 'mic';
 
 	type SourceState = {
 		source: CaptureSource;
@@ -24,22 +29,6 @@
 	type RecorderState = {
 		recorder: MediaRecorder;
 		stopped: Promise<void>;
-	};
-
-	type TranscriptionSegment = {
-		source: CaptureSource;
-		speaker: string;
-		text: string;
-		start: number | null;
-		end: number | null;
-		chunkIndex: number;
-	};
-
-	type ProviderSegment = {
-		speaker?: string | null;
-		text?: string | null;
-		start?: number | null;
-		end?: number | null;
 	};
 
 	let status: CaptureStatus = 'idle';
@@ -97,21 +86,6 @@
 	const getExtension = (type: string) => {
 		const extension = type.split('/')[1]?.split(';')[0];
 		return extension || 'webm';
-	};
-
-	const formatTimestamp = (seconds: number | null) => {
-		if (seconds === null || Number.isNaN(seconds)) {
-			return '--:--';
-		}
-
-		return formatSeconds(Math.max(0, Math.floor(seconds)));
-	};
-
-	const formatTimestampRange = (segment: TranscriptionSegment) => {
-		const start = formatTimestamp(segment.start);
-		const end = formatTimestamp(segment.end);
-
-		return `[${start}-${end}]`;
 	};
 
 	const clearChunkTimer = () => {
@@ -221,58 +195,6 @@
 		currentRecorders = [];
 	};
 
-	const normalizeTranscriptionSegments = (
-		res: any,
-		source: CaptureSource,
-		index: number
-	): TranscriptionSegment[] => {
-		const chunkStartSeconds = (index * chunkDurationMs) / 1000;
-		const fallbackSpeaker = source === 'mic' ? $i18n.t('You') : $i18n.t('Call Audio');
-		const segments = Array.isArray(res?.segments) ? res.segments : [];
-
-		if (segments.length > 0) {
-			return segments
-				.map((segment: ProviderSegment) => {
-					const text = (segment.text || '').trim();
-					if (!text) {
-						return null;
-					}
-
-					const start =
-						typeof segment.start === 'number'
-							? chunkStartSeconds + segment.start
-							: chunkStartSeconds;
-					const end = typeof segment.end === 'number' ? chunkStartSeconds + segment.end : null;
-
-					return {
-						source,
-						speaker: source === 'mic' ? fallbackSpeaker : segment.speaker || fallbackSpeaker,
-						text,
-						start,
-						end,
-						chunkIndex: index
-					};
-				})
-				.filter(Boolean) as TranscriptionSegment[];
-		}
-
-		const text = (res?.text || '').trim();
-		if (!text) {
-			return [];
-		}
-
-		return [
-			{
-				source,
-				speaker: fallbackSpeaker,
-				text,
-				start: chunkStartSeconds,
-				end: chunkStartSeconds + chunkDurationMs / 1000,
-				chunkIndex: index
-			}
-		];
-	};
-
 	const enqueueTranscription = (
 		blob: Blob,
 		index: number,
@@ -293,7 +215,14 @@
 
 			try {
 				const res = await transcribeChunkWithRetry(file, source);
-				const segments = normalizeTranscriptionSegments(res, source, index);
+				const segments = normalizeTranscriptionSegments({
+					res,
+					source,
+					index,
+					chunkDurationMs,
+					youLabel: $i18n.t('You'),
+					sharedLabel: $i18n.t('Call Audio')
+				});
 
 				if (!cancelled && segments.length > 0) {
 					transcriptSegments = [...transcriptSegments, ...segments];
@@ -551,42 +480,6 @@
 		}
 	};
 
-	const buildTranscript = () => {
-		const sortedSegments = [...transcriptSegments].sort((a, b) => {
-			const startDiff = (a.start ?? Number.MAX_SAFE_INTEGER) - (b.start ?? Number.MAX_SAFE_INTEGER);
-			if (startDiff !== 0) {
-				return startDiff;
-			}
-
-			return a.source.localeCompare(b.source);
-		});
-
-		const mergedSegments: TranscriptionSegment[] = [];
-		for (const segment of sortedSegments) {
-			const previous = mergedSegments[mergedSegments.length - 1];
-			const gap =
-				previous && previous.end !== null && segment.start !== null
-					? segment.start - previous.end
-					: Number.MAX_VALUE;
-
-			if (
-				previous &&
-				previous.speaker === segment.speaker &&
-				previous.source === segment.source &&
-				gap <= 1.5
-			) {
-				previous.text = `${previous.text} ${segment.text}`;
-				previous.end = segment.end ?? previous.end;
-			} else {
-				mergedSegments.push({ ...segment });
-			}
-		}
-
-		return mergedSegments
-			.map((segment) => `${formatTimestampRange(segment)}\n${segment.speaker}: ${segment.text}`)
-			.join('\n\n');
-	};
-
 	const stopCapture = async () => {
 		if (stopping || cancelled) {
 			return;
@@ -606,7 +499,7 @@
 			return;
 		}
 
-		const transcript = buildTranscript();
+		const transcript = buildMeetingTranscript(transcriptSegments);
 
 		await cleanup();
 
