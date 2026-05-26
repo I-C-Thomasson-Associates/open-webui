@@ -32,6 +32,12 @@ type ProviderSegment = {
 	words?: ProviderWord[] | null;
 };
 
+const echoDedupeWindowSeconds = 3;
+const echoSimilarityThreshold = 0.72;
+const echoContainmentThreshold = 0.8;
+const echoSequenceContainmentThreshold = 0.85;
+const minEchoDedupeTokens = 3;
+
 export const normalizeTranscriptionSegments = ({
 	res,
 	source,
@@ -137,7 +143,7 @@ export const normalizeTranscriptionSegments = ({
 };
 
 export const buildMeetingTranscript = (segments: TranscriptionSegment[]) => {
-	const timelineSegments = splitSharedSegmentsAroundMicSegments(segments);
+	const timelineSegments = dedupeEchoedMicSegments(splitSharedSegmentsAroundMicSegments(segments));
 	const sortedSegments = [...timelineSegments].sort((a, b) => {
 		const startDiff = (a.start ?? Number.MAX_SAFE_INTEGER) - (b.start ?? Number.MAX_SAFE_INTEGER);
 		if (startDiff !== 0) {
@@ -201,6 +207,125 @@ const joinWords = (words: TranscriptionWord[]) =>
 		.join(' ')
 		.replace(/\s+([,.!?;:])/g, '$1')
 		.trim();
+
+const tokenizeForDedupe = (text: string) =>
+	text
+		.toLowerCase()
+		.replace(/'/g, '')
+		.replace(/[^a-z0-9\s]/g, ' ')
+		.split(/\s+/)
+		.filter(Boolean);
+
+const countTokenOverlap = (leftTokens: string[], rightTokens: string[]) => {
+	const rightCounts = new Map<string, number>();
+	for (const token of rightTokens) {
+		rightCounts.set(token, (rightCounts.get(token) ?? 0) + 1);
+	}
+
+	let overlap = 0;
+	for (const token of leftTokens) {
+		const count = rightCounts.get(token) ?? 0;
+		if (count > 0) {
+			overlap += 1;
+			rightCounts.set(token, count - 1);
+		}
+	}
+
+	return overlap;
+};
+
+const countOrderedTokenOverlap = (leftTokens: string[], rightTokens: string[]) => {
+	const lengths = Array.from({ length: leftTokens.length + 1 }, () =>
+		new Array<number>(rightTokens.length + 1).fill(0)
+	);
+
+	for (let leftIndex = 1; leftIndex <= leftTokens.length; leftIndex += 1) {
+		for (let rightIndex = 1; rightIndex <= rightTokens.length; rightIndex += 1) {
+			lengths[leftIndex][rightIndex] =
+				leftTokens[leftIndex - 1] === rightTokens[rightIndex - 1]
+					? lengths[leftIndex - 1][rightIndex - 1] + 1
+					: Math.max(lengths[leftIndex - 1][rightIndex], lengths[leftIndex][rightIndex - 1]);
+		}
+	}
+
+	return lengths[leftTokens.length][rightTokens.length];
+};
+
+const isNearEnoughForEchoDedupe = (
+	micSegment: TranscriptionSegment,
+	sharedSegment: TranscriptionSegment
+) => {
+	if (
+		typeof micSegment.start === 'number' &&
+		typeof micSegment.end === 'number' &&
+		typeof sharedSegment.start === 'number' &&
+		typeof sharedSegment.end === 'number'
+	) {
+		return (
+			micSegment.start <= sharedSegment.end + echoDedupeWindowSeconds &&
+			sharedSegment.start <= micSegment.end + echoDedupeWindowSeconds
+		);
+	}
+
+	if (typeof micSegment.start === 'number' && typeof sharedSegment.start === 'number') {
+		return Math.abs(micSegment.start - sharedSegment.start) <= echoDedupeWindowSeconds;
+	}
+
+	if (typeof micSegment.end === 'number' && typeof sharedSegment.end === 'number') {
+		return Math.abs(micSegment.end - sharedSegment.end) <= echoDedupeWindowSeconds;
+	}
+
+	return false;
+};
+
+const isEchoedMicDuplicate = (
+	micSegment: TranscriptionSegment,
+	sharedSegments: TranscriptionSegment[]
+) => {
+	const micTokens = tokenizeForDedupe(micSegment.text);
+	if (micTokens.length < minEchoDedupeTokens) {
+		return false;
+	}
+
+	const candidateText = sharedSegments
+		.filter((sharedSegment) => isNearEnoughForEchoDedupe(micSegment, sharedSegment))
+		.sort((a, b) => (a.start ?? 0) - (b.start ?? 0))
+		.map((sharedSegment) => sharedSegment.text)
+		.join(' ');
+
+	if (!candidateText) {
+		return false;
+	}
+
+	const sharedTokens = tokenizeForDedupe(candidateText);
+	if (sharedTokens.length < minEchoDedupeTokens) {
+		return false;
+	}
+
+	const overlap = countTokenOverlap(micTokens, sharedTokens);
+	const orderedOverlap = countOrderedTokenOverlap(micTokens, sharedTokens);
+	const similarity = overlap / Math.max(micTokens.length, sharedTokens.length);
+	const containment = overlap / micTokens.length;
+	const orderedContainment = orderedOverlap / micTokens.length;
+
+	return (
+		orderedContainment >= echoSequenceContainmentThreshold &&
+		(similarity >= echoSimilarityThreshold || containment >= echoContainmentThreshold)
+	);
+};
+
+const dedupeEchoedMicSegments = (segments: TranscriptionSegment[]) => {
+	const sharedSegments = segments.filter(
+		(segment) => segment.source === 'shared' && segment.text.trim()
+	);
+	if (sharedSegments.length === 0) {
+		return segments;
+	}
+
+	return segments.filter(
+		(segment) => segment.source !== 'mic' || !isEchoedMicDuplicate(segment, sharedSegments)
+	);
+};
 
 const splitSharedSegmentsAroundMicSegments = (segments: TranscriptionSegment[]) => {
 	const micSegments = segments.filter(
