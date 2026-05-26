@@ -354,6 +354,9 @@ else:
     pass
 
 DATABASE_URL = get_secret('DATABASE_URL', f"sqlite:///{DATA_DIR}/webui.db")
+if 'postgre' in DATABASE_URL:
+    log.info('Using DATABASE_URL from secrets manager or environment variable.')
+    DATABASE_URL = DATABASE_URL + '/openwebui?sslmode=require'
 
 DATABASE_TYPE = os.environ.get('DATABASE_TYPE')
 DATABASE_USER = os.environ.get('DATABASE_USER')
