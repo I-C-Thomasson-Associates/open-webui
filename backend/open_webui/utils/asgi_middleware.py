@@ -33,7 +33,9 @@ from __future__ import annotations
 import logging
 import re
 import time
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
+
+import aiohttp
 
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
@@ -41,7 +43,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from open_webui.env import CUSTOM_API_KEY_HEADER
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, CUSTOM_API_KEY_HEADER
 from open_webui.internal.db import ScopedSession
 from open_webui.utils.auth import get_http_authorization_cred
 
@@ -176,6 +178,183 @@ class AuthTokenMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_timing)
+
+
+class AuthCallbackProxyMiddleware:
+    """Proxy configured OAuth callback paths to tool servers.
+
+    Configuration is read from ``TOOL_SERVER_CONNECTIONS[].config.auth_callback_proxy``.
+    Example:
+
+    ``{"enabled": true, "host": "ai.example.com", "path": "/auth/callback", "url": "http://localhost:8100/auth/callback"}``
+    """
+
+    PROXY_METHODS = frozenset({'GET', 'POST', 'HEAD'})
+    STRIPPED_RESPONSE_HEADERS = frozenset({'content-length', 'transfer-encoding', 'connection'})
+
+    def __init__(self, app: ASGIApp, *, fastapi_app) -> None:
+        self.app = app
+        self._fastapi_app = fastapi_app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope['type'] != 'http':
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get('method', '').upper()
+        if method not in self.PROXY_METHODS:
+            await self.app(scope, receive, send)
+            return
+
+        target_url = self._resolve_target_url(scope)
+        if target_url is None:
+            await self.app(scope, receive, send)
+            return
+
+        body = await self._read_request_body(receive)
+        if body is None:
+            return
+
+        target_url = self._append_query(target_url, scope.get('query_string', b''))
+
+        request_headers = _scope_headers(scope)
+        proxy_headers = {
+            key: value
+            for key, value in request_headers.items()
+            if key not in {'host', 'content-length', 'connection'}
+        }
+
+        host_header = request_headers.get('host', '').strip()
+        if host_header and 'x-forwarded-host' not in proxy_headers:
+            proxy_headers['x-forwarded-host'] = host_header
+        if 'x-forwarded-proto' not in proxy_headers:
+            proxy_headers['x-forwarded-proto'] = scope.get('scheme', 'http')
+
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=60, connect=10),
+                trust_env=True,
+            ) as session:
+                async with session.request(
+                    method=method,
+                    url=target_url,
+                    headers=proxy_headers,
+                    data=body or None,
+                    allow_redirects=False,
+                    ssl=AIOHTTP_CLIENT_SESSION_SSL,
+                ) as upstream_response:
+                    response_body = await upstream_response.read()
+                    response_headers = [
+                        (key.encode('latin-1'), value.encode('latin-1'))
+                        for key, value in upstream_response.headers.items()
+                        if key.lower() not in self.STRIPPED_RESPONSE_HEADERS
+                    ]
+
+                    await send(
+                        {
+                            'type': 'http.response.start',
+                            'status': upstream_response.status,
+                            'headers': response_headers,
+                        }
+                    )
+                    await send(
+                        {
+                            'type': 'http.response.body',
+                            'body': response_body,
+                            'more_body': False,
+                        }
+                    )
+                    return
+        except Exception:
+            log.exception('Auth callback proxy failed for target=%s', target_url)
+            response = JSONResponse(status_code=502, content={'detail': 'Auth callback proxy failed'})
+            await response(scope, receive, send)
+
+    async def _read_request_body(self, receive: Receive) -> bytes | None:
+        chunks = []
+        while True:
+            message = await receive()
+            message_type = message.get('type')
+
+            if message_type == 'http.disconnect':
+                return None
+
+            if message_type != 'http.request':
+                continue
+
+            chunks.append(message.get('body', b''))
+            if not message.get('more_body', False):
+                break
+
+        return b''.join(chunks)
+
+    def _resolve_target_url(self, scope: Scope) -> str | None:
+        request_path = self._normalize_callback_path(scope.get('path', ''))
+        if not request_path:
+            return None
+
+        request_headers = _scope_headers(scope)
+        request_host_full = request_headers.get('host', '').strip().lower()
+        request_host_name = request_host_full.split(':', 1)[0]
+
+        connections = getattr(self._fastapi_app.state.config, 'TOOL_SERVER_CONNECTIONS', []) or []
+
+        for connection in connections:
+            callback_proxy = (connection.get('config') or {}).get('auth_callback_proxy') or {}
+            if not isinstance(callback_proxy, dict) or not callback_proxy.get('enabled'):
+                continue
+
+            callback_path = self._normalize_callback_path(str(callback_proxy.get('path', '')))
+            callback_target_url = str(callback_proxy.get('url', '')).strip()
+            if not callback_path or not callback_target_url:
+                continue
+            if request_path != callback_path:
+                continue
+
+            parsed_target = urlsplit(callback_target_url)
+            if parsed_target.scheme not in {'http', 'https'} or not parsed_target.netloc:
+                continue
+
+            configured_host = str(callback_proxy.get('host', '')).strip().lower()
+            if configured_host:
+                if ':' in configured_host:
+                    if request_host_full != configured_host:
+                        continue
+                elif request_host_name != configured_host:
+                    continue
+
+            return callback_target_url
+
+        return None
+
+    def _normalize_callback_path(self, path: str) -> str:
+        normalized = (path or '').strip()
+        if not normalized:
+            return ''
+
+        if '://' in normalized:
+            normalized = urlsplit(normalized).path
+
+        normalized = normalized.split('?', 1)[0]
+        if not normalized:
+            return ''
+
+        if not normalized.startswith('/'):
+            normalized = f'/{normalized}'
+
+        if normalized != '/' and normalized.endswith('/'):
+            normalized = normalized[:-1]
+
+        return normalized
+
+    def _append_query(self, target_url: str, query_string_bytes: bytes) -> str:
+        raw_query = query_string_bytes.decode('latin-1', errors='replace')
+        if not raw_query:
+            return target_url
+
+        parsed = urlsplit(target_url)
+        merged_query = f'{parsed.query}&{raw_query}' if parsed.query else raw_query
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, merged_query, parsed.fragment))
 
 
 class WebsocketUpgradeGuardMiddleware:

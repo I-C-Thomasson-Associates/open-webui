@@ -68,6 +68,28 @@
 	let showAccessControlModal = false;
 	let showDeleteConfirmDialog = false;
 
+	let callbackProxyEnabled = false;
+	let callbackProxyHost = '';
+	let callbackProxyPath = '/auth/callback';
+	let callbackProxyUrl = '';
+
+	const normalizeCallbackPath = (value: string) => {
+		let normalized = value.trim();
+		if (!normalized) {
+			return '';
+		}
+
+		if (!normalized.startsWith('/')) {
+			normalized = `/${normalized}`;
+		}
+
+		if (normalized.length > 1 && normalized.endsWith('/')) {
+			normalized = normalized.slice(0, -1);
+		}
+
+		return normalized;
+	};
+
 	const registerOAuthClientHandler = async () => {
 		if (url === '') {
 			toast.error($i18n.t('Please enter a valid URL'));
@@ -243,6 +265,12 @@
 				if (data.config) {
 					enable = data.config.enable ?? true;
 					accessGrants = data.config.access_grants ?? [];
+
+					const authCallbackProxy = data.config.auth_callback_proxy ?? {};
+					callbackProxyEnabled = authCallbackProxy.enabled ?? false;
+					callbackProxyHost = authCallbackProxy.host ?? '';
+					callbackProxyPath = authCallbackProxy.path ?? '/auth/callback';
+					callbackProxyUrl = authCallbackProxy.url ?? '';
 				}
 
 				toast.success($i18n.t('Import successful'));
@@ -334,6 +362,36 @@
 			}
 		}
 
+		let normalizedCallbackPath = normalizeCallbackPath(callbackProxyPath);
+		let normalizedCallbackUrl = callbackProxyUrl.trim();
+		let normalizedCallbackHost = callbackProxyHost.trim().toLowerCase();
+
+		if (callbackProxyEnabled) {
+			if (!normalizedCallbackPath) {
+				toast.error($i18n.t('Please enter a valid callback path'));
+				loading = false;
+				return;
+			}
+
+			if (!normalizedCallbackUrl) {
+				toast.error($i18n.t('Please enter a valid callback target URL'));
+				loading = false;
+				return;
+			}
+
+			try {
+				const parsedUrl = new URL(normalizedCallbackUrl);
+				if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+					throw new Error('Invalid callback target URL protocol');
+				}
+				normalizedCallbackUrl = parsedUrl.toString();
+			} catch {
+				toast.error($i18n.t('Please enter a valid callback target URL'));
+				loading = false;
+				return;
+			}
+		}
+
 		const connection = {
 			type,
 			url,
@@ -349,7 +407,17 @@
 			config: {
 				enable: enable,
 				function_name_filter_list: functionNameFilterList,
-				access_grants: accessGrants
+				access_grants: accessGrants,
+				...(callbackProxyEnabled
+					? {
+							auth_callback_proxy: {
+								enabled: true,
+								...(normalizedCallbackHost ? { host: normalizedCallbackHost } : {}),
+								path: normalizedCallbackPath,
+								url: normalizedCallbackUrl
+							}
+						}
+					: {})
 			},
 			info: {
 				id: id,
@@ -394,6 +462,10 @@
 		enable = true;
 		functionNameFilterList = '';
 		accessGrants = [];
+		callbackProxyEnabled = false;
+		callbackProxyHost = '';
+		callbackProxyPath = '/auth/callback';
+		callbackProxyUrl = '';
 	};
 
 	const init = () => {
@@ -421,6 +493,17 @@
 			enable = connection.config?.enable ?? true;
 			functionNameFilterList = connection.config?.function_name_filter_list ?? '';
 			accessGrants = connection.config?.access_grants ?? [];
+
+			const authCallbackProxy = connection.config?.auth_callback_proxy ?? {};
+			callbackProxyEnabled = authCallbackProxy.enabled ?? false;
+			callbackProxyHost = authCallbackProxy.host ?? '';
+			callbackProxyPath = authCallbackProxy.path ?? '/auth/callback';
+			callbackProxyUrl = authCallbackProxy.url ?? '';
+		} else {
+			callbackProxyEnabled = false;
+			callbackProxyHost = '';
+			callbackProxyPath = '/auth/callback';
+			callbackProxyUrl = '';
 		}
 	};
 
@@ -912,6 +995,62 @@
 												/>
 											</Tooltip>
 										</div>
+									</div>
+								</div>
+
+								<div class="flex gap-2 mt-2">
+									<div class="flex flex-col w-full">
+										<div class="flex justify-between items-center mb-0.5">
+											<div
+												class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+											>
+												{$i18n.t('Auth Callback Proxy')}
+											</div>
+
+											<Tooltip
+												content={$i18n.t(
+													'Route OAuth callback requests through Open WebUI to your tool server'
+												)}
+											>
+												<Switch bind:state={callbackProxyEnabled} />
+											</Tooltip>
+										</div>
+
+										{#if callbackProxyEnabled}
+											<div class="flex flex-col gap-1.5">
+												<input
+													class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+													type="text"
+													bind:value={callbackProxyHost}
+													placeholder={$i18n.t('Callback Host (optional)')}
+													autocomplete="off"
+												/>
+
+												<input
+													class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+													type="text"
+													bind:value={callbackProxyPath}
+													placeholder="/m365-tools/auth/callback"
+													autocomplete="off"
+												/>
+
+												<input
+													class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+													type="text"
+													bind:value={callbackProxyUrl}
+													placeholder="http://localhost:8100/auth/callback"
+													autocomplete="off"
+												/>
+
+												<div
+													class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+												>
+													{$i18n.t(
+														'Incoming requests to this path will be proxied to the target callback URL'
+													)}
+												</div>
+											</div>
+										{/if}
 									</div>
 								</div>
 							{/if}
