@@ -46,6 +46,12 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, CUSTOM_API_KEY_HEADER
 from open_webui.internal.db import ScopedSession
 from open_webui.utils.auth import get_http_authorization_cred
+from open_webui.utils.auth_callback_proxy_security import (
+    MAX_CALLBACK_BODY_BYTES,
+    is_valid_callback_proxy_config,
+    sanitize_url_for_log,
+    strip_sensitive_response_headers,
+)
 
 log = logging.getLogger(__name__)
 
@@ -211,7 +217,16 @@ class AuthCallbackProxyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        body = await self._read_request_body(receive)
+        try:
+            body = await self._read_request_body(receive)
+        except ValueError:
+            response = JSONResponse(
+                status_code=413,
+                content={'detail': 'Auth callback request body too large'},
+            )
+            await response(scope, receive, send)
+            return
+
         if body is None:
             return
 
@@ -246,7 +261,7 @@ class AuthCallbackProxyMiddleware:
                     response_body = await upstream_response.read()
                     response_headers = [
                         (key.encode('latin-1'), value.encode('latin-1'))
-                        for key, value in upstream_response.headers.items()
+                        for key, value in strip_sensitive_response_headers(upstream_response.headers)
                         if key.lower() not in self.STRIPPED_RESPONSE_HEADERS
                     ]
 
@@ -266,12 +281,13 @@ class AuthCallbackProxyMiddleware:
                     )
                     return
         except Exception:
-            log.exception('Auth callback proxy failed for target=%s', target_url)
+            log.exception('Auth callback proxy failed for target=%s', sanitize_url_for_log(target_url))
             response = JSONResponse(status_code=502, content={'detail': 'Auth callback proxy failed'})
             await response(scope, receive, send)
 
     async def _read_request_body(self, receive: Receive) -> bytes | None:
         chunks = []
+        total_size = 0
         while True:
             message = await receive()
             message_type = message.get('type')
@@ -282,7 +298,12 @@ class AuthCallbackProxyMiddleware:
             if message_type != 'http.request':
                 continue
 
-            chunks.append(message.get('body', b''))
+            chunk = message.get('body', b'')
+            total_size += len(chunk)
+            if total_size > MAX_CALLBACK_BODY_BYTES:
+                raise ValueError('auth callback request body exceeds size limit')
+
+            chunks.append(chunk)
             if not message.get('more_body', False):
                 break
 
@@ -304,6 +325,13 @@ class AuthCallbackProxyMiddleware:
             if not isinstance(callback_proxy, dict) or not callback_proxy.get('enabled'):
                 continue
 
+            if not is_valid_callback_proxy_config(callback_proxy):
+                continue
+
+            configured_host = str(callback_proxy.get('host', '')).strip().lower()
+            if not configured_host:
+                continue
+
             callback_path = self._normalize_callback_path(str(callback_proxy.get('path', '')))
             callback_target_url = str(callback_proxy.get('url', '')).strip()
             if not callback_path or not callback_target_url:
@@ -315,13 +343,11 @@ class AuthCallbackProxyMiddleware:
             if parsed_target.scheme not in {'http', 'https'} or not parsed_target.netloc:
                 continue
 
-            configured_host = str(callback_proxy.get('host', '')).strip().lower()
-            if configured_host:
-                if ':' in configured_host:
-                    if request_host_full != configured_host:
-                        continue
-                elif request_host_name != configured_host:
+            if ':' in configured_host:
+                if request_host_full != configured_host:
                     continue
+            elif request_host_name != configured_host:
+                continue
 
             return callback_target_url
 

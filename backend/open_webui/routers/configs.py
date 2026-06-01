@@ -20,6 +20,7 @@ from open_webui.utils.tools import (
 )
 from open_webui.utils.mcp.client import MCPClient
 from open_webui.models.oauth_sessions import OAuthSessions
+from open_webui.utils.auth_callback_proxy_security import is_valid_callback_proxy_config
 
 
 from open_webui.utils.oauth import (
@@ -181,6 +182,18 @@ async def set_tool_servers_config(
     form_data: ToolServersConfigForm,
     user=Depends(get_admin_user),
 ):
+    for connection in form_data.TOOL_SERVER_CONNECTIONS:
+        callback_proxy = ((connection.config or {}) if isinstance(connection.config, dict) else {}).get(
+            'auth_callback_proxy'
+        )
+
+        if isinstance(callback_proxy, dict) and callback_proxy.get('enabled'):
+            if not is_valid_callback_proxy_config(callback_proxy):
+                raise HTTPException(
+                    status_code=400,
+                    detail='Invalid auth_callback_proxy: enabled requires non-empty host/path/url and an http(s) url',
+                )
+
     for connection in request.app.state.config.TOOL_SERVER_CONNECTIONS:
         server_type = connection.get('type', 'openapi')
         auth_type = connection.get('auth_type', 'none')
