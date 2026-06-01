@@ -5,6 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 MAX_CALLBACK_BODY_BYTES = 64 * 1024
 _SENSITIVE_RESPONSE_HEADERS = frozenset({'set-cookie', 'set-cookie2'})
+_CALLBACK_TARGET_URL_SCHEMES = frozenset({'https'})
 
 
 def strip_sensitive_response_headers(
@@ -35,7 +36,7 @@ def is_valid_callback_proxy_config(proxy_dict: dict | None) -> bool:
         return False
 
     parsed_url = urlsplit(url)
-    if parsed_url.scheme not in {'http', 'https'} or not parsed_url.netloc:
+    if parsed_url.scheme not in _CALLBACK_TARGET_URL_SCHEMES or not parsed_url.netloc:
         return False
 
     return True

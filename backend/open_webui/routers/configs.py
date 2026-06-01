@@ -191,7 +191,7 @@ async def set_tool_servers_config(
             if not is_valid_callback_proxy_config(callback_proxy):
                 raise HTTPException(
                     status_code=400,
-                    detail='Invalid auth_callback_proxy: enabled requires non-empty host/path/url and an http(s) url',
+                    detail='Invalid auth_callback_proxy: enabled requires non-empty host/path/url and an HTTPS url',
                 )
 
     for connection in request.app.state.config.TOOL_SERVER_CONNECTIONS:
