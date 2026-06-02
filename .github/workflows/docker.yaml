@@ -43,15 +43,6 @@ env:
 
 jobs:
   build:
-    if: |
-      (github.event_name != 'workflow_dispatch' &&
-        (matrix.variant.name == 'main' || matrix.variant.name == 'slim')) ||
-      (github.event_name == 'workflow_dispatch' &&
-        ((matrix.variant.name == 'main' && inputs.build_main) ||
-         (matrix.variant.name == 'cuda' && inputs.build_cuda) ||
-         (matrix.variant.name == 'cuda126' && inputs.build_cuda126) ||
-         (matrix.variant.name == 'ollama' && inputs.build_ollama) ||
-         (matrix.variant.name == 'slim' && inputs.build_slim)))
     runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read
@@ -89,7 +80,32 @@ jobs:
             free_disk: false
 
     steps:
+      - name: Determine variant eligibility
+        id: should_build
+        shell: bash
+        run: |
+          enabled=false
+          variant="${{ matrix.variant.name }}"
+
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            if [ "$variant" = "main" ] || [ "$variant" = "slim" ]; then
+              enabled=true
+            fi
+          else
+            case "$variant" in
+              main) [ "${{ inputs.build_main }}" = "true" ] && enabled=true ;;
+              cuda) [ "${{ inputs.build_cuda }}" = "true" ] && enabled=true ;;
+              cuda126) [ "${{ inputs.build_cuda126 }}" = "true" ] && enabled=true ;;
+              ollama) [ "${{ inputs.build_ollama }}" = "true" ] && enabled=true ;;
+              slim) [ "${{ inputs.build_slim }}" = "true" ] && enabled=true ;;
+            esac
+          fi
+
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "Variant '$variant' enabled=$enabled"
+
       - name: Prepare environment
+        if: steps.should_build.outputs.enabled == 'true'
         run: |
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
           echo "FULL_IMAGE_NAME=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
@@ -97,19 +113,23 @@ jobs:
           echo "PLATFORM_PAIR=${platform//\//-}" >> ${GITHUB_ENV}
 
       - name: Free disk space
-        if: matrix.variant.free_disk
+        if: steps.should_build.outputs.enabled == 'true' && matrix.variant.free_disk
         run: rm -rf /opt/hostedtoolcache
 
       - name: Checkout repository
+        if: steps.should_build.outputs.enabled == 'true'
         uses: actions/checkout@v5
 
       - name: Set up QEMU
+        if: steps.should_build.outputs.enabled == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: steps.should_build.outputs.enabled == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
+        if: steps.should_build.outputs.enabled == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -117,6 +137,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata for Docker images
+        if: steps.should_build.outputs.enabled == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -133,6 +154,7 @@ jobs:
             ${{ matrix.variant.suffix != '' && format('suffix={0},onlatest=true', matrix.variant.suffix) || '' }}
 
       - name: Extract metadata for Docker cache
+        if: steps.should_build.outputs.enabled == 'true'
         id: cache-meta
         uses: docker/metadata-action@v5
         with:
@@ -145,6 +167,7 @@ jobs:
             latest=false
 
       - name: Build Docker image
+        if: steps.should_build.outputs.enabled == 'true'
         uses: docker/build-push-action@v5
         id: build
         with:
@@ -161,12 +184,14 @@ jobs:
             ${{ matrix.variant.build_args }}
 
       - name: Export digest
+        if: steps.should_build.outputs.enabled == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
+        if: steps.should_build.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-${{ matrix.variant.name }}-${{ env.PLATFORM_PAIR }}
@@ -177,18 +202,7 @@ jobs:
   merge:
     runs-on: ubuntu-latest
     needs: [build]
-    if: |
-      !cancelled() &&
-      (
-        (github.event_name != 'workflow_dispatch' &&
-          (matrix.variant.name == 'main' || matrix.variant.name == 'slim')) ||
-        (github.event_name == 'workflow_dispatch' &&
-          ((matrix.variant.name == 'main' && inputs.build_main) ||
-           (matrix.variant.name == 'cuda' && inputs.build_cuda) ||
-           (matrix.variant.name == 'cuda126' && inputs.build_cuda126) ||
-           (matrix.variant.name == 'ollama' && inputs.build_ollama) ||
-           (matrix.variant.name == 'slim' && inputs.build_slim)))
-      )
+    if: !cancelled()
     permissions:
       contents: read
       packages: write
@@ -208,12 +222,38 @@ jobs:
             suffix: "-slim"
 
     steps:
+      - name: Determine variant eligibility
+        id: should_merge
+        shell: bash
+        run: |
+          enabled=false
+          variant="${{ matrix.variant.name }}"
+
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            if [ "$variant" = "main" ] || [ "$variant" = "slim" ]; then
+              enabled=true
+            fi
+          else
+            case "$variant" in
+              main) [ "${{ inputs.build_main }}" = "true" ] && enabled=true ;;
+              cuda) [ "${{ inputs.build_cuda }}" = "true" ] && enabled=true ;;
+              cuda126) [ "${{ inputs.build_cuda126 }}" = "true" ] && enabled=true ;;
+              ollama) [ "${{ inputs.build_ollama }}" = "true" ] && enabled=true ;;
+              slim) [ "${{ inputs.build_slim }}" = "true" ] && enabled=true ;;
+            esac
+          fi
+
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "Variant '$variant' enabled=$enabled"
+
       - name: Prepare environment
+        if: steps.should_merge.outputs.enabled == 'true'
         run: |
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
           echo "FULL_IMAGE_NAME=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
 
       - name: Download digests
+        if: steps.should_merge.outputs.enabled == 'true'
         id: download
         uses: actions/download-artifact@v5
         with:
@@ -223,6 +263,7 @@ jobs:
         continue-on-error: true
 
       - name: Check digests
+        if: steps.should_merge.outputs.enabled == 'true'
         id: check
         run: |
           count=$(find /tmp/digests -type f 2>/dev/null | wc -l | tr -d ' ')
@@ -235,11 +276,11 @@ jobs:
           fi
 
       - name: Set up Docker Buildx
-        if: steps.check.outputs.skip != 'true'
+        if: steps.should_merge.outputs.enabled == 'true' && steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
-        if: steps.check.outputs.skip != 'true'
+        if: steps.should_merge.outputs.enabled == 'true' && steps.check.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -247,7 +288,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata for Docker images
-        if: steps.check.outputs.skip != 'true'
+        if: steps.should_merge.outputs.enabled == 'true' && steps.check.outputs.skip != 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -264,7 +305,7 @@ jobs:
             ${{ matrix.variant.suffix != '' && format('suffix={0},onlatest=true', matrix.variant.suffix) || '' }}
 
       - name: Create manifest list and push
-        if: steps.check.outputs.skip != 'true'
+        if: steps.should_merge.outputs.enabled == 'true' && steps.check.outputs.skip != 'true'
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
@@ -272,7 +313,7 @@ jobs:
             $(printf '${{ env.FULL_IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Inspect image
-        if: steps.check.outputs.skip != 'true'
+        if: steps.should_merge.outputs.enabled == 'true' && steps.check.outputs.skip != 'true'
         run: |
           docker buildx imagetools inspect ${{ env.FULL_IMAGE_NAME }}:${{ steps.meta.outputs.version }}
 
@@ -280,17 +321,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       !cancelled() &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
-      (
-        (github.event_name != 'workflow_dispatch' &&
-          (matrix.variant.name == 'main' || matrix.variant.name == 'slim')) ||
-        (github.event_name == 'workflow_dispatch' &&
-          ((matrix.variant.name == 'main' && inputs.build_main) ||
-           (matrix.variant.name == 'cuda' && inputs.build_cuda) ||
-           (matrix.variant.name == 'cuda126' && inputs.build_cuda126) ||
-           (matrix.variant.name == 'ollama' && inputs.build_ollama) ||
-           (matrix.variant.name == 'slim' && inputs.build_slim)))
-      )
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [merge]
     continue-on-error: true
     strategy:
@@ -309,15 +340,42 @@ jobs:
             suffix: "-slim"
 
     steps:
+      - name: Determine variant eligibility
+        id: should_copy
+        shell: bash
+        run: |
+          enabled=false
+          variant="${{ matrix.variant }}"
+
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            if [ "$variant" = "main" ] || [ "$variant" = "slim" ]; then
+              enabled=true
+            fi
+          else
+            case "$variant" in
+              main) [ "${{ inputs.build_main }}" = "true" ] && enabled=true ;;
+              cuda) [ "${{ inputs.build_cuda }}" = "true" ] && enabled=true ;;
+              cuda126) [ "${{ inputs.build_cuda126 }}" = "true" ] && enabled=true ;;
+              ollama) [ "${{ inputs.build_ollama }}" = "true" ] && enabled=true ;;
+              slim) [ "${{ inputs.build_slim }}" = "true" ] && enabled=true ;;
+            esac
+          fi
+
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          echo "Variant '$variant' enabled=$enabled"
+
       - name: Prepare environment
+        if: steps.should_copy.outputs.enabled == 'true'
         run: |
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
           echo "FULL_IMAGE_NAME=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
 
       - name: Set up Docker Buildx
+        if: steps.should_copy.outputs.enabled == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
+        if: steps.should_copy.outputs.enabled == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -325,12 +383,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
+        if: steps.should_copy.outputs.enabled == 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Determine source and destination tags
+        if: steps.should_copy.outputs.enabled == 'true'
         id: tags
         run: |
           DOCKERHUB_IMAGE="openwebui/open-webui"
@@ -360,6 +420,7 @@ jobs:
           echo "dockerhub_image=${DOCKERHUB_IMAGE}" >> $GITHUB_OUTPUT
 
       - name: Copy images from GHCR to Docker Hub
+        if: steps.should_copy.outputs.enabled == 'true'
         run: |
           DOCKERHUB_IMAGE="${{ steps.tags.outputs.dockerhub_image }}"
           SUFFIX="${{ matrix.suffix }}"
