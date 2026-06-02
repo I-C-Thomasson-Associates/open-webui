@@ -540,6 +540,7 @@ from open_webui.tasks import (
 from open_webui.utils import logger
 from open_webui.utils.actions import chat_action as chat_action_handler
 from open_webui.utils.asgi_middleware import (
+    AuthCallbackProxyMiddleware,
     AuthTokenMiddleware,
     CommitSessionMiddleware,
     RedirectMiddleware,
@@ -1401,6 +1402,7 @@ if ENABLE_COMPRESSION_MIDDLEWARE:
 app.add_middleware(RedirectMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CommitSessionMiddleware)
+app.add_middleware(AuthCallbackProxyMiddleware, fastapi_app=app)
 app.add_middleware(AuthTokenMiddleware, fastapi_app=app)
 app.add_middleware(WebsocketUpgradeGuardMiddleware)
 

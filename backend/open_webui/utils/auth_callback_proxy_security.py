@@ -5,7 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 MAX_CALLBACK_BODY_BYTES = 64 * 1024
 _SENSITIVE_RESPONSE_HEADERS = frozenset({'set-cookie', 'set-cookie2'})
-_CALLBACK_TARGET_URL_SCHEMES = frozenset({'https'})
+_CALLBACK_TARGET_URL_SCHEMES = frozenset({'http', 'https'})
 
 
 def strip_sensitive_response_headers(

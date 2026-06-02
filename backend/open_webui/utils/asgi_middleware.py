@@ -343,7 +343,7 @@ class AuthCallbackProxyMiddleware:
                 continue
 
             parsed_target = urlsplit(callback_target_url)
-            if parsed_target.scheme != 'https' or not parsed_target.netloc:
+            if parsed_target.scheme not in {'http', 'https'} or not parsed_target.netloc:
                 continue
 
             if ':' in configured_host:
