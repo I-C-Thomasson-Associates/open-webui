@@ -105,6 +105,60 @@ export const transcribeAudio = async (
 	return res;
 };
 
+export const transcribeCaptureAudio = async (
+	token: string,
+	file: File,
+	language?: string,
+	options?: { diarize?: boolean }
+) => {
+	const data = new FormData();
+	data.append('file', file);
+	if (language) {
+		data.append('language', language);
+	}
+	if (typeof options?.diarize === 'boolean') {
+		data.append('diarize', options.diarize ? 'true' : 'false');
+	}
+
+	let error: any = null;
+	const res = await fetch(`${AUDIO_API_BASE_URL}/capture/transcriptions`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: data
+	})
+		.then(async (res) => {
+			if (!res.ok) {
+				let err: any = {};
+				try {
+					err = await res.json();
+				} catch {
+					err = { detail: 'Request failed.' };
+				}
+
+				throw {
+					...err,
+					status: res.status
+				};
+			}
+
+			return res.json();
+		})
+		.catch((err) => {
+			error = err;
+			console.error(err);
+			return null;
+		});
+
+	if (error) {
+		throw error;
+	}
+
+	return res;
+};
+
 export const synthesizeOpenAISpeech = async (
 	token: string = '',
 	speaker: string = 'alloy',

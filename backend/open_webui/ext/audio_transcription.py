@@ -20,16 +20,20 @@ def get_azure_max_speakers(config):
     return max(2, min(max_speakers, 35))
 
 
-def build_azure_definition(locales, max_speakers):
+def build_azure_definition(locales, max_speakers, diarize=True):
     if not locales:
         return {}
 
-    return {
-        'locales': locales.split(','),
-        'diarization': {'maxSpeakers': max_speakers, 'enabled': True},
+    definition = {
+        'locales': [locale.strip() for locale in locales.split(',') if locale.strip()],
         'wordLevelTimestampsEnabled': True,
         'displayFormWordLevelTimestampsEnabled': True,
     }
+
+    if diarize:
+        definition['diarization'] = {'maxSpeakers': max_speakers, 'enabled': True}
+
+    return definition
 
 
 def post_azure_fast_transcription(file_path, url, api_key, definition, timeout, log):

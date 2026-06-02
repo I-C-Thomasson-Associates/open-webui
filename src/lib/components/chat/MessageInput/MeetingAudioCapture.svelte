@@ -3,7 +3,7 @@
 	import { toast } from 'svelte-sonner';
 
 	import { config, settings } from '$lib/stores';
-	import { transcribeAudio } from '$lib/apis/audio';
+	import { transcribeAudio, transcribeCaptureAudio } from '$lib/apis/audio';
 	import {
 		buildMeetingTranscript,
 		normalizeTranscriptionSegments,
@@ -99,6 +99,7 @@
 
 	const transcribeChunkWithRetry = async (file: File, source: CaptureSource) => {
 		let lastError;
+		const diarize = source === 'shared';
 
 		for (let attempt = 0; attempt <= transcriptionRetryDelaysMs.length; attempt++) {
 			if (cancelled) {
@@ -106,9 +107,22 @@
 			}
 
 			try {
-				return await transcribeAudio(localStorage.token, file, $settings?.audio?.stt?.language, {
-					diarize: source === 'shared'
-				});
+				try {
+					return await transcribeCaptureAudio(
+						localStorage.token,
+						file,
+						$settings?.audio?.stt?.language,
+						{ diarize }
+					);
+				} catch (error: any) {
+					if (error?.status === 404 || error?.status === 501) {
+						return await transcribeAudio(localStorage.token, file, $settings?.audio?.stt?.language, {
+							diarize
+						});
+					}
+
+					throw error;
+				}
 			} catch (error) {
 				lastError = error;
 
