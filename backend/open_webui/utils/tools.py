@@ -1208,6 +1208,12 @@ async def get_terminal_tools(
     session_id = metadata.get('chat_id')
     if session_id:
         headers['X-Session-Id'] = session_id
+    try:
+        from open_webui.ext.terminal_tool_gateway import build_terminal_tool_gateway_seed_headers
+
+        headers.update(await build_terminal_tool_gateway_seed_headers(request, user, terminal_id, metadata))
+    except Exception as e:
+        log.debug(f'Failed to seed terminal tool gateway headers: {e}')
 
     terminal_cwd = await get_terminal_cwd(connection.get('url', ''), headers, cookies)
 

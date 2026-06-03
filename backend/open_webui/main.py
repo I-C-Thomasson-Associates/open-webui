@@ -470,7 +470,7 @@ from open_webui.env import (
     WEBUI_SESSION_COOKIE_SECURE,
 )
 from open_webui.internal.db import ScopedSession, engine, get_async_session
-from open_webui.ext import audio_capture_router
+from open_webui.ext import audio_capture_router, terminal_tool_gateway
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.channels import Channels
 from open_webui.models.chats import ChatForm, Chats
@@ -1429,6 +1429,11 @@ app.include_router(images.router, prefix='/api/v1/images', tags=['images'])
 
 app.include_router(audio.router, prefix='/api/v1/audio', tags=['audio'])
 app.include_router(audio_capture_router.router, prefix='/api/v1/audio', tags=['audio'])
+app.include_router(
+    terminal_tool_gateway.router,
+    prefix='/api/v1/ext/terminal-tool-gateway',
+    tags=['ext-terminal-tool-gateway'],
+)
 app.include_router(retrieval.router, prefix='/api/v1/retrieval', tags=['retrieval'])
 
 app.include_router(configs.router, prefix='/api/v1/configs', tags=['configs'])

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Request, Response, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from open_webui.config import TERMINAL_PROXY_HEADERS
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
+from open_webui.ext.terminal_tool_gateway import build_terminal_tool_gateway_seed_headers
 from open_webui.models.groups import Groups
 from open_webui.models.users import Users
 from open_webui.utils.access_control import has_connection_access
@@ -135,6 +136,7 @@ async def proxy_terminal(
     content_type = request.headers.get('content-type')
     if content_type:
         headers['Content-Type'] = content_type
+    headers.update(await build_terminal_tool_gateway_seed_headers(request, user, server_id, {'chat_id': session_id or ''}))
 
     body = await request.body()
     session = aiohttp.ClientSession(
