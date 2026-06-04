@@ -73,6 +73,10 @@
 	let callbackProxyPath = '/auth/callback';
 	let callbackProxyUrl = '';
 
+	let terminalGatewayEnabled = false;
+	let terminalGatewayAllowedMethods = 'GET, POST';
+	let terminalGatewayAllowedPathPrefixes = '/auth/status\n/me';
+
 	const normalizeCallbackPath = (value: string) => {
 		let normalized = value.trim();
 		if (!normalized) {
@@ -88,6 +92,41 @@
 		}
 
 		return normalized;
+	};
+
+	const parseTerminalGatewayMethods = () => {
+		const validMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+		const methods = terminalGatewayAllowedMethods
+			.split(',')
+			.map((method) => method.trim().toUpperCase())
+			.filter(Boolean);
+
+		if (methods.length === 0) {
+			throw new Error('Please enter at least one terminal gateway method');
+		}
+
+		for (const method of methods) {
+			if (!validMethods.has(method)) {
+				throw new Error(`Invalid terminal gateway method: ${method}`);
+			}
+		}
+
+		return Array.from(new Set(methods));
+	};
+
+	const parseTerminalGatewayPathPrefixes = () => {
+		const prefixes = terminalGatewayAllowedPathPrefixes
+			.split('\n')
+			.map((prefix) => prefix.trim())
+			.filter(Boolean)
+			.map((prefix) => (prefix.startsWith('/') ? prefix : `/${prefix}`))
+			.map((prefix) => (prefix.length > 1 && prefix.endsWith('/') ? prefix.slice(0, -1) : prefix));
+
+		if (prefixes.length === 0) {
+			throw new Error('Please enter at least one terminal gateway path prefix');
+		}
+
+		return Array.from(new Set(prefixes));
 	};
 
 	const registerOAuthClientHandler = async () => {
@@ -271,6 +310,14 @@
 					callbackProxyHost = authCallbackProxy.host ?? '';
 					callbackProxyPath = authCallbackProxy.path ?? '/auth/callback';
 					callbackProxyUrl = authCallbackProxy.url ?? '';
+
+					const terminalGateway = data.config.terminal_gateway ?? {};
+					terminalGatewayEnabled = terminalGateway.enabled ?? false;
+					terminalGatewayAllowedMethods = (terminalGateway.allowed_methods ?? ['GET', 'POST']).join(', ');
+					terminalGatewayAllowedPathPrefixes = (terminalGateway.allowed_path_prefixes ?? [
+						'/auth/status',
+						'/me'
+					]).join('\n');
 				}
 
 				toast.success($i18n.t('Import successful'));
@@ -282,6 +329,18 @@
 	};
 
 	const exportHandler = async () => {
+		let terminalGatewayMethods: string[] = [];
+		let terminalGatewayPathPrefixes: string[] = [];
+		if (terminalGatewayEnabled) {
+			try {
+				terminalGatewayMethods = parseTerminalGatewayMethods();
+				terminalGatewayPathPrefixes = parseTerminalGatewayPathPrefixes();
+			} catch (error) {
+				toast.error($i18n.t(error instanceof Error ? error.message : 'Invalid terminal gateway configuration'));
+				return;
+			}
+		}
+
 		// export current connection as json file
 		const json = JSON.stringify([
 			{
@@ -300,6 +359,30 @@
 					id: id,
 					name: name,
 					description: description
+				},
+				config: {
+					enable: enable,
+					function_name_filter_list: functionNameFilterList,
+					access_grants: accessGrants,
+					...(callbackProxyEnabled
+						? {
+								auth_callback_proxy: {
+									enabled: true,
+									...(callbackProxyHost.trim() ? { host: callbackProxyHost.trim().toLowerCase() } : {}),
+									path: normalizeCallbackPath(callbackProxyPath),
+									url: callbackProxyUrl.trim()
+								}
+							}
+						: {}),
+					...(terminalGatewayEnabled
+					? {
+								terminal_gateway: {
+									enabled: true,
+									allowed_methods: terminalGatewayMethods,
+									allowed_path_prefixes: terminalGatewayPathPrefixes
+								}
+							}
+						: {})
 				}
 			}
 		]);
@@ -392,6 +475,19 @@
 			}
 		}
 
+		let terminalGatewayMethods: string[] = [];
+		let terminalGatewayPathPrefixes: string[] = [];
+		if (terminalGatewayEnabled) {
+			try {
+				terminalGatewayMethods = parseTerminalGatewayMethods();
+				terminalGatewayPathPrefixes = parseTerminalGatewayPathPrefixes();
+			} catch (error) {
+				toast.error($i18n.t(error instanceof Error ? error.message : 'Invalid terminal gateway configuration'));
+				loading = false;
+				return;
+			}
+		}
+
 		const connection = {
 			type,
 			url,
@@ -415,6 +511,15 @@
 								...(normalizedCallbackHost ? { host: normalizedCallbackHost } : {}),
 								path: normalizedCallbackPath,
 								url: normalizedCallbackUrl
+							}
+						}
+					: {}),
+				...(terminalGatewayEnabled
+					? {
+							terminal_gateway: {
+								enabled: true,
+								allowed_methods: terminalGatewayMethods,
+								allowed_path_prefixes: terminalGatewayPathPrefixes
 							}
 						}
 					: {})
@@ -466,6 +571,9 @@
 		callbackProxyHost = '';
 		callbackProxyPath = '/auth/callback';
 		callbackProxyUrl = '';
+		terminalGatewayEnabled = false;
+		terminalGatewayAllowedMethods = 'GET, POST';
+		terminalGatewayAllowedPathPrefixes = '/auth/status\n/me';
 	};
 
 	const init = () => {
@@ -499,11 +607,22 @@
 			callbackProxyHost = authCallbackProxy.host ?? '';
 			callbackProxyPath = authCallbackProxy.path ?? '/auth/callback';
 			callbackProxyUrl = authCallbackProxy.url ?? '';
+
+			const terminalGateway = connection.config?.terminal_gateway ?? {};
+			terminalGatewayEnabled = terminalGateway.enabled ?? false;
+			terminalGatewayAllowedMethods = (terminalGateway.allowed_methods ?? ['GET', 'POST']).join(', ');
+			terminalGatewayAllowedPathPrefixes = (terminalGateway.allowed_path_prefixes ?? [
+				'/auth/status',
+				'/me'
+			]).join('\n');
 		} else {
 			callbackProxyEnabled = false;
 			callbackProxyHost = '';
 			callbackProxyPath = '/auth/callback';
 			callbackProxyUrl = '';
+			terminalGatewayEnabled = false;
+			terminalGatewayAllowedMethods = 'GET, POST';
+			terminalGatewayAllowedPathPrefixes = '/auth/status\n/me';
 		}
 	};
 
@@ -1047,6 +1166,54 @@
 												>
 													{$i18n.t(
 														'Incoming requests to this path will be proxied to the target callback URL'
+													)}
+												</div>
+											</div>
+										{/if}
+									</div>
+								</div>
+
+								<div class="flex gap-2 mt-2">
+									<div class="flex flex-col w-full">
+										<div class="flex justify-between items-center mb-0.5">
+											<div
+												class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+											>
+												{$i18n.t('Terminal Tool Gateway')}
+											</div>
+
+											<Tooltip
+												content={$i18n.t(
+													'Allow scripts running in terminal runtimes to call this tool server through Open WebUI'
+												)}
+											>
+												<Switch bind:state={terminalGatewayEnabled} />
+											</Tooltip>
+										</div>
+
+										{#if terminalGatewayEnabled}
+											<div class="flex flex-col gap-1.5">
+												<input
+													class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+													type="text"
+													bind:value={terminalGatewayAllowedMethods}
+													placeholder="GET, POST"
+													autocomplete="off"
+												/>
+
+												<Textarea
+													className="w-full text-sm outline-hidden font-mono"
+													bind:value={terminalGatewayAllowedPathPrefixes}
+													placeholder={'/auth/status\n/me\n/email'}
+													required={false}
+													rows={3}
+												/>
+
+												<div
+													class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+												>
+													{$i18n.t(
+														'Enter allowed HTTP methods as a comma-separated list and allowed path prefixes one per line'
 													)}
 												</div>
 											</div>

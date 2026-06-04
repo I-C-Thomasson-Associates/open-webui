@@ -325,3 +325,47 @@ async def proxy_terminal_tool_gateway(server_id: str, path: str, request: Reques
         await session.close()
         log.exception('Terminal tool gateway proxy error: %s', error)
         return JSONResponse({'error': f'Terminal tool gateway proxy error: {error}'}, status_code=502)
+
+
+async def _list_allowed_servers(request: Request) -> dict[str, Any]:
+    user, _ = await _validated_user_from_gateway_token(request)
+    tool_servers = await get_tool_servers(request)
+    connections = request.app.state.config.TOOL_SERVER_CONNECTIONS or []
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+
+    servers = []
+    for server_data in tool_servers:
+        idx = server_data.get('idx', 0)
+        if idx >= len(connections):
+            continue
+
+        connection = connections[idx]
+        gateway = _gateway_config(connection)
+        if not gateway:
+            continue
+        if not await has_connection_access(user, connection, user_group_ids):
+            continue
+
+        connection_info = connection.get('info') if isinstance(connection.get('info'), dict) else {}
+        info = server_data.get('openapi', {}).get('info', {}) or server_data.get('info') or {}
+        servers.append(
+            {
+                'id': server_data.get('id'),
+                'name': info.get('title') or info.get('name') or connection_info.get('name') or '',
+                'description': info.get('description') or connection_info.get('description') or '',
+                'allowed_methods': gateway.get('allowed_methods') or [],
+                'allowed_path_prefixes': gateway.get('allowed_path_prefixes') or [],
+            }
+        )
+
+    return {'servers': servers}
+
+
+@router.get('')
+async def list_terminal_tool_gateway_servers_no_slash(request: Request):
+    return await _list_allowed_servers(request)
+
+
+@router.get('/')
+async def list_terminal_tool_gateway_servers(request: Request):
+    return await _list_allowed_servers(request)
