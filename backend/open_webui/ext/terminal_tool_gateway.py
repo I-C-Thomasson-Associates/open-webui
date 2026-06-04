@@ -188,6 +188,63 @@ def _is_gateway_request_allowed(gateway: dict[str, Any], method: str, path: str)
     return True
 
 
+def _gateway_allowed_methods(gateway: dict[str, Any]) -> list[str]:
+    allowed_methods = gateway.get('allowed_methods')
+    if isinstance(allowed_methods, list) and allowed_methods:
+        return sorted({str(method).upper() for method in allowed_methods if str(method).strip()})
+    return PROXY_METHODS.copy()
+
+
+def _gateway_allowed_path_prefixes(gateway: dict[str, Any]) -> list[str]:
+    allowed_prefixes = gateway.get('allowed_path_prefixes')
+    if not isinstance(allowed_prefixes, list):
+        return []
+    return [('/' + str(prefix).lstrip('/')).rstrip('/') for prefix in allowed_prefixes if str(prefix).strip()]
+
+
+def _list_allowed_endpoints(server_data: dict[str, Any], gateway: dict[str, Any]) -> list[dict[str, Any]]:
+    openapi_paths = server_data.get('openapi', {}).get('paths')
+    endpoints: list[dict[str, Any]] = []
+
+    if isinstance(openapi_paths, dict) and openapi_paths:
+        for raw_path, path_item in sorted(openapi_paths.items()):
+            if not isinstance(path_item, dict):
+                continue
+
+            operations = []
+            for method, operation in sorted(path_item.items()):
+                method_upper = str(method).upper()
+                if method_upper not in PROXY_METHODS:
+                    continue
+                if not _is_gateway_request_allowed(gateway, method_upper, str(raw_path)):
+                    continue
+
+                operation_data = operation if isinstance(operation, dict) else {}
+                operations.append(
+                    {
+                        'method': method_upper,
+                        'summary': operation_data.get('summary') or '',
+                        'description': operation_data.get('description') or '',
+                        'operation_id': operation_data.get('operationId') or '',
+                    }
+                )
+
+            if operations:
+                endpoints.append({'path': raw_path, 'methods': [op['method'] for op in operations], 'operations': operations})
+
+    if endpoints:
+        return endpoints
+
+    return [
+        {
+            'path_prefix': prefix,
+            'methods': _gateway_allowed_methods(gateway),
+            'source': 'terminal_gateway_allowlist',
+        }
+        for prefix in _gateway_allowed_path_prefixes(gateway)
+    ]
+
+
 async def _resolve_tool_server(request: Request, server_id: str, user: UserModel):
     tool_servers = await get_tool_servers(request)
     server_data = next((server for server in tool_servers if server.get('id') == server_id), None)
@@ -355,6 +412,7 @@ async def _list_allowed_servers(request: Request) -> dict[str, Any]:
                 'description': info.get('description') or connection_info.get('description') or '',
                 'allowed_methods': gateway.get('allowed_methods') or [],
                 'allowed_path_prefixes': gateway.get('allowed_path_prefixes') or [],
+                'endpoints': _list_allowed_endpoints(server_data, gateway),
             }
         )
 
