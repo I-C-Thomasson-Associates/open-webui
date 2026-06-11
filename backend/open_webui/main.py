@@ -502,6 +502,7 @@ from open_webui.routers import (
     pipelines,
     prompts,
     retrieval,
+    salasobrien,
     scim,
     skills,
     tasks,
@@ -1466,6 +1467,7 @@ app.include_router(utils.router, prefix='/api/v1/utils', tags=['utils'])
 app.include_router(terminals.router, prefix='/api/v1/terminals', tags=['terminals'])
 app.include_router(automations.router, prefix='/api/v1/automations', tags=['automations'])
 app.include_router(calendar.router, prefix='/api/v1/calendars', tags=['calendars'])
+app.include_router(salasobrien.router, prefix='/api/v1/salasobrien', tags=['salasobrien-internal'])
 app.include_router(usage.router, prefix='/api/v1/usage', tags=['usage'])
 
 # SCIM 2.0 API for identity management
