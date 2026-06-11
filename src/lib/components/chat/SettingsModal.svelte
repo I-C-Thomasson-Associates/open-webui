@@ -18,6 +18,7 @@
 	import XMark from '../icons/XMark.svelte';
 	import Connections from './Settings/Connections.svelte';
 	import Integrations from './Settings/Integrations.svelte';
+	import Usage from './Settings/Usage.svelte';
 	import DatabaseSettings from '../icons/DatabaseSettings.svelte';
 	import SettingsAlt from '../icons/SettingsAlt.svelte';
 	import Link from '../icons/Link.svelte';
@@ -28,6 +29,7 @@
 	import Face from '../icons/Face.svelte';
 	import AppNotification from '../icons/AppNotification.svelte';
 	import UserBadgeCheck from '../icons/UserBadgeCheck.svelte';
+	import ChartBar from '../icons/ChartBar.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -474,6 +476,22 @@
 				'version info',
 				'versioninfo'
 			]
+		},
+		{
+			id: 'usage',
+			title: 'Usage',
+			keywords: [
+				'usage',
+				'usage limit',
+				'usagelimit',
+				'monthly usage',
+				'monthlyusage',
+				'quota',
+				'limit',
+				'limits',
+				'rate limit',
+				'ratelimit'
+			]
 		}
 	];
 
@@ -852,6 +870,30 @@
 								</div>
 								<div class=" self-center">{$i18n.t('About')}</div>
 							</button>
+						{:else if tabId === 'usage'}
+							<button
+								role="tab"
+								aria-controls="tab-usage"
+								aria-selected={selectedTab === 'usage'}
+								class={`px-0.5 md:px-2.5 py-1 min-w-fit rounded-xl flex-1 md:flex-none flex text-left transition
+								${
+									selectedTab === 'usage'
+										? ($settings?.highContrastMode ?? false)
+											? 'dark:bg-gray-800 bg-gray-200'
+											: ''
+										: ($settings?.highContrastMode ?? false)
+											? 'hover:bg-gray-200 dark:hover:bg-gray-800'
+											: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'
+								}`}
+								on:click={() => {
+									selectedTab = 'usage';
+								}}
+							>
+								<div class=" self-center mr-2">
+									<ChartBar strokeWidth="2" />
+								</div>
+								<div class=" self-center">{$i18n.t('Usage')}</div>
+							</button>
 						{/if}
 					{/each}
 				{:else}
@@ -936,6 +978,8 @@
 					/>
 				{:else if selectedTab === 'about'}
 					<About />
+				{:else if selectedTab === 'usage'}
+					<Usage />
 				{/if}
 			</div>
 		</div>
