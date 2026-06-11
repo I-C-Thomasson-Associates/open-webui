@@ -49,20 +49,21 @@ def monthly_cost_key(user_id: str, bucket: str) -> str:
     return f'{REDIS_KEY_PREFIX}user:{user_id}:cost_microusd:month:{bucket}'
 
 
-def _normalize_tier_dict(raw: dict) -> dict[str, float]:
-    out: dict[str, float] = {}
+def _normalize_tier_dict(raw: dict) -> dict[str, tuple[str, float]]:
+    out: dict[str, tuple[str, float]] = {}
     for name, value in raw.items():
         try:
             cap = float(value)
         except (TypeError, ValueError):
             continue
         if cap > 0:
-            out[str(name).strip().lower()] = cap
+            display = str(name).strip()
+            out[display.lower()] = (display, cap)
     return out
 
 
-def load_tiers() -> Optional[dict[str, dict[str, float]]]:
-    """Return {division_lower: {tier_lower: cap_usd}} or None.
+def load_tiers() -> Optional[dict[str, dict[str, tuple[str, float]]]]:
+    """Return {division_lower: {tier_lower: (display_name, cap_usd)}} or None.
 
     Accepts both the flat legacy schema and the nested-by-division schema,
     same as the filter.
@@ -93,7 +94,7 @@ def load_tiers() -> Optional[dict[str, dict[str, float]]]:
 
 
 def resolve_division(
-    group_names: list[str], all_tiers: dict[str, dict[str, float]]
+    group_names: list[str], all_tiers: dict[str, dict[str, tuple[str, float]]]
 ) -> Optional[str]:
     """Match a BU group prefix (text before the first hyphen) to a division key."""
     tier_names: set[str] = set()
@@ -116,10 +117,10 @@ def resolve_division(
 
 def resolve_tier_cap(
     group_names: list[str],
-    all_tiers: dict[str, dict[str, float]],
+    all_tiers: dict[str, dict[str, tuple[str, float]]],
     division: Optional[str],
-) -> Optional[float]:
-    """Return the user's monthly cap in USD; lowest tier when no group matches."""
+) -> Optional[tuple[str, float]]:
+    """Return (tier_display_name, monthly_cap_usd); lowest tier when no group matches."""
     if division and division in all_tiers:
         tier_dict = all_tiers[division]
     elif 'default' in all_tiers:
@@ -130,7 +131,7 @@ def resolve_tier_cap(
         return None
 
     groups_lower = {g.strip().lower() for g in group_names if g and g.strip()}
-    matched = [cap for name, cap in tier_dict.items() if name in groups_lower]
+    matched = [tier for name, tier in tier_dict.items() if name in groups_lower]
     if matched:
-        return max(matched)
-    return min(tier_dict.values())
+        return max(matched, key=lambda t: t[1])
+    return min(tier_dict.values(), key=lambda t: t[1])

@@ -25,10 +25,11 @@ router = APIRouter()
 
 
 class UserUsageResponse(BaseModel):
-    # Percentage of the monthly tier cap used; None when no cap is resolvable.
-    # Dollar amounts are deliberately not exposed -- user-facing messaging is
-    # percentage-only, matching the rate-limiting filter's toasts.
+    # Percentage of the monthly tier cap used, capped at 100; None when no
+    # cap is resolvable. Dollar amounts are deliberately not exposed --
+    # user-facing messaging matches the rate-limiting filter's toasts.
     percent: Optional[int] = None
+    tier: Optional[str] = None
     month: str
     reset_at: int
     exempt: bool = False
@@ -66,12 +67,16 @@ async def get_user_usage(user=Depends(get_verified_user)):
     used_microusd = int(val) if val else 0
 
     percent = None
+    tier = None
     all_tiers = load_tiers()
     if all_tiers:
-        cap_usd = resolve_tier_cap(
+        resolved = resolve_tier_cap(
             group_names, all_tiers, resolve_division(group_names, all_tiers)
         )
-        if cap_usd:
-            percent = (used_microusd * 100) // int(round(cap_usd * 1_000_000))
+        if resolved:
+            tier, cap_usd = resolved
+            percent = min(
+                100, (used_microusd * 100) // int(round(cap_usd * 1_000_000))
+            )
 
-    return UserUsageResponse(percent=percent, month=bucket, reset_at=reset_at)
+    return UserUsageResponse(percent=percent, tier=tier, month=bucket, reset_at=reset_at)

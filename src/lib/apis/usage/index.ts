@@ -2,6 +2,7 @@ import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 export type UserUsage = {
 	percent: number | null;
+	tier: string | null;
 	month: string;
 	reset_at: number;
 	exempt: boolean;
