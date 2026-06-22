@@ -2737,86 +2737,19 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                         if result is None:
                             continue
 
-                        # Check access control for MCP server
-                        if not await has_connection_access(user, mcp_server_connection):
-                            log.warning(f'Access denied to MCP server {server_id} for user {user.id}')
-                            continue
+                        client, tool_specs = result
+                        mcp_clients[server_id] = client
 
-                        auth_type = mcp_server_connection.get('auth_type', '')
-                        headers = {}
-                        if auth_type == 'bearer':
-                            headers['Authorization'] = f'Bearer {mcp_server_connection.get("key", "")}'
-                        elif auth_type == 'none':
-                            # No authentication
-                            pass
-                        elif auth_type == 'session':
-                            headers['Authorization'] = f'Bearer {request.state.token.credentials}'
-                        elif auth_type == 'system_oauth':
-                            oauth_token = extra_params.get('__oauth_token__', None)
-                            if oauth_token:
-                                headers['Authorization'] = f'Bearer {oauth_token.get("access_token", "")}'
-                        elif auth_type in ('oauth_2.1', 'oauth_2.1_static'):
-                            try:
-                                splits = server_id.split(':')
-                                server_id = splits[-1] if len(splits) > 1 else server_id
+                        for tool_spec in tool_specs:
 
-                                oauth_token = await request.app.state.oauth_client_manager.get_oauth_token(
-                                    user.id, f'mcp:{server_id}'
-                                )
+                            async def make_tool_function(client, function_name):
+                                async def tool_function(**kwargs):
+                                    return await client.call_tool(
+                                        function_name,
+                                        function_args=kwargs,
+                                    )
 
-                                if oauth_token:
-                                    headers['Authorization'] = f'Bearer {oauth_token.get("access_token", "")}'
-                            except Exception as e:
-                                log.error(f'Error getting OAuth token: {e}')
-                                oauth_token = None
-
-                        connection_headers = mcp_server_connection.get('headers', None)
-                        if connection_headers and isinstance(connection_headers, dict):
-                            for key, value in connection_headers.items():
-                                headers[key] = value
-
-                        # Add user info headers if enabled
-                        if ENABLE_FORWARD_USER_INFO_HEADERS and user:
-                            headers = include_user_info_headers(headers, user)
-                            if metadata and metadata.get('chat_id'):
-                                headers[FORWARD_SESSION_INFO_HEADER_CHAT_ID] = metadata.get('chat_id')
-                            if metadata and metadata.get('message_id'):
-                                headers[FORWARD_SESSION_INFO_HEADER_MESSAGE_ID] = metadata.get('message_id')
-
-                        mcp_clients[server_id] = MCPClient()
-                        await mcp_clients[server_id].connect(
-                            url=mcp_server_connection.get('url', ''),
-                            headers=headers if headers else None,
-                        )
-
-                        function_name_filter_list_raw = (
-                            mcp_server_connection.get('config', {})
-                            .get('function_name_filter_list', '')
-                        )
-                        
-                        # Handle both PostgreSQL (returns list) and SQLite (returns string)
-                        if isinstance(function_name_filter_list_raw, list):
-                            function_name_filter_list = function_name_filter_list_raw
-                        elif isinstance(function_name_filter_list_raw, str):
-                            function_name_filter_list = (
-                                function_name_filter_list_raw.split(',') 
-                                if function_name_filter_list_raw 
-                                else []
-                            )
-                        else:
-                            function_name_filter_list = []
-
-                            tool_specs = await mcp_clients[server_id].list_tool_specs()
-                            for tool_spec in tool_specs:
-
-                                async def make_tool_function(client, function_name):
-                                    async def tool_function(**kwargs):
-                                        return await client.call_tool(
-                                            function_name,
-                                            function_args=kwargs,
-                                        )
-
-                                    return tool_function
+                                return tool_function
 
                             tool_function = await make_tool_function(client, tool_spec['name'])
 
