@@ -21,6 +21,7 @@ from open_webui.config import (
     IMAGE_URL_RESPONSE_MODELS_REGEX_PATTERN,
 )
 from open_webui.constants import ERROR_MESSAGES
+from open_webui.ext.image_edit_normalization import build_normalized_png_image_file_item
 from open_webui.env import AIOHTTP_CLIENT_ALLOW_REDIRECTS, AIOHTTP_CLIENT_SESSION_SSL, ENABLE_FORWARD_USER_INFO_HEADERS
 from open_webui.internal.db import get_async_session
 from open_webui.models.chats import Chats
@@ -929,10 +930,13 @@ async def image_edits(
 
             files = []
             if isinstance(form_data.image, str):
-                files = [get_image_file_item(form_data.image)]
+                files = [await build_normalized_png_image_file_item(form_data.image)]
             elif isinstance(form_data.image, list):
-                for img in form_data.image:
-                    files.append(get_image_file_item(img, 'image[]'))
+                files = list(
+                    await asyncio.gather(
+                        *[build_normalized_png_image_file_item(img, 'image[]') for img in form_data.image]
+                    )
+                )
 
             url_search_params = ''
             if request.app.state.config.IMAGES_EDIT_OPENAI_API_VERSION:
