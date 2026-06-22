@@ -81,6 +81,22 @@ def _decode_cursor(cursor: str) -> tuple[int, str]:
     return int(created_at_str), row_id
 
 
+def _resolve_pricing_model_id(
+    model_id: Optional[str],
+    base_model_id: Optional[str],
+) -> Optional[str]:
+    """Pick the id used for rate-based pricing.
+
+    Custom agents log under their own id (e.g. 'ai-team-submittal-reviewer'),
+    which carries no pricing info. The Foundry rate path requires a 'FOUNDRY.*'
+    id, so for agents we substitute their base model. Direct base-model rows
+    (already 'FOUNDRY.*') have no base_model_id and pass through unchanged.
+    """
+    if base_model_id:
+        return base_model_id
+    return model_id
+
+
 ####################
 # Endpoints
 ####################
@@ -142,6 +158,7 @@ async def get_analytics(
             User.name.label('user_name'),
             ChatMessage.model_id,
             Model.name.label('model_name'),
+            Model.base_model_id.label('base_model_id'),
             ChatMessage.usage,
         )
         .join(Chat, Chat.id == ChatMessage.chat_id)
@@ -211,7 +228,12 @@ async def get_analytics(
             usage.get('completion_tokens', usage.get('output_tokens'))
         )
         total_tokens = _coerce_int(usage.get('total_tokens'))
-        cost_usd = resolve_cost(row.model_id, usage, foundry_rates)
+
+        # Agents log under their own id, which carries no pricing info; resolve
+        # to the base model so the Foundry rate path can price them. Inline-cost
+        # rows (OpenRouter) are still honored first inside resolve_cost.
+        pricing_model_id = _resolve_pricing_model_id(row.model_id, row.base_model_id)
+        cost_usd = resolve_cost(pricing_model_id, usage, foundry_rates)
 
         result_rows.append(
             AnalyticsRow(
