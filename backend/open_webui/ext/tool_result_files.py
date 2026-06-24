@@ -8,6 +8,7 @@ from urllib.parse import unquote, unquote_to_bytes
 from fastapi import Request, UploadFile
 
 from open_webui.models.chats import Chats
+from open_webui.models.files import Files
 from open_webui.models.users import UserModel
 from open_webui.routers.files import upload_file_handler
 
@@ -125,6 +126,119 @@ def _decode_text_attachment(payload: bytes, content_type: str | None) -> str | N
     return text
 
 
+def _file_id_from_upload_result(file_item: Any) -> str | None:
+    if isinstance(file_item, dict):
+        file_id = file_item.get('id')
+        if isinstance(file_id, str) and file_id:
+            return file_id
+        nested = file_item.get('file')
+        if isinstance(nested, dict):
+            nested_id = nested.get('id')
+            if isinstance(nested_id, str) and nested_id:
+                return nested_id
+        return None
+
+    file_id = getattr(file_item, 'id', None)
+    if isinstance(file_id, str) and file_id:
+        return file_id
+    return None
+
+
+def _file_meta_from_upload_result(file_item: Any) -> dict[str, Any]:
+    if isinstance(file_item, dict):
+        meta = file_item.get('meta')
+        return meta if isinstance(meta, dict) else {}
+
+    meta = getattr(file_item, 'meta', None)
+    return meta if isinstance(meta, dict) else {}
+
+
+def _file_name_from_upload_result(file_item: Any) -> str | None:
+    if isinstance(file_item, dict):
+        value = file_item.get('filename')
+        return value if isinstance(value, str) and value else None
+
+    value = getattr(file_item, 'filename', None)
+    return value if isinstance(value, str) and value else None
+
+
+def _append_file_to_metadata(metadata: dict[str, Any] | None, file_event_item: dict[str, Any]) -> None:
+    if not isinstance(metadata, dict):
+        return
+
+    files = metadata.setdefault('files', [])
+    if not isinstance(files, list):
+        metadata['files'] = []
+        files = metadata['files']
+
+    file_id = file_event_item.get('id')
+    if not isinstance(file_id, str) or not file_id:
+        return
+
+    if any(isinstance(existing, dict) and existing.get('id') == file_id for existing in files):
+        return
+
+    files.append(
+        {
+            **file_event_item,
+            'context': 'full',
+        }
+    )
+
+
+async def _emit_attachment_source_event(
+    metadata: dict[str, Any] | None,
+    user: UserModel,
+    file_id: str,
+    filename: str,
+    document: str,
+) -> None:
+    if not isinstance(metadata, dict):
+        return
+
+    chat_id = metadata.get('chat_id')
+    message_id = metadata.get('message_id')
+    if not isinstance(chat_id, str) or not chat_id or not isinstance(message_id, str) or not message_id:
+        return
+
+    try:
+        from open_webui.socket.main import get_event_emitter
+
+        emitter = await get_event_emitter(
+            {
+                'user_id': user.id,
+                'chat_id': chat_id,
+                'message_id': message_id,
+            }
+        )
+    except Exception:
+        return
+
+    if emitter is None:
+        return
+
+    await emitter(
+        {
+            'type': 'source',
+            'data': {
+                'source': {
+                    'id': file_id,
+                    'name': filename,
+                    'type': 'file',
+                },
+                'document': [document],
+                'metadata': [
+                    {
+                        'file_id': file_id,
+                        'name': filename,
+                        'source': filename,
+                    }
+                ],
+            },
+        }
+    )
+
+
 async def handle_tool_result_attachment(
     request: Request,
     tool_result: Any,
@@ -164,16 +278,27 @@ async def handle_tool_result_attachment(
         'source': 'tool_result_attachment',
     }
 
-    file_item = await upload_file_handler(
-        request,
-        file=upload,
-        metadata=file_metadata,
-        process=False,
-        process_in_background=False,
-        user=user,
-    )
+    try:
+        file_item = await upload_file_handler(
+            request,
+            file=upload,
+            metadata=file_metadata,
+            process=True,
+            process_in_background=False,
+            user=user,
+        )
+    except Exception:
+        upload.file.seek(0)
+        file_item = await upload_file_handler(
+            request,
+            file=upload,
+            metadata=file_metadata,
+            process=False,
+            process_in_background=False,
+            user=user,
+        )
 
-    file_id = getattr(file_item, 'id', None)
+    file_id = _file_id_from_upload_result(file_item)
     if not file_id:
         return None, []
 
@@ -188,12 +313,12 @@ async def handle_tool_result_attachment(
             user_id=user.id,
         )
 
-    filename_out = getattr(file_item, 'filename', filename)
+    filename_out = _file_name_from_upload_result(file_item) or filename
     content_type_out = desired_content_type
     size = len(payload)
 
-    file_meta = getattr(file_item, 'meta', None)
-    if isinstance(file_meta, dict):
+    file_meta = _file_meta_from_upload_result(file_item)
+    if file_meta:
         if isinstance(file_meta.get('name'), str):
             filename_out = file_meta.get('name')
         if isinstance(file_meta.get('content_type'), str) and file_meta.get('content_type'):
@@ -210,19 +335,32 @@ async def handle_tool_result_attachment(
         'content_type': content_type_out,
     }
 
-    attachment_text = _decode_text_attachment(payload, content_type_out)
+    _append_file_to_metadata(metadata, file_event_item)
+
+    attachment_text = None
+    file_record = await Files.get_file_by_id(file_id)
+    if file_record and isinstance(file_record.data, dict):
+        attachment_text = _decode_text_attachment(
+            (file_record.data.get('content') or '').encode('utf-8', errors='replace')
+            if isinstance(file_record.data.get('content'), str)
+            else b'',
+            content_type_out,
+        )
 
     if attachment_text:
-        message = (
-            f'Tool returned file {filename_out} and it was attached to this chat.\n\n'
-            f'Attached file content:\n{attachment_text}'
+        await _emit_attachment_source_event(
+            metadata=metadata,
+            user=user,
+            file_id=file_id,
+            filename=filename_out,
+            document=attachment_text,
         )
-    else:
-        message = {
-            'status': 'success',
-            'message': f'Tool returned file {filename_out} and it was attached to this chat.',
-            'file_id': file_id,
-            'filename': filename_out,
-        }
+
+    message = {
+        'status': 'success',
+        'message': f'Tool returned file {filename_out} and it was attached to this chat.',
+        'file_id': file_id,
+        'filename': filename_out,
+    }
 
     return message, [file_event_item]
