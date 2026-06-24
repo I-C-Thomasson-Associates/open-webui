@@ -28,6 +28,7 @@ from open_webui.config import (
     DEFAULT_VOICE_MODE_PROMPT_TEMPLATE,
 )
 from open_webui.constants import TASKS
+from open_webui.ext.tool_result_files import handle_tool_result_attachment
 from open_webui.env import (
     BYPASS_MODEL_ACCESS_CONTROL,
     CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS,
@@ -1002,6 +1003,7 @@ async def process_tool_result(
     user=None,
 ):
     tool_result_embeds = []
+    tool_result_files = []
     EXTERNAL_TOOL_TYPES = ('external', 'action', 'terminal')
 
     # Support (HTMLResponse, result_context) tuples: the optional second
@@ -1108,7 +1110,20 @@ async def process_tool_result(
                             'message': f'{tool_function_name}: Embedded UI result is active and visible to the user.',
                         }
 
-    tool_result_files = []
+        try:
+            attachment_message, attachment_files = await handle_tool_result_attachment(
+                request=request,
+                tool_result=tool_result,
+                response_headers=tool_response_headers,
+                metadata=metadata,
+                user=user,
+            )
+            if attachment_files:
+                tool_result_files.extend(attachment_files)
+                if attachment_message is not None:
+                    tool_result = attachment_message
+        except Exception as e:
+            log.debug(f'Failed to process tool attachment result: {e}')
 
     # Detect base64 image data URIs from tool results (e.g. binary image
     # responses from execute_tool_server).  Move the data URI to
