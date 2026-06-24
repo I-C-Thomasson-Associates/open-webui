@@ -14,7 +14,19 @@ from open_webui.routers.files import upload_file_handler
 TOOL_RESULT_ATTACHMENT_MAX_BYTES = int(
     os.getenv('TOOL_RESULT_ATTACHMENT_MAX_BYTES', '26214400')
 )
+TOOL_RESULT_ATTACHMENT_CITATION_MAX_CHARS = int(
+    os.getenv('TOOL_RESULT_ATTACHMENT_CITATION_MAX_CHARS', '120000')
+)
 _DEFAULT_FILENAME = 'tool-result.bin'
+
+_TEXT_ATTACHMENT_CONTENT_TYPES = (
+    'text/',
+    'application/json',
+    'application/xml',
+    'application/yaml',
+    'application/x-yaml',
+    'application/markdown',
+)
 
 
 def _get_header(headers: dict[str, Any] | None, name: str) -> str:
@@ -90,6 +102,27 @@ def _parse_base64_data_uri(data_uri: str) -> tuple[bytes, str | None] | None:
         return None
 
     return data, mime_type
+
+
+def _is_textual_content_type(content_type: str | None) -> bool:
+    if not isinstance(content_type, str):
+        return False
+    normalized = content_type.lower().strip()
+    return any(normalized.startswith(prefix) for prefix in _TEXT_ATTACHMENT_CONTENT_TYPES)
+
+
+def _decode_text_attachment(payload: bytes, content_type: str | None) -> str | None:
+    if not _is_textual_content_type(content_type):
+        return None
+
+    text = payload.decode('utf-8', errors='replace').strip()
+    if not text:
+        return None
+
+    if len(text) > TOOL_RESULT_ATTACHMENT_CITATION_MAX_CHARS:
+        text = text[:TOOL_RESULT_ATTACHMENT_CITATION_MAX_CHARS]
+
+    return text
 
 
 async def handle_tool_result_attachment(
@@ -177,11 +210,19 @@ async def handle_tool_result_attachment(
         'content_type': content_type_out,
     }
 
-    message = {
-        'status': 'success',
-        'message': f'Tool returned file {filename_out} and it was attached to this chat.',
-        'file_id': file_id,
-        'filename': filename_out,
-    }
+    attachment_text = _decode_text_attachment(payload, content_type_out)
+
+    if attachment_text:
+        message = (
+            f'Tool returned file {filename_out} and it was attached to this chat.\n\n'
+            f'Attached file content:\n{attachment_text}'
+        )
+    else:
+        message = {
+            'status': 'success',
+            'message': f'Tool returned file {filename_out} and it was attached to this chat.',
+            'file_id': file_id,
+            'filename': filename_out,
+        }
 
     return message, [file_event_item]
