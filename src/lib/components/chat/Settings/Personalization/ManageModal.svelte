@@ -5,7 +5,8 @@
 
 	import Modal from '$lib/components/common/Modal.svelte';
 	import MemoryModal from './MemoryModal.svelte';
-	import { addMemoriesBatch, deleteMemoriesByUserId, deleteMemoryById, getMemories } from '$lib/apis/memories';
+	import { deleteMemoriesByUserId, deleteMemoryById, getMemories } from '$lib/apis/memories';
+	import { buildMemoryExportPayloadV2, importMemoriesFromPayload } from '$lib/ext/memory-import-export';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import localizedFormat from 'dayjs/plugin/localizedFormat';
 	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
@@ -26,6 +27,8 @@
 		content: string;
 		type?: string;
 		path?: string;
+		meta?: Record<string, unknown>;
+		created_at?: number;
 		updated_at?: number;
 	};
 
@@ -85,11 +88,7 @@
 			return;
 		}
 
-		const data = JSON.stringify(
-			memories.map((m) => m.content),
-			null,
-			2
-		);
+		const data = JSON.stringify(buildMemoryExportPayloadV2(memories), null, 2);
 		const blob = new Blob([data], { type: 'application/json' });
 		const url = URL.createObjectURL(blob);
 
@@ -114,27 +113,49 @@
 
 			try {
 				const text = await file.text();
-				const imported = JSON.parse(text);
-
-				if (!Array.isArray(imported) || !imported.every((item) => typeof item === 'string')) {
-					toast.error($i18n.t('Invalid file format. Expected a JSON array of strings.'));
-					return;
-				}
+				const payload = JSON.parse(text);
 
 				importing = true;
-				const res = await addMemoriesBatch(localStorage.token, imported).catch((error) => {
+				const result = await importMemoriesFromPayload({
+					token: localStorage.token,
+					payload,
+					chunkSize: 100
+				}).catch((error) => {
 					toast.error(`${error}`);
 					return null;
 				});
 
-				if (res) {
+				if (result) {
+					const skippedTotal = result.input_skipped + result.skipped;
+					const failedTotal = result.failed;
+
 					memories = await getMemories(localStorage.token);
-					toast.success(
-						$i18n.t('{{count}} memories imported successfully', { count: imported.length })
-					);
+
+					if (result.created === 0 && skippedTotal > 0 && failedTotal === 0) {
+						toast.error(
+							$i18n.t('No new memories were imported. {{skipped}} entries were skipped.', {
+								skipped: skippedTotal
+							})
+						);
+					} else if (failedTotal > 0) {
+						toast.error(
+							$i18n.t('Import complete: {{imported}} imported, {{skipped}} skipped, {{failed}} failed.', {
+								imported: result.created,
+								skipped: skippedTotal,
+								failed: failedTotal
+							})
+						);
+					} else {
+						toast.success(
+							$i18n.t('Import complete: {{imported}} imported, {{skipped}} skipped.', {
+								imported: result.created,
+								skipped: skippedTotal
+							})
+						);
+					}
 				}
 				importing = false;
-			} catch (err) {
+			} catch {
 				importing = false;
 				toast.error($i18n.t('Failed to import memories. Please check the file format.'));
 			}

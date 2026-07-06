@@ -198,38 +198,20 @@ class GroupTable:
                     stmt = stmt.filter(Group.name.ilike(f'%{filter["query"]}%'))
 
                 # When share filter is present, member check is handled in the share logic
-                if "share" in filter:
-                    share_value = filter["share"]
-                    member_id = filter.get("member_id")
-                    
-                    # Use dialect-specific JSON extraction for nested paths
-                    dialect_name = db.bind.dialect.name
-                    if dialect_name == "postgresql":
-                        # PostgreSQL needs explicit -> and ->> operators for nested paths
-                        json_config = Group.data["config"]
-                        json_share_str = json_config.op("->>")("share")
-                        json_share_bool = json_share_str.cast(Text)  # For boolean comparison as text
-                    else:
-                        # SQLite uses json_extract() which .as_string() handles
-                        json_share = Group.data['config']['share']
-                        json_share_bool = json_share.as_boolean()
-                        json_share_str = json_share.as_string()
+                if 'share' in filter:
+                    share_value = filter['share']
+                    member_id = filter.get('member_id')
+                    json_share = Group.data['config']['share']
+                    json_share_str = json_share.as_string()
+                    json_share_lower = func.lower(json_share_str)
 
                     if share_value:
-                        # Groups open to anyone: data is null, share is null, or share is true
-                        if dialect_name == "postgresql":
-                            # PostgreSQL ->> returns text, so compare as text
-                            anyone_can_share = or_(
-                                Group.data.is_(None),
-                                json_share_str.is_(None),
-                                json_share_str == 'true',
-                            )
-                        else:
-                            anyone_can_share = or_(
-                                Group.data.is_(None),
-                                json_share_bool.is_(None),
-                                json_share_bool == True,
-                            )
+                        anyone_can_share = or_(
+                            Group.data.is_(None),
+                            json_share_str.is_(None),
+                            json_share_lower == 'true',
+                            json_share_lower == '1',  # Handle SQLite boolean true
+                        )
 
                         if member_id:
                             member_groups_select = select(GroupMember.group_id).where(GroupMember.user_id == member_id)
