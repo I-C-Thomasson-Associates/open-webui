@@ -277,13 +277,15 @@ async def batch_add_memories(
     # Database operations (insert_memories_batch) manage their own short-lived sessions.
     # This prevents holding a connection during EMBEDDING_FUNCTION()
     # which makes external embedding API calls (1-5+ seconds).
-    if not request.app.state.config.ENABLE_MEMORIES:
+    config = await Config.get_many('memories.enable', 'user.permissions')
+
+    if not config.get('memories.enable'):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=ERROR_MESSAGES.NOT_FOUND,
         )
 
-    if not await has_permission(user.id, 'features.memories', request.app.state.config.USER_PERMISSIONS):
+    if not await has_permission(user.id, 'features.memories', config.get('user.permissions')):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,

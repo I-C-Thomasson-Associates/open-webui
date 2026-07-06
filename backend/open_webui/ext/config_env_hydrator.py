@@ -78,28 +78,45 @@ def hydrate_env_from_vault(
     include_env: bool = True,
     include_config: bool = True,
     overwrite: bool = True,
-) -> dict[str, int]:
+    include_key_details: bool = False,
+) -> dict[str, int | list[str]]:
     keys = discover_env_keys(open_webui_dir=open_webui_dir, include_env=include_env, include_config=include_config)
 
     hydrated = 0
     missing = 0
     skipped = 0
+    hydrated_keys: list[str] = []
+    missing_keys: list[str] = []
+    skipped_keys: list[str] = []
 
     for key in sorted(keys):
         value = get_secret_from_vault(key)
         if value is None:
             missing += 1
+            if include_key_details:
+                missing_keys.append(key)
             continue
 
         if overwrite or key not in os.environ:
             os.environ[key] = value
             hydrated += 1
+            if include_key_details:
+                hydrated_keys.append(key)
         else:
             skipped += 1
+            if include_key_details:
+                skipped_keys.append(key)
 
-    return {
+    stats: dict[str, int | list[str]] = {
         'discovered': len(keys),
         'hydrated': hydrated,
         'missing': missing,
         'skipped': skipped,
     }
+
+    if include_key_details:
+        stats['hydrated_keys'] = hydrated_keys
+        stats['missing_keys'] = missing_keys
+        stats['skipped_keys'] = skipped_keys
+
+    return stats

@@ -20,6 +20,7 @@ from open_webui.env import (
     FORWARD_SESSION_INFO_HEADER_MESSAGE_ID,
     REDIS_KEY_PREFIX,
 )
+from open_webui.models.config import Config
 from open_webui.models.groups import Groups
 from open_webui.models.users import UserModel, Users
 from open_webui.utils.access_control import has_connection_access
@@ -106,7 +107,7 @@ async def build_terminal_tool_gateway_seed_headers(
     terminal_id: str = '',
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    webui_url = str(getattr(request.app.state.config, 'WEBUI_URL', '') or '').rstrip('/')
+    webui_url = str(await Config.get('webui.url') or '').rstrip('/')
     if not webui_url:
         return {}
 
@@ -252,7 +253,7 @@ async def _resolve_tool_server(request: Request, server_id: str, user: UserModel
         raise HTTPException(status_code=404, detail=f"Tool server '{server_id}' not found")
 
     idx = server_data.get('idx', 0)
-    connections = request.app.state.config.TOOL_SERVER_CONNECTIONS or []
+    connections = await Config.get('tool_server.connections', []) or []
     if idx >= len(connections):
         raise HTTPException(status_code=404, detail=f"Tool server '{server_id}' connection not found")
 
@@ -387,7 +388,7 @@ async def proxy_terminal_tool_gateway(server_id: str, path: str, request: Reques
 async def _list_allowed_servers(request: Request) -> dict[str, Any]:
     user, _ = await _validated_user_from_gateway_token(request)
     tool_servers = await get_tool_servers(request)
-    connections = request.app.state.config.TOOL_SERVER_CONNECTIONS or []
+    connections = await Config.get('tool_server.connections', []) or []
     user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
 
     servers = []

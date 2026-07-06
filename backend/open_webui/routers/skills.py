@@ -317,7 +317,7 @@ async def update_skill_by_id(
     # they may set, so a non-admin owner cannot make their own skill publicly
     # readable/writable without sharing.public_skills permission.
     form_data.access_grants = await filter_allowed_access_grants(
-        request.app.state.config.USER_PERMISSIONS,
+        await Config.get('user.permissions'),
         user.id,
         user.role,
         form_data.access_grants,

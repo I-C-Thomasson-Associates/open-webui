@@ -205,6 +205,9 @@ class AuthCallbackProxyMiddleware:
     def __init__(self, app: ASGIApp, *, fastapi_app) -> None:
         self.app = app
         self._fastapi_app = fastapi_app
+        self._connections_cache: list[dict] = []
+        self._connections_cache_expiry = 0.0
+        self._connections_cache_ttl_seconds = 5.0
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope['type'] != 'http':
@@ -216,7 +219,7 @@ class AuthCallbackProxyMiddleware:
             await self.app(scope, receive, send)
             return
 
-        target_url = self._resolve_target_url(scope)
+        target_url = await self._resolve_target_url(scope)
         if target_url is None:
             await self.app(scope, receive, send)
             return
@@ -313,7 +316,7 @@ class AuthCallbackProxyMiddleware:
 
         return b''.join(chunks)
 
-    def _resolve_target_url(self, scope: Scope) -> str | None:
+    async def _resolve_target_url(self, scope: Scope) -> str | None:
         request_path = self._normalize_callback_path(scope.get('path', ''))
         if not request_path:
             return None
@@ -322,7 +325,7 @@ class AuthCallbackProxyMiddleware:
         request_host_full = request_headers.get('host', '').strip().lower()
         request_host_name = request_host_full.split(':', 1)[0]
 
-        connections = getattr(self._fastapi_app.state.config, 'TOOL_SERVER_CONNECTIONS', []) or []
+        connections = await self._get_tool_server_connections()
 
         for connection in connections:
             callback_proxy = (connection.get('config') or {}).get('auth_callback_proxy') or {}
@@ -356,6 +359,23 @@ class AuthCallbackProxyMiddleware:
             return callback_target_url
 
         return None
+
+    async def _get_tool_server_connections(self) -> list[dict]:
+        now = time.monotonic()
+        if now < self._connections_cache_expiry:
+            return self._connections_cache
+
+        try:
+            connections = await Config.get('tool_server.connections', []) or []
+            if not isinstance(connections, list):
+                connections = []
+            self._connections_cache = connections
+            self._connections_cache_expiry = now + self._connections_cache_ttl_seconds
+        except Exception:
+            log.exception('Auth callback proxy: failed to refresh tool_server.connections cache')
+            self._connections_cache_expiry = now + self._connections_cache_ttl_seconds
+
+        return self._connections_cache
 
     def _normalize_callback_path(self, path: str) -> str:
         normalized = (path or '').strip()

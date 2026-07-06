@@ -39,18 +39,20 @@ try:
 except ImportError:
     print('dotenv not installed, skipping...')
 
-_config_env_hydration_stats: Optional[dict[str, int]] = None
+_config_env_hydration_stats: Optional[dict[str, Any]] = None
 _config_env_hydration_enabled = os.getenv('ENABLE_CONFIG_ENV_HYDRATION', 'true').lower() == 'true'
+_config_env_hydration_log_keys = os.getenv('CONFIG_ENV_HYDRATION_LOG_KEYS', 'false').lower() == 'true'
 
 if _config_env_hydration_enabled:
     try:
-        from open_webui.utils.config_env_hydrator import hydrate_env_from_vault
+        from open_webui.ext.config_env_hydrator import hydrate_env_from_vault
 
         _config_env_hydration_stats = hydrate_env_from_vault(
             open_webui_dir=OPEN_WEBUI_DIR,
             include_env=True,
             include_config=True,
             overwrite=True,
+            include_key_details=_config_env_hydration_log_keys,
         )
     except Exception as e:
         logging.getLogger(__name__).warning('Config env hydration failed: %s', e)
@@ -143,6 +145,30 @@ if _config_env_hydration_stats is not None:
         _config_env_hydration_stats['missing'],
         _config_env_hydration_stats['skipped'],
     )
+
+    def _log_config_hydration_keys(label: str, key_list: list[str]) -> None:
+        if not key_list:
+            return
+
+        chunk_size = 25
+        for idx in range(0, len(key_list), chunk_size):
+            chunk = key_list[idx:idx + chunk_size]
+            log.info(
+                'Config env hydration %s [%s-%s]: %s',
+                label,
+                idx + 1,
+                idx + len(chunk),
+                ', '.join(chunk),
+            )
+
+    if _config_env_hydration_log_keys:
+        hydrated_keys = _config_env_hydration_stats.get('hydrated_keys')
+        skipped_keys = _config_env_hydration_stats.get('skipped_keys')
+
+        if isinstance(hydrated_keys, list):
+            _log_config_hydration_keys('hydrated keys', hydrated_keys)
+        if isinstance(skipped_keys, list):
+            _log_config_hydration_keys('skipped keys', skipped_keys)
 
 if _cuda_error:
     log.error(_cuda_error)

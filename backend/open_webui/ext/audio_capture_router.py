@@ -6,6 +6,7 @@ import logging
 import os
 import uuid
 from typing import Optional
+from types import SimpleNamespace
 
 import requests
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
@@ -19,6 +20,7 @@ from open_webui.ext.audio_transcription import (
     get_azure_max_speakers,
     post_azure_fast_transcription,
 )
+from open_webui.models.config import Config
 from open_webui.routers import audio
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_verified_user
@@ -85,16 +87,26 @@ async def _transcribe_capture_azure(request: Request, file_path: str, metadata: 
             detail=f'File size ({audio_size // (1024 * 1024)}MB) exceeds Azure limit of {audio.AZURE_MAX_FILE_SIZE_MB}MB',
         )
 
-    api_key = request.app.state.config.AUDIO_STT_AZURE_API_KEY
+    stt_config = await Config.get_many(
+        'audio.stt.azure.api_key',
+        'audio.stt.azure.region',
+        'audio.stt.azure.locales',
+        'audio.stt.azure.base_url',
+        'audio.stt.azure.max_speakers',
+    )
+
+    api_key = stt_config.get('audio.stt.azure.api_key')
     if not api_key:
         raise HTTPException(status_code=400, detail='Azure API key is required for Azure STT')
 
-    region = request.app.state.config.AUDIO_STT_AZURE_REGION or 'eastus'
-    locales = request.app.state.config.AUDIO_STT_AZURE_LOCALES
+    region = stt_config.get('audio.stt.azure.region') or 'eastus'
+    locales = stt_config.get('audio.stt.azure.locales')
     if not locales or len(locales) < 2:
         locales = _AZURE_DEFAULT_LOCALES
-    base_url = request.app.state.config.AUDIO_STT_AZURE_BASE_URL
-    max_speakers = get_azure_max_speakers(request.app.state.config)
+    base_url = stt_config.get('audio.stt.azure.base_url')
+    max_speakers = get_azure_max_speakers(
+        SimpleNamespace(AUDIO_STT_AZURE_MAX_SPEAKERS=stt_config.get('audio.stt.azure.max_speakers'))
+    )
     diarize = bool(metadata.get('diarize'))
 
     url = (base_url or f'https://{region}.api.cognitive.microsoft.com') + (
@@ -142,15 +154,14 @@ async def capture_transcription(
     diarize: Optional[bool] = Form(False),
     user=Depends(get_verified_user),
 ):
-    if user.role != 'admin' and not await has_permission(
-        user.id, 'chat.stt', request.app.state.config.USER_PERMISSIONS
-    ):
+    user_permissions = await Config.get('user.permissions')
+    if user.role != 'admin' and not await has_permission(user.id, 'chat.stt', user_permissions):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    stt_supported_content_types = getattr(request.app.state.config, 'STT_SUPPORTED_CONTENT_TYPES', [])
+    stt_supported_content_types = await Config.get('audio.stt.supported_content_types', [])
     if not strict_match_mime_type(stt_supported_content_types, file.content_type):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -161,7 +172,7 @@ async def capture_transcription(
         safe_name = os.path.basename(file.filename) if file.filename else ''
         ext = safe_name.rsplit('.', 1)[-1].lower() if '.' in safe_name else ''
 
-        allowed_extensions = getattr(request.app.state.config, 'STT_ALLOWED_EXTENSIONS', [])
+        allowed_extensions = await Config.get('audio.stt.allowed_extensions', [])
         if allowed_extensions and ext not in allowed_extensions:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -188,7 +199,8 @@ async def capture_transcription(
         if diarize:
             metadata['diarize'] = True
 
-        if request.app.state.config.STT_ENGINE == 'azure':
+        stt_engine = await Config.get('audio.stt.engine')
+        if stt_engine == 'azure':
             result = await _transcribe_capture_azure(request, file_path, metadata)
         else:
             result = await audio.transcribe(request, file_path, metadata, user)
