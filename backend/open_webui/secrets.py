@@ -85,6 +85,22 @@ def get_secret_uncached(key: str, default: str = "") -> str:
     return _fetch_secret(key, default)
 
 
+def get_secret_from_vault(key: str) -> Optional[str]:
+    """Retrieve a secret only from Azure Key Vault.
+
+    Returns None when Key Vault is disabled, unavailable, or the secret is missing.
+    """
+    if _vault_enabled and _secret_client:
+        try:
+            vault_key = key.replace("_", "-")
+            secret = _secret_client.get_secret(vault_key)
+            return secret.value
+        except Exception:
+            return None
+
+    return None
+
+
 def clear_secret_cache():
     """Clear the secret cache. Useful for testing or forcing refresh."""
     get_secret.cache_clear()

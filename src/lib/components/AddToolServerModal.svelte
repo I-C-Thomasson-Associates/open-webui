@@ -61,6 +61,8 @@
 	let oauthClientId = '';
 	let oauthClientSecret = '';
 	let oauthServerUrl = '';
+	let oauthScope = '';
+	let oauthResourceParameter = 'auto';
 
 	let enable = true;
 	let loading = false;
@@ -153,9 +155,11 @@
 			client_id: string;
 			client_secret?: string;
 			oauth_server_url?: string;
+			oauth_scope?: string;
 		} = {
 			url: url,
 			client_id: id,
+			...(oauthScope ? { oauth_scope: oauthScope } : {}),
 			...(auth_type === 'oauth_2.1_static'
 				? { client_secret: oauthClientSecret, oauth_server_url: oauthServerUrl }
 				: {})
@@ -299,6 +303,8 @@
 					id = data.info.id ?? '';
 					name = data.info.name ?? '';
 					description = data.info.description ?? '';
+					oauthScope = data.info.oauth_scope ?? '';
+					oauthResourceParameter = data.info.oauth_resource_parameter ?? 'auto';
 				}
 
 				if (data.config) {
@@ -358,7 +364,13 @@
 				info: {
 					id: id,
 					name: name,
-					description: description
+					description: description,
+					...(type === 'mcp' && ['oauth_2.1', 'oauth_2.1_static'].includes(auth_type)
+						? {
+								...(oauthScope ? { oauth_scope: oauthScope } : {}),
+								oauth_resource_parameter: oauthResourceParameter
+							}
+						: {})
 				},
 				config: {
 					enable: enable,
@@ -375,7 +387,7 @@
 							}
 						: {}),
 					...(terminalGatewayEnabled
-					? {
+						? {
 								terminal_gateway: {
 									enabled: true,
 									allowed_methods: terminalGatewayMethods,
@@ -528,6 +540,12 @@
 				id: id,
 				name: name,
 				description: description,
+				...(type === 'mcp' && ['oauth_2.1', 'oauth_2.1_static'].includes(auth_type)
+					? {
+							...(oauthScope ? { oauth_scope: oauthScope } : {}),
+							oauth_resource_parameter: oauthResourceParameter
+						}
+					: {}),
 				...(oauthClientInfo ? { oauth_client_info: oauthClientInfo } : {}),
 				...(auth_type === 'oauth_2.1_static'
 					? {
@@ -563,6 +581,8 @@
 		oauthClientId = '';
 		oauthClientSecret = '';
 		oauthServerUrl = '';
+		oauthScope = '';
+		oauthResourceParameter = 'auto';
 
 		enable = true;
 		functionNameFilterList = '';
@@ -597,6 +617,8 @@
 			oauthClientId = connection.info?.oauth_client_id ?? '';
 			oauthClientSecret = connection.info?.oauth_client_secret ?? '';
 			oauthServerUrl = connection.info?.oauth_server_url ?? '';
+			oauthScope = connection.info?.oauth_scope ?? '';
+			oauthResourceParameter = connection.info?.oauth_resource_parameter ?? 'auto';
 
 			enable = connection.config?.enable ?? true;
 			functionNameFilterList = connection.config?.function_name_filter_list ?? '';
@@ -1085,6 +1107,51 @@
 												})}
 											</div>
 										{/if}
+									</div>
+								</div>
+							{/if}
+
+							{#if type === 'mcp' && ['oauth_2.1', 'oauth_2.1_static'].includes(auth_type)}
+								<div class="flex gap-2 mt-2">
+									<div class="flex flex-col w-full">
+										<label
+											for="oauth-scope"
+											class={`mb-0.5 text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+											>{$i18n.t('OAuth Scopes')}</label
+										>
+
+										<div class="flex flex-1 items-center">
+											<input
+												id="oauth-scope"
+												class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												type="text"
+												bind:value={oauthScope}
+												placeholder={$i18n.t('Use discovered scopes')}
+												autocomplete="off"
+											/>
+										</div>
+									</div>
+								</div>
+
+								<div class="flex gap-2 mt-2">
+									<div class="flex flex-col w-full">
+										<label
+											for="oauth-resource-parameter"
+											class={`mb-0.5 text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+											>{$i18n.t('OAuth Resource Parameter')}</label
+										>
+
+										<div class="flex flex-1 items-center">
+											<select
+												id="oauth-resource-parameter"
+												class={`dark:bg-gray-900 w-full text-sm bg-transparent pr-5 ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												bind:value={oauthResourceParameter}
+											>
+												<option value="auto">{$i18n.t('Automatic')}</option>
+												<option value="include">{$i18n.t('Include')}</option>
+												<option value="omit">{$i18n.t('Omit')}</option>
+											</select>
+										</div>
 									</div>
 								</div>
 							{/if}
