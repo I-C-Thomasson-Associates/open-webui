@@ -16,7 +16,12 @@ from open_webui.models.groups import Group, GroupMember, Groups
 from open_webui.models.models import Model
 from open_webui.models.users import User
 from open_webui.utils.auth import get_admin_user
-from open_webui.utils.salasobrien_cost import load_foundry_rates, resolve_cost
+from open_webui.utils.salasobrien_cost import (
+    load_foundry_rates,
+    load_litellm_rates,
+    resolve_cost,
+    strip_connection_prefix,
+)
 
 log = logging.getLogger(__name__)
 
@@ -44,6 +49,7 @@ class AnalyticsRow(BaseModel):
     business_unit: Optional[str] = None
     model: Optional[str] = None
     model_name: Optional[str] = None
+    backend: Optional[str] = None
     prompt_tokens: Optional[int] = None
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
@@ -88,9 +94,8 @@ def _resolve_pricing_model_id(
     """Pick the id used for rate-based pricing.
 
     Custom agents log under their own id (e.g. 'ai-team-submittal-reviewer'),
-    which carries no pricing info. The Foundry rate path requires a 'FOUNDRY.*'
-    id, so for agents we substitute their base model. Direct base-model rows
-    (already 'FOUNDRY.*') have no base_model_id and pass through unchanged.
+    which carries no pricing info, so substitute their base model. Direct
+    base-model rows have no base_model_id and pass through unchanged.
     """
     if base_model_id:
         return base_model_id
@@ -200,6 +205,7 @@ async def get_analytics(
         next_cursor = _encode_cursor(int(last.created_at), last.id)
 
     foundry_rates = load_foundry_rates()
+    litellm_rates = await load_litellm_rates()
 
     distinct_user_ids = list({row.user_id for row in rows})
     user_groups_map = await Groups.get_groups_by_member_ids(distinct_user_ids, db=db)
@@ -221,6 +227,7 @@ async def get_analytics(
             user_business_unit[uid] = names[0]
 
     result_rows: list[AnalyticsRow] = []
+    litellm_backends = litellm_rates.get('backend', {})
     for row in rows:
         usage = row.usage or {}
         prompt_tokens = _coerce_int(usage.get('prompt_tokens', usage.get('input_tokens')))
@@ -229,11 +236,27 @@ async def get_analytics(
         )
         total_tokens = _coerce_int(usage.get('total_tokens'))
 
-        # Agents log under their own id, which carries no pricing info; resolve
-        # to the base model so the Foundry rate path can price them. Inline-cost
-        # rows (OpenRouter) are still honored first inside resolve_cost.
+        # Deployment id captured from LiteLLM's x-litellm-model-id header (when
+        # present) lets us price by the exact backend and label its source.
+        deployment_id = usage.get('litellm_model_id') if isinstance(usage, dict) else None
+
+        # PRICING: agents log under their own id (no pricing info); resolve to
+        # the base model. resolve_cost tries inline cost -> exact deployment ->
+        # model-name rate -> frozen Key Vault book.
         pricing_model_id = _resolve_pricing_model_id(row.model_id, row.base_model_id)
-        cost_usd = resolve_cost(pricing_model_id, usage, foundry_rates)
+        cost_usd = resolve_cost(
+            pricing_model_id,
+            usage,
+            litellm_rates,
+            foundry_rates,
+            deployment_id=deployment_id,
+        )
+
+        # DISPLAY: strip only the connection prefix so base models merge across
+        # the migration (FOUNDRY.gpt-5.4 and LITELLM.gpt-5.4 -> gpt-5.4). Custom
+        # agents carry no connection prefix, so they stay distinct lines.
+        display_model = strip_connection_prefix(row.model_id) or row.model_id
+        backend = litellm_backends.get(deployment_id) if deployment_id else None
 
         result_rows.append(
             AnalyticsRow(
@@ -244,8 +267,9 @@ async def get_analytics(
                 user_email=row.user_email,
                 user_name=row.user_name,
                 business_unit=user_business_unit.get(row.user_id),
-                model=row.model_id,
-                model_name=row.model_name or row.model_id,
+                model=display_model,
+                model_name=row.model_name or display_model,
+                backend=backend,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
