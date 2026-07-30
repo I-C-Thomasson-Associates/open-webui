@@ -8,7 +8,6 @@
 	import { getContext, onMount } from 'svelte';
 	const i18n = getContext('i18n');
 
-	import { settings } from '$lib/stores';
 	import Modal from '$lib/components/common/Modal.svelte';
 	import Plus from '$lib/components/icons/Plus.svelte';
 	import Minus from '$lib/components/icons/Minus.svelte';
@@ -20,7 +19,7 @@
 	import { getToolServerData } from '$lib/apis';
 	import { verifyToolServerConnection, registerOAuthClient } from '$lib/apis/configs';
 	import AccessControlModal from '$lib/components/workspace/common/AccessControlModal.svelte';
-	import LockClosed from '$lib/components/icons/LockClosed.svelte';
+	import AccessButton from '$lib/components/common/AccessButton.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import Textarea from './common/Textarea.svelte';
@@ -130,6 +129,10 @@
 
 		return Array.from(new Set(prefixes));
 	};
+	const inputClass =
+		'bg-transparent outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700';
+	const selectClass =
+		'bg-transparent pr-5 outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700';
 
 	const registerOAuthClientHandler = async () => {
 		if (url === '') {
@@ -335,6 +338,29 @@
 	};
 
 	const exportHandler = async () => {
+		let normalizedCallbackHost = callbackProxyHost.trim().toLowerCase();
+		let normalizedCallbackPath = normalizeCallbackPath(callbackProxyPath);
+		let normalizedCallbackUrl = callbackProxyUrl.trim();
+		if (callbackProxyEnabled) {
+			try {
+				const parsedUrl = new URL(normalizedCallbackUrl);
+				if (
+					!normalizedCallbackHost ||
+					!normalizedCallbackPath ||
+					!['http:', 'https:'].includes(parsedUrl.protocol) ||
+					parsedUrl.username ||
+					parsedUrl.password ||
+					parsedUrl.hash
+				) {
+					throw new Error('Invalid callback proxy configuration');
+				}
+				normalizedCallbackUrl = parsedUrl.toString();
+			} catch {
+				toast.error($i18n.t('Please enter a valid callback host, path, and target URL'));
+				return;
+			}
+		}
+
 		let terminalGatewayMethods: string[] = [];
 		let terminalGatewayPathPrefixes: string[] = [];
 		if (terminalGatewayEnabled) {
@@ -380,9 +406,9 @@
 						? {
 								auth_callback_proxy: {
 									enabled: true,
-									...(callbackProxyHost.trim() ? { host: callbackProxyHost.trim().toLowerCase() } : {}),
-									path: normalizeCallbackPath(callbackProxyPath),
-									url: callbackProxyUrl.trim()
+									host: normalizedCallbackHost,
+									path: normalizedCallbackPath,
+									url: normalizedCallbackUrl
 								}
 							}
 						: {}),
@@ -462,6 +488,12 @@
 		let normalizedCallbackHost = callbackProxyHost.trim().toLowerCase();
 
 		if (callbackProxyEnabled) {
+			if (!normalizedCallbackHost) {
+				toast.error($i18n.t('Please enter a valid callback host'));
+				loading = false;
+				return;
+			}
+
 			if (!normalizedCallbackPath) {
 				toast.error($i18n.t('Please enter a valid callback path'));
 				loading = false;
@@ -476,7 +508,12 @@
 
 			try {
 				const parsedUrl = new URL(normalizedCallbackUrl);
-				if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+				if (
+					!['http:', 'https:'].includes(parsedUrl.protocol) ||
+					parsedUrl.username ||
+					parsedUrl.password ||
+					parsedUrl.hash
+				) {
 					throw new Error('Invalid callback target URL protocol');
 				}
 				normalizedCallbackUrl = parsedUrl.toString();
@@ -748,17 +785,13 @@
 						<div class="flex gap-2">
 							<div class="flex flex-col flex-1">
 								<div class="flex justify-between mb-0.5">
-									<label
-										for="enter-name"
-										class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-										>{$i18n.t('Name')}</label
-									>
+									<label for="enter-name" class={`text-xs text-gray-500`}>{$i18n.t('Name')}</label>
 								</div>
 
 								<div class="flex flex-1 items-center">
 									<input
 										id="enter-name"
-										class={`w-full flex-1 text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+										class={`w-full flex-1 text-sm ${inputClass}`}
 										type="text"
 										bind:value={name}
 										placeholder={$i18n.t('Enter name')}
@@ -769,9 +802,7 @@
 							{#if !direct}
 								<div class="flex flex-col flex-1">
 									<div class="flex justify-between mb-0.5">
-										<label
-											for="enter-id"
-											class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+										<label for="enter-id" class={`text-xs text-gray-500`}
 											>{$i18n.t('ID')}
 											{#if type !== 'mcp'}<span class="opacity-50">({$i18n.t('optional')})</span
 												>{/if}</label
@@ -780,7 +811,7 @@
 									<div class="flex flex-1 items-center">
 										<input
 											id="enter-id"
-											class={`w-full flex-1 text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+											class={`w-full flex-1 text-sm font-mono ${inputClass}`}
 											type="text"
 											bind:value={id}
 											placeholder="auto"
@@ -793,16 +824,14 @@
 						</div>
 
 						<div class="flex flex-col w-full mt-1 mb-1.5">
-							<label
-								for="description"
-								class={`mb-0.5 text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+							<label for="description" class={`mb-0.5 text-xs text-gray-500`}
 								>{$i18n.t('Description')}</label
 							>
 
 							<div class="flex-1">
 								<input
 									id="description"
-									class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+									class={`w-full text-sm ${inputClass}`}
 									type="text"
 									bind:value={description}
 									placeholder={$i18n.t('Enter description')}
@@ -814,17 +843,13 @@
 						<div class="flex gap-2">
 							<div class="flex flex-col w-full">
 								<div class="flex justify-between mb-0.5">
-									<label
-										for="api-base-url"
-										class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-										>{$i18n.t('URL')}</label
-									>
+									<label for="api-base-url" class={`text-xs text-gray-500`}>{$i18n.t('URL')}</label>
 								</div>
 
 								<div class="flex flex-1 items-center">
 									<input
 										id="api-base-url"
-										class={`w-full flex-1 text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+										class={`w-full flex-1 text-sm ${inputClass}`}
 										type="text"
 										bind:value={url}
 										placeholder={$i18n.t('API Base URL')}
@@ -871,10 +896,7 @@
 							<div class="flex flex-col w-full">
 								<div class="flex justify-between items-center">
 									<div class="flex gap-2 items-center">
-										<div
-											for="select-bearer-or-session"
-											class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-										>
+										<div for="select-bearer-or-session" class={`text-xs text-gray-500`}>
 											{$i18n.t('Auth')}
 										</div>
 									</div>
@@ -901,13 +923,13 @@
 
 											{#if !oauthClientInfo}
 												<div
-													class="text-xs font-medium px-1.5 rounded-md bg-yellow-500/20 text-yellow-700 dark:text-yellow-200"
+													class="text-xs font-normal px-1.5 rounded-md bg-yellow-500/20 text-yellow-700 dark:text-yellow-200"
 												>
 													{$i18n.t('Not Registered')}
 												</div>
 											{:else}
 												<div
-													class="text-xs font-medium px-1.5 rounded-md bg-green-500/20 text-green-700 dark:text-green-200"
+													class="text-xs font-normal px-1.5 rounded-md bg-green-500/20 text-green-700 dark:text-green-200"
 												>
 													{$i18n.t('Registered')}
 												</div>
@@ -920,7 +942,7 @@
 									<div class="flex-shrink-0 self-start">
 										<select
 											id="select-bearer-or-session"
-											class={`dark:bg-gray-900 w-full text-sm bg-transparent pr-5 ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+											class={`w-full text-sm ${selectClass}`}
 											bind:value={auth_type}
 										>
 											<option value="none">{$i18n.t('None')}</option>
@@ -946,26 +968,20 @@
 												required={false}
 											/>
 										{:else if auth_type === 'none'}
-											<div
-												class={`text-xs self-center translate-y-[1px] ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-											>
+											<div class={`text-xs self-center translate-y-[1px] text-gray-500`}>
 												{$i18n.t('No authentication')}
 											</div>
 										{:else if auth_type === 'session'}
-											<div
-												class={`text-xs self-center translate-y-[1px] ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-											>
+											<div class={`text-xs self-center translate-y-[1px] text-gray-500`}>
 												{$i18n.t('Forwards system user session credentials to authenticate')}
 											</div>
 										{:else if auth_type === 'system_oauth'}
-											<div
-												class={`text-xs self-center translate-y-[1px] ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-											>
+											<div class={`text-xs self-center translate-y-[1px] text-gray-500`}>
 												{$i18n.t('Forwards system user OAuth access token to authenticate')}
 											</div>
 										{:else if auth_type === 'oauth_2.1'}
 											<div
-												class={`flex items-center text-xs self-center translate-y-[1px] ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+												class={`flex items-center text-xs self-center translate-y-[1px] text-gray-500`}
 											>
 												{$i18n.t('Uses OAuth 2.1 Dynamic Client Registration')}
 											</div>
@@ -983,7 +999,7 @@
 												/>
 												<div class="flex flex-1 items-center">
 													<input
-														class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+														class={`w-full text-sm ${inputClass}`}
 														type="text"
 														bind:value={oauthServerUrl}
 														placeholder={$i18n.t('OAuth Server URL')}
@@ -1019,19 +1035,12 @@
 							</button>
 
 							{#if !direct}
-								<button
-									class="bg-gray-50 hover:bg-gray-100 text-black dark:bg-gray-850 dark:hover:bg-gray-800 dark:text-white transition px-2 py-1 object-cover rounded-full flex gap-1 items-center mt-2"
-									type="button"
+								<AccessButton
+									className="mt-2"
 									on:click={() => {
 										showAccessControlModal = true;
 									}}
-								>
-									<LockClosed strokeWidth="2.5" className="size-3.5 shrink-0" />
-
-									<div class="text-xs font-medium shrink-0">
-										{$i18n.t('Access')}
-									</div>
-								</button>
+								/>
 							{/if}
 						</div>
 
@@ -1041,10 +1050,7 @@
 									<div class="flex flex-col w-full">
 										<div class="flex justify-between items-center mb-0.5">
 											<div class="flex gap-2 items-center">
-												<div
-													for="select-bearer-or-session"
-													class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-												>
+												<div for="select-bearer-or-session" class={`text-xs text-gray-500`}>
 													{$i18n.t('OpenAPI Spec')}
 												</div>
 											</div>
@@ -1054,7 +1060,7 @@
 											<div class="flex-shrink-0 self-start">
 												<select
 													id="select-bearer-or-session"
-													class={`dark:bg-gray-900 w-full text-sm bg-transparent pr-5 ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+													class={`w-full text-sm ${selectClass}`}
 													bind:value={spec_type}
 												>
 													<option value="url">{$i18n.t('URL')}</option>
@@ -1069,7 +1075,7 @@
 															>{$i18n.t('openapi.json URL or Path')}</label
 														>
 														<input
-															class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+															class={`w-full text-sm ${inputClass}`}
 															type="text"
 															id="url-or-path"
 															bind:value={path}
@@ -1079,12 +1085,10 @@
 														/>
 													</div>
 												{:else if spec_type === 'json'}
-													<div
-														class={`text-xs w-full self-center translate-y-[1px] ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-													>
+													<div class={`text-xs w-full self-center translate-y-[1px] text-gray-500`}>
 														<label for="url-or-path" class="sr-only">{$i18n.t('JSON Spec')}</label>
 														<textarea
-															class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700 text-black dark:text-white'}`}
+															class={`w-full text-sm ${inputClass}`}
 															bind:value={spec}
 															placeholder={$i18n.t('JSON Spec')}
 															autocomplete="off"
@@ -1097,9 +1101,7 @@
 										</div>
 
 										{#if ['', 'url'].includes(spec_type)}
-											<div
-												class={`text-xs mt-1 ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-											>
+											<div class={`text-xs mt-1 text-gray-500`}>
 												{$i18n.t(`WebUI will make requests to "{{url}}"`, {
 													url: path.includes('://')
 														? path
@@ -1114,16 +1116,14 @@
 							{#if type === 'mcp' && ['oauth_2.1', 'oauth_2.1_static'].includes(auth_type)}
 								<div class="flex gap-2 mt-2">
 									<div class="flex flex-col w-full">
-										<label
-											for="oauth-scope"
-											class={`mb-0.5 text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+										<label for="oauth-scope" class={`mb-0.5 text-xs text-gray-500`}
 											>{$i18n.t('OAuth Scopes')}</label
 										>
 
 										<div class="flex flex-1 items-center">
 											<input
 												id="oauth-scope"
-												class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												class={`w-full text-sm ${inputClass}`}
 												type="text"
 												bind:value={oauthScope}
 												placeholder={$i18n.t('Use discovered scopes')}
@@ -1135,16 +1135,14 @@
 
 								<div class="flex gap-2 mt-2">
 									<div class="flex flex-col w-full">
-										<label
-											for="oauth-resource-parameter"
-											class={`mb-0.5 text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+										<label for="oauth-resource-parameter" class={`mb-0.5 text-xs text-gray-500`}
 											>{$i18n.t('OAuth Resource Parameter')}</label
 										>
 
 										<div class="flex flex-1 items-center">
 											<select
 												id="oauth-resource-parameter"
-												class={`dark:bg-gray-900 w-full text-sm bg-transparent pr-5 ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												class={`w-full text-sm ${selectClass}`}
 												bind:value={oauthResourceParameter}
 											>
 												<option value="auto">{$i18n.t('Automatic')}</option>
@@ -1162,8 +1160,7 @@
 										<label
 											for="headers-input"
 											class={`mb-0.5 text-xs text-gray-500
-									${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : ''}`}
-											>{$i18n.t('Headers')}</label
+									`}>{$i18n.t('Headers')}</label
 										>
 
 										<div class="flex-1">
@@ -1208,7 +1205,7 @@
 													class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
 													type="text"
 													bind:value={callbackProxyHost}
-													placeholder={$i18n.t('Callback Host (optional)')}
+													placeholder={$i18n.t('Callback Host')}
 													autocomplete="off"
 												/>
 
@@ -1294,16 +1291,14 @@
 							<hr class=" border-gray-100/50 dark:border-gray-700/10 my-2.5 w-full" />
 
 							<div class="flex flex-col w-full mt-2">
-								<label
-									for="function-name-filter-list"
-									class={`mb-1 text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100 placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700 text-gray-500'}`}
+								<label for="function-name-filter-list" class={`mb-1 text-xs text-gray-500`}
 									>{$i18n.t('Function Name Filter List')}</label
 								>
 
 								<div class="flex-1">
 									<input
 										id="function-name-filter-list"
-										class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+										class={`w-full text-sm ${inputClass}`}
 										type="text"
 										bind:value={functionNameFilterList}
 										placeholder={$i18n.t('Enter function name filter list (e.g. func1, !func2)')}
@@ -1318,14 +1313,14 @@
 						<div
 							class=" bg-yellow-500/20 text-yellow-700 dark:text-yellow-200 rounded-2xl text-xs px-4 py-3 mb-2 mt-1"
 						>
-							<span class="font-medium">
+							<span class="font-normal">
 								{$i18n.t('Warning')}:
 							</span>
 							{$i18n.t(
 								'MCP support is experimental and its specification changes often, which can lead to incompatibilities. OpenAPI specification support is directly maintained by the Open WebUI team, making it the more reliable option for compatibility.'
 							)}
 
-							<a class="font-medium underline" href="https://docs.openwebui.com/" target="_blank"
+							<a class="font-normal underline" href="https://docs.openwebui.com/" target="_blank"
 								>{$i18n.t('Read more →')}</a
 							>
 						</div>
