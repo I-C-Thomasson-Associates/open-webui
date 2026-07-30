@@ -254,6 +254,11 @@ async def handle_tool_result_attachment(
 
     parsed = _parse_base64_data_uri(tool_result)
     if not parsed:
+        if tool_result.startswith('data:'):
+            return {
+                'status': 'error',
+                'message': 'Tool attachment was invalid or exceeded the configured size limit.',
+            }, []
         return None, []
 
     payload, data_uri_content_type = parsed
@@ -306,12 +311,14 @@ async def handle_tool_result_attachment(
     message_id = metadata.get('message_id') if isinstance(metadata, dict) else None
 
     if chat_id and message_id:
-        await Chats.insert_chat_files(
-            chat_id=chat_id,
-            message_id=message_id,
-            file_ids=[file_id],
-            user_id=user.id,
-        )
+        owned_chat = await Chats.get_chat_by_id_and_user_id(chat_id, user.id)
+        if owned_chat:
+            await Chats.insert_chat_files(
+                chat_id=chat_id,
+                message_id=message_id,
+                file_ids=[file_id],
+                user_id=user.id,
+            )
 
     filename_out = _file_name_from_upload_result(file_item) or filename
     content_type_out = desired_content_type

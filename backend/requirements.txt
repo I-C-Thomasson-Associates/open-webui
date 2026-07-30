@@ -121,7 +121,7 @@ googleapis-common-protos==1.75.0
 google-cloud-storage==3.9.0
 
 ## Databases
-pymongo<4 # Lower version for compatibility with Azure CosmosDB
+pymongo==4.17.0
 psycopg2-binary==2.9.12
 pgvector==0.4.2
 
@@ -163,6 +163,3 @@ opentelemetry-instrumentation-logging==0.63b1
 opentelemetry-instrumentation-httpx==0.63b1
 opentelemetry-instrumentation-aiohttp-client==0.63b1
 opentelemetry-instrumentation-system-metrics==0.63b1
-
-# Memory
-mem0ai

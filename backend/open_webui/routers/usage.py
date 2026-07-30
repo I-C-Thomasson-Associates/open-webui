@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class UserUsageResponse(BaseModel):
+class UserUsageLimitResponse(BaseModel):
     # Percentage of the monthly tier cap used, capped at 100; None when no
     # cap is resolvable. Dollar amounts are deliberately not exposed --
     # user-facing messaging matches the rate-limiting filter's toasts.
@@ -35,8 +35,8 @@ class UserUsageResponse(BaseModel):
     exempt: bool = False
 
 
-@router.get('/', response_model=UserUsageResponse)
-async def get_user_usage(user=Depends(get_verified_user)):
+@router.get('/limit', response_model=UserUsageLimitResponse)
+async def get_user_usage_limit(user=Depends(get_verified_user)):
     """Current user's monthly usage as a percentage of their tier cap."""
     now = int(time.time())
     bucket, ttl = get_month_bucket_and_ttl(now)
@@ -48,7 +48,7 @@ async def get_user_usage(user=Depends(get_verified_user)):
         group_names.append('admin')
 
     if any(g.strip().lower() in EXEMPT_GROUPS for g in group_names):
-        return UserUsageResponse(month=bucket, reset_at=reset_at, exempt=True)
+        return UserUsageLimitResponse(month=bucket, reset_at=reset_at, exempt=True)
 
     redis = get_redis_client(async_mode=True)
     if redis is None:
@@ -79,4 +79,4 @@ async def get_user_usage(user=Depends(get_verified_user)):
                 100, (used_microusd * 100) // int(round(cap_usd * 1_000_000))
             )
 
-    return UserUsageResponse(percent=percent, tier=tier, month=bucket, reset_at=reset_at)
+    return UserUsageLimitResponse(percent=percent, tier=tier, month=bucket, reset_at=reset_at)

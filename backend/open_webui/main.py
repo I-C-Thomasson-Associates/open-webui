@@ -119,13 +119,13 @@ from open_webui.env import (
     WEBUI_SESSION_COOKIE_SECURE,
 )
 from open_webui.events import (
-	EVENTS,
-	delete_event_webhook,
+    EVENTS,
+    delete_event_webhook,
     get_event_catalog as get_event_catalog_items,
     get_event_webhooks,
     migrate_legacy_webhook_config,
-	publish_event,
-	upsert_event_webhook,
+    publish_event,
+    upsert_event_webhook,
 )
 from open_webui.ext import audio_capture_router, terminal_tool_gateway
 from open_webui.internal.db import engine, get_async_session

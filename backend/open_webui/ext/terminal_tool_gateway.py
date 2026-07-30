@@ -1,6 +1,7 @@
 import json
 import logging
 import posixpath
+import re
 import secrets
 import time
 from typing import Any
@@ -15,9 +16,15 @@ from open_webui.env import (
     AIOHTTP_CLIENT_ALLOW_REDIRECTS,
     AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
     AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER,
+    CUSTOM_API_KEY_HEADER,
     ENABLE_FORWARD_USER_INFO_HEADERS,
     FORWARD_SESSION_INFO_HEADER_CHAT_ID,
     FORWARD_SESSION_INFO_HEADER_MESSAGE_ID,
+    FORWARD_USER_INFO_HEADER_JWT,
+    FORWARD_USER_INFO_HEADER_USER_EMAIL,
+    FORWARD_USER_INFO_HEADER_USER_ID,
+    FORWARD_USER_INFO_HEADER_USER_NAME,
+    FORWARD_USER_INFO_HEADER_USER_ROLE,
     REDIS_KEY_PREFIX,
 )
 from open_webui.models.config import Config
@@ -37,6 +44,7 @@ TOKEN_REDIS_PREFIX = f'{REDIS_KEY_PREFIX}:terminal_tool_gateway'
 GATEWAY_URL_HEADER = 'X-OpenWebUI-Tool-Gateway-Url'
 GATEWAY_TOKEN_HEADER = 'X-OpenWebUI-Tool-Gateway-Token'
 PROXY_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
+PROXY_METHOD_SET = frozenset(PROXY_METHODS)
 HOP_BY_HOP_HEADERS = frozenset(
     {
         'connection',
@@ -53,6 +61,7 @@ HOP_BY_HOP_HEADERS = frozenset(
 )
 STRIPPED_RESPONSE_HEADERS = frozenset(('transfer-encoding', 'connection', 'content-encoding', 'content-length'))
 STREAMING_CONTENT_TYPES = ('application/octet-stream', 'image/', 'application/pdf')
+DEFAULT_GATEWAY_REQUEST_MAX_BYTES = 25 * 1024 * 1024
 
 _memory_tokens: dict[str, dict[str, Any]] = {}
 
@@ -155,6 +164,11 @@ def _sanitize_proxy_path(path: str) -> str | None:
             break
         decoded = once
 
+    if '\\' in decoded or any(ord(char) < 32 or ord(char) == 127 for char in decoded):
+        return None
+    if re.search(r'%[0-9a-fA-F]{2}', decoded):
+        return None
+
     had_trailing_slash = decoded.endswith('/')
     normalized = posixpath.normpath(decoded)
     cleaned = normalized.lstrip('/')
@@ -165,10 +179,32 @@ def _sanitize_proxy_path(path: str) -> str | None:
     return cleaned
 
 
+def is_valid_terminal_gateway_config(gateway: dict[str, Any] | None) -> bool:
+    if not isinstance(gateway, dict) or not gateway.get('enabled'):
+        return False
+
+    allowed_methods = gateway.get('allowed_methods')
+    if not isinstance(allowed_methods, list) or not allowed_methods:
+        return False
+    normalized_methods = {str(method).strip().upper() for method in allowed_methods}
+    if not normalized_methods or not normalized_methods.issubset(PROXY_METHOD_SET):
+        return False
+
+    allowed_prefixes = gateway.get('allowed_path_prefixes')
+    if not isinstance(allowed_prefixes, list) or not allowed_prefixes:
+        return False
+    for prefix in allowed_prefixes:
+        normalized = str(prefix).strip()
+        if not normalized or not normalized.startswith('/') or _sanitize_proxy_path(normalized) is None:
+            return False
+
+    return True
+
+
 def _gateway_config(connection: dict[str, Any]) -> dict[str, Any]:
     config = connection.get('config') if isinstance(connection.get('config'), dict) else {}
     gateway = config.get('terminal_gateway') if isinstance(config.get('terminal_gateway'), dict) else {}
-    return gateway if gateway.get('enabled') else {}
+    return gateway if is_valid_terminal_gateway_config(gateway) else {}
 
 
 def _is_gateway_request_allowed(gateway: dict[str, Any], method: str, path: str) -> bool:
@@ -176,17 +212,17 @@ def _is_gateway_request_allowed(gateway: dict[str, Any], method: str, path: str)
         return False
 
     allowed_methods = gateway.get('allowed_methods')
-    if isinstance(allowed_methods, list) and allowed_methods:
-        if method.upper() not in {str(item).upper() for item in allowed_methods}:
-            return False
+    if not isinstance(allowed_methods, list) or method.upper() not in {
+        str(item).strip().upper() for item in allowed_methods
+    }:
+        return False
 
     allowed_prefixes = gateway.get('allowed_path_prefixes')
-    if isinstance(allowed_prefixes, list) and allowed_prefixes:
-        normalized_path = '/' + path.lstrip('/')
-        prefixes = [('/' + str(prefix).lstrip('/')).rstrip('/') for prefix in allowed_prefixes if str(prefix).strip()]
-        return any(normalized_path == prefix or normalized_path.startswith(prefix + '/') for prefix in prefixes)
-
-    return True
+    if not isinstance(allowed_prefixes, list) or not allowed_prefixes:
+        return False
+    normalized_path = '/' + path.lstrip('/')
+    prefixes = [('/' + str(prefix).lstrip('/')).rstrip('/') for prefix in allowed_prefixes if str(prefix).strip()]
+    return any(normalized_path == prefix or normalized_path.startswith(prefix + '/') for prefix in prefixes)
 
 
 def _gateway_allowed_methods(gateway: dict[str, Any]) -> list[str]:
@@ -295,7 +331,7 @@ async def _build_terminal_safe_tool_headers(
 
     connection_headers = connection.get('headers', None)
     if connection_headers and isinstance(connection_headers, dict):
-        headers.update(get_custom_headers(connection_headers, user, metadata))
+        headers.update(await get_custom_headers(connection_headers, user, metadata, request=request))
 
     if ENABLE_FORWARD_USER_INFO_HEADERS and user:
         headers = include_user_info_headers(headers, user)
@@ -308,15 +344,74 @@ async def _build_terminal_safe_tool_headers(
 
 
 def _forward_request_headers(request: Request) -> dict[str, str]:
+    privileged_headers = {
+        'authorization',
+        'cookie',
+        'forwarded',
+        'x-api-key',
+        CUSTOM_API_KEY_HEADER.lower(),
+        FORWARD_USER_INFO_HEADER_JWT.lower(),
+        FORWARD_USER_INFO_HEADER_USER_NAME.lower(),
+        FORWARD_USER_INFO_HEADER_USER_ID.lower(),
+        FORWARD_USER_INFO_HEADER_USER_EMAIL.lower(),
+        FORWARD_USER_INFO_HEADER_USER_ROLE.lower(),
+        FORWARD_SESSION_INFO_HEADER_CHAT_ID.lower(),
+        FORWARD_SESSION_INFO_HEADER_MESSAGE_ID.lower(),
+        GATEWAY_URL_HEADER.lower(),
+        GATEWAY_TOKEN_HEADER.lower(),
+    }
     forwarded = {}
     for key, value in request.headers.items():
         lower = key.lower()
-        if lower in HOP_BY_HOP_HEADERS or lower == 'authorization':
+        if lower in HOP_BY_HOP_HEADERS or lower in privileged_headers:
             continue
-        if lower.startswith('x-openwebui-tool-gateway'):
+        if (
+            lower.startswith('x-openwebui-tool-gateway')
+            or lower.startswith('x-openwebui-user-')
+            or lower.startswith('x-forwarded-')
+        ):
             continue
         forwarded[key] = value
     return forwarded
+
+
+def _merge_trusted_headers(
+    forwarded_headers: dict[str, str], trusted_headers: dict[str, str]
+) -> dict[str, str]:
+    trusted_names = {key.lower() for key in trusted_headers}
+    merged = {
+        key: value
+        for key, value in forwarded_headers.items()
+        if key.lower() not in trusted_names
+    }
+    merged.update(trusted_headers)
+    return merged
+
+
+async def _read_bounded_request_body(request: Request) -> bytes:
+    configured_max_mb = await Config.get('rag.file.max_size')
+    try:
+        max_bytes = int(configured_max_mb) * 1024 * 1024
+    except (TypeError, ValueError):
+        max_bytes = DEFAULT_GATEWAY_REQUEST_MAX_BYTES
+    if max_bytes <= 0:
+        max_bytes = DEFAULT_GATEWAY_REQUEST_MAX_BYTES
+
+    content_length = request.headers.get('content-length')
+    try:
+        if content_length is not None and int(content_length) > max_bytes:
+            raise HTTPException(status_code=413, detail='Terminal gateway request body too large')
+    except ValueError:
+        pass
+
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > max_bytes:
+            raise HTTPException(status_code=413, detail='Terminal gateway request body too large')
+        chunks.append(chunk)
+    return b''.join(chunks)
 
 
 @router.api_route('/{server_id}/{path:path}', methods=PROXY_METHODS)
@@ -333,13 +428,13 @@ async def proxy_terminal_tool_gateway(server_id: str, path: str, request: Reques
 
     metadata = token_payload.get('metadata') if isinstance(token_payload.get('metadata'), dict) else {}
     tool_headers, cookies = await _build_terminal_safe_tool_headers(request, connection, user, server_id, metadata)
-    headers = {**_forward_request_headers(request), **tool_headers}
+    headers = _merge_trusted_headers(_forward_request_headers(request), tool_headers)
 
     target_url = f'{server_data["url"].rstrip("/")}/{safe_path}'
     if request.query_params:
         target_url += f'?{request.query_params}'
 
-    body = await request.body()
+    body = await _read_bounded_request_body(request)
     session = aiohttp.ClientSession(
         timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER),
         trust_env=True,

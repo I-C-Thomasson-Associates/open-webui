@@ -87,11 +87,14 @@ class MemoryOperationModel(BaseModel):
     content: str | None = None
     type: Literal['user', 'context'] | None = None
     path: str | None = None
+    meta: dict | None = None
+    created_at: int | None = None
+    updated_at: int | None = None
 
 
 class UpdateMemoriesForm(BaseModel):
     operations: list[MemoryOperationModel]
-    source: Literal['tool', 'background_review'] | None = None
+    source: Literal['tool', 'background_review', 'import'] | None = None
 
 
 class SearchMemoriesForm(BaseModel):
@@ -122,6 +125,25 @@ def _memory_metadata(memory: MemoryModel) -> dict:
         'type': memory.type,
         'path': memory.path,
     }
+
+
+async def _rollback_created_memories(user_id: str, memory_ids: list[str]) -> None:
+    if not memory_ids:
+        return
+    try:
+        await ASYNC_VECTOR_DB_CLIENT.delete(
+            collection_name=f'user-memory-{user_id}',
+            ids=memory_ids,
+        )
+    except Exception:
+        log.exception('Failed to clean up memory vectors after an import failure')
+    try:
+        await Memories.apply_memory_operations(
+            user_id,
+            [{'action': 'remove', 'id': memory_id} for memory_id in memory_ids],
+        )
+    except Exception:
+        log.exception('Failed to clean up memory rows after an import failure')
 
 
 @router.post('/add', response_model=MemoryModel | None)
@@ -187,12 +209,18 @@ async def update_memories(
     source = form_data.source or 'tool'
     for operation in operations:
         if operation.get('action') in {'add', 'replace', 'move'}:
-            operation['meta'] = {
-                'created_by': source,
-                'chat_id': metadata.get('chat_id'),
-                'message_id': metadata.get('message_id'),
-                'model': metadata.get('model'),
-            }
+            if source == 'import':
+                imported_meta = operation.get('meta') if isinstance(operation.get('meta'), dict) else {}
+                operation['meta'] = {**imported_meta, 'created_by': 'import'}
+            else:
+                operation['meta'] = {
+                    'created_by': source,
+                    'chat_id': metadata.get('chat_id'),
+                    'message_id': metadata.get('message_id'),
+                    'model': metadata.get('model'),
+                }
+                operation.pop('created_at', None)
+                operation.pop('updated_at', None)
 
     try:
         results = await Memories.apply_memory_operations(user.id, operations)
@@ -202,34 +230,44 @@ async def update_memories(
     upsert_items = []
     delete_ids = []
     response = []
+    created_memory_ids = [
+        result['memory'].id
+        for result in results
+        if result.get('status') == 'created' and isinstance(result.get('memory'), MemoryModel)
+    ]
 
-    for result in results:
-        memory = result.get('memory')
-        if isinstance(memory, MemoryModel):
-            result = {**result, 'memory': memory.model_dump()}
-            if result.get('status') in {'created', 'updated'}:
-                vector = await request.app.state.EMBEDDING_FUNCTION(
-                    memory_vector_text(memory.content, memory.path),
-                    prefix=RAG_EMBEDDING_CONTENT_PREFIX,
-                    user=user,
-                )
-                upsert_items.append(
-                    {
-                        'id': memory.id,
-                        'text': memory_vector_text(memory.content, memory.path),
-                        'vector': vector,
-                        'metadata': _memory_metadata(memory),
-                    }
-                )
-        if result.get('status') == 'deleted' and result.get('id'):
-            delete_ids.append(result['id'])
-        response.append(result)
+    try:
+        for result in results:
+            memory = result.get('memory')
+            if isinstance(memory, MemoryModel):
+                result = {**result, 'memory': memory.model_dump()}
+                if result.get('status') in {'created', 'updated'}:
+                    vector = await request.app.state.EMBEDDING_FUNCTION(
+                        memory_vector_text(memory.content, memory.path),
+                        prefix=RAG_EMBEDDING_CONTENT_PREFIX,
+                        user=user,
+                    )
+                    upsert_items.append(
+                        {
+                            'id': memory.id,
+                            'text': memory_vector_text(memory.content, memory.path),
+                            'vector': vector,
+                            'metadata': _memory_metadata(memory),
+                        }
+                    )
+            if result.get('status') == 'deleted' and result.get('id'):
+                delete_ids.append(result['id'])
+            response.append(result)
 
-    if upsert_items:
-        await ASYNC_VECTOR_DB_CLIENT.upsert(collection_name=f'user-memory-{user.id}', items=upsert_items)
+        if upsert_items:
+            await ASYNC_VECTOR_DB_CLIENT.upsert(collection_name=f'user-memory-{user.id}', items=upsert_items)
 
-    if delete_ids:
-        await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=f'user-memory-{user.id}', ids=delete_ids)
+        if delete_ids:
+            await ASYNC_VECTOR_DB_CLIENT.delete(collection_name=f'user-memory-{user.id}', ids=delete_ids)
+    except Exception:
+        if source == 'import':
+            await _rollback_created_memories(user.id, created_memory_ids)
+        raise
 
     for result in response:
         status_value = result.get('status')
@@ -276,46 +314,63 @@ async def batch_add_memories(
     form_data: BatchAddMemoryForm,
     user=Depends(get_verified_user),
 ):
-    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
-    # Database operations (insert_memories_batch) manage their own short-lived sessions.
-    # This prevents holding a connection during EMBEDDING_FUNCTION()
-    # which makes external embedding API calls (1-5+ seconds).
-    config = await Config.get_many('memories.enable', 'user.permissions')
+    await check_memories_permission(user)
+    if len(form_data.contents) > 500:
+        raise HTTPException(status_code=400, detail='A batch may contain at most 500 memories')
 
-    if not config.get('memories.enable'):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=ERROR_MESSAGES.NOT_FOUND,
-        )
-
-    if not await has_permission(user.id, 'features.memories', config.get('user.permissions')):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
-        )
-
-    memories = await Memories.insert_memories_batch(user.id, form_data.contents)
-
-    # Generate embeddings in batch
-    vectors = await request.app.state.EMBEDDING_FUNCTION(
-        [memory.content for memory in memories], user=user
-    )
-
-    # Batch upsert into vector DB (chunked to avoid exceeding max batch size)
-    VECTOR_DB_BATCH_SIZE = 5000
-    all_items = [
+    operations = [
         {
-            'id': memory.id,
-            'text': memory.content,
-            'vector': vectors[idx],
-            'metadata': {'created_at': memory.created_at},
+            'action': 'add',
+            'content': clean_memory_content(content),
+            'type': 'context',
+            'path': '',
+            'meta': {'created_by': 'import'},
         }
-        for idx, memory in enumerate(memories)
+        for content in form_data.contents
     ]
-    for i in range(0, len(all_items), VECTOR_DB_BATCH_SIZE):
+    results = await Memories.apply_memory_operations(user.id, operations)
+    memories = [
+        result['memory']
+        for result in results
+        if result.get('status') == 'created' and isinstance(result.get('memory'), MemoryModel)
+    ]
+    if not memories:
+        return []
+
+    vector_texts = [memory_vector_text(memory.content, memory.path) for memory in memories]
+    memory_ids = [memory.id for memory in memories]
+    try:
+        vectors = await request.app.state.EMBEDDING_FUNCTION(
+            vector_texts,
+            prefix=RAG_EMBEDDING_CONTENT_PREFIX,
+            user=user,
+        )
+
+        all_items = [
+            {
+                'id': memory.id,
+                'text': vector_texts[idx],
+                'vector': vectors[idx],
+                'metadata': _memory_metadata(memory),
+            }
+            for idx, memory in enumerate(memories)
+        ]
         await ASYNC_VECTOR_DB_CLIENT.upsert(
             collection_name=f'user-memory-{user.id}',
-            items=all_items[i : i + VECTOR_DB_BATCH_SIZE],
+            items=all_items,
+        )
+    except Exception:
+        log.exception('Batch memory vectorization failed; removing newly-created rows')
+        await _rollback_created_memories(user.id, memory_ids)
+        raise
+
+    for memory in memories:
+        await publish_event(
+            request,
+            EVENTS.MEMORY_CREATED,
+            actor=user,
+            subject_id=memory.id,
+            data={'content_preview': memory.content[:300], 'type': memory.type, 'path': memory.path},
         )
 
     return memories

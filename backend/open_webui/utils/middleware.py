@@ -3084,6 +3084,13 @@ def build_response_object(response, response_data):
     return response
 
 
+def _merge_litellm_model_id(request, usage):
+    model_id = getattr(request.state, 'litellm_model_id', None)
+    if not model_id:
+        return usage
+    return {**(usage or {}), 'litellm_model_id': model_id}
+
+
 def update_assistant_message_from_stream(assistant_message, raw):
     line = raw.decode('utf-8', 'replace') if isinstance(raw, bytes) else raw
     if not isinstance(line, str):
@@ -3694,7 +3701,9 @@ async def non_streaming_chat_response_handler(response, ctx):
                     )
 
                     # Save message in the database
-                    usage = normalize_usage(response_data.get('usage', {}) or {})
+                    usage = normalize_usage(
+                        _merge_litellm_model_id(request, response_data.get('usage', {}) or {})
+                    )
 
                     if save_to_chat:
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
@@ -3748,7 +3757,7 @@ async def non_streaming_chat_response_handler(response, ctx):
     output = response_data.get('output')
     content = choices[0].get('message', {}).get('content') if choices else ''
     if ENABLE_API_OUTLET_FILTERS and (content or output):
-        usage = normalize_usage(response_data.get('usage', {}) or {})
+        usage = normalize_usage(_merge_litellm_model_id(request, response_data.get('usage', {}) or {}))
         ctx['assistant_message'] = {
             **({'content': content} if content else {}),
             **({'output': output} if output else {}),
@@ -4102,7 +4111,7 @@ async def streaming_chat_response_handler(response, ctx):
                 else:
                     output = []
 
-            usage = None
+            usage = _merge_litellm_model_id(request, None)
             prior_output = []
             last_response_id = None
 
@@ -5512,6 +5521,8 @@ async def streaming_chat_response_handler(response, ctx):
                             log.exception('Code interpreter continuation failed: %s', error_content)
                             await emit_message_error(error_content)
                             break
+
+                usage = _merge_litellm_model_id(request, usage)
 
                 # Mark all in-progress items as completed
                 for item in output:

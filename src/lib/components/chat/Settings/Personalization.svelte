@@ -11,6 +11,7 @@
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import MemoryModal from './Personalization/MemoryModal.svelte';
 	import { deleteMemoriesByUserId, deleteMemoryById, getMemories } from '$lib/apis/memories';
+	import { buildMemoryExportPayloadV2, importMemoriesFromPayload } from '$lib/ext/memory-import-export';
 	import { toast } from 'svelte-sonner';
 	import UserSettingRow from './UserSettingRow.svelte';
 	import UserSettingSection from './UserSettingSection.svelte';
@@ -35,6 +36,7 @@
 	let selectedMemory: Memory | null = null;
 	let showClearConfirmDialog = false;
 	let showDeleteConfirm = false;
+	let importingMemories = false;
 	let query = '';
 	const actionButtonClass =
 		'shrink-0 text-xs text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white';
@@ -44,6 +46,8 @@
 		content: string;
 		type?: string;
 		path?: string;
+		meta?: Record<string, unknown>;
+		created_at?: number;
 		updated_at?: number;
 	};
 
@@ -65,6 +69,73 @@
 	const editMemory = (memory: Memory) => {
 		selectedMemory = memory;
 		showMemoryModal = true;
+	};
+
+	const exportMemories = () => {
+		if (memories.length === 0) {
+			toast.error($i18n.t('No memories to export'));
+			return;
+		}
+
+		const blob = new Blob([JSON.stringify(buildMemoryExportPayloadV2(memories), null, 2)], {
+			type: 'application/json'
+		});
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = `memories-export-${new Date().toISOString().slice(0, 10)}.json`;
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		URL.revokeObjectURL(url);
+		toast.success($i18n.t('Memories exported successfully'));
+	};
+
+	const importMemories = () => {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = '.json,application/json';
+		input.onchange = async () => {
+			const file = input.files?.[0];
+			if (!file) return;
+
+			importingMemories = true;
+			try {
+				const result = await importMemoriesFromPayload({
+					token: localStorage.token,
+					payload: JSON.parse(await file.text()),
+					chunkSize: 100
+				});
+				const skipped = result.input_skipped + result.skipped;
+				await loadMemories();
+
+				if (result.failed > 0) {
+					toast.error(
+						$i18n.t('Import complete: {{imported}} imported, {{skipped}} skipped, {{failed}} failed.', {
+							imported: result.created,
+							skipped,
+							failed: result.failed
+						})
+					);
+				} else {
+					toast.success(
+						$i18n.t('Import complete: {{imported}} imported, {{skipped}} skipped.', {
+							imported: result.created,
+							skipped
+						})
+					);
+				}
+			} catch (error) {
+				toast.error(
+					typeof error === 'string'
+						? error
+						: $i18n.t('Failed to import memories. Please check the file format.')
+				);
+			} finally {
+				importingMemories = false;
+			}
+		};
+		input.click();
 	};
 
 	let onClearConfirmed = async () => {
@@ -212,6 +283,26 @@
 										>
 											<Plus className="size-3.5 shrink-0" strokeWidth="1.5" />
 											<div class="min-w-0 flex-1 truncate text-left">{$i18n.t('Add Memory')}</div>
+										</button>
+
+										<button
+											class="flex h-[1.6875rem] w-full cursor-pointer select-none items-center gap-2 rounded-lg bg-transparent px-2 text-xs hover:text-gray-900 disabled:cursor-default disabled:opacity-30 dark:hover:text-gray-100"
+											disabled={importingMemories}
+											type="button"
+											on:click={importMemories}
+										>
+											<div class="min-w-0 flex-1 truncate text-left">
+												{importingMemories ? $i18n.t('Importing...') : $i18n.t('Import memories')}
+											</div>
+										</button>
+
+										<button
+											class="flex h-[1.6875rem] w-full cursor-pointer select-none items-center gap-2 rounded-lg bg-transparent px-2 text-xs hover:text-gray-900 disabled:cursor-default disabled:opacity-30 dark:hover:text-gray-100"
+											disabled={memories.length === 0}
+											type="button"
+											on:click={exportMemories}
+										>
+											<div class="min-w-0 flex-1 truncate text-left">{$i18n.t('Export memories')}</div>
 										</button>
 
 										<button

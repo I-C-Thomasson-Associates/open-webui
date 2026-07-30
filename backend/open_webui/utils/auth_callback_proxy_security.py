@@ -35,8 +35,29 @@ def is_valid_callback_proxy_config(proxy_dict: dict | None) -> bool:
     if not host or not path or not url:
         return False
 
+    if any(character.isspace() for character in host) or any(character in host for character in '/?#@'):
+        return False
+    parsed_host = urlsplit(f'//{host}')
+    if not parsed_host.hostname:
+        return False
+    try:
+        parsed_host.port
+    except ValueError:
+        return False
+
+    if not path.startswith('/') or path.startswith('//') or any(character in path for character in '?#'):
+        return False
+
     parsed_url = urlsplit(url)
-    if parsed_url.scheme not in _CALLBACK_TARGET_URL_SCHEMES or not parsed_url.netloc:
+    if parsed_url.scheme not in _CALLBACK_TARGET_URL_SCHEMES or not parsed_url.hostname:
+        return False
+    if parsed_url.username is not None or parsed_url.password is not None:
+        return False
+    if parsed_url.fragment:
+        return False
+    try:
+        parsed_url.port
+    except ValueError:
         return False
 
     return True

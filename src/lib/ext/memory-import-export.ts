@@ -11,6 +11,8 @@ type CanonicalImportRecord = {
 	type: MemoryType;
 	path: string;
 	meta?: Record<string, unknown>;
+	created_at?: number;
+	updated_at?: number;
 };
 
 type V2ImportPayload = {
@@ -82,6 +84,9 @@ const normalizeMeta = (value: unknown): Record<string, unknown> | undefined => {
 	return undefined;
 };
 
+const normalizeTimestamp = (value: unknown): number | undefined =>
+	typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
+
 const toImportSourceEntries = (payload: unknown): unknown[] => {
 	if (Array.isArray(payload)) {
 		return payload;
@@ -131,7 +136,9 @@ export const normalizeImportPayload = (payload: unknown) => {
 				content,
 				type: normalizeType(structured.type),
 				path: normalizePath(structured.path),
-				meta: normalizeMeta(structured.meta)
+				meta: normalizeMeta(structured.meta),
+				created_at: normalizeTimestamp(structured.created_at),
+				updated_at: normalizeTimestamp(structured.updated_at)
 			});
 			continue;
 		}
@@ -151,7 +158,10 @@ export const buildAddOperations = (records: CanonicalImportRecord[]): MemoryOper
 		action: 'add',
 		content: record.content,
 		type: record.type,
-		path: record.path
+		path: record.path,
+		meta: record.meta,
+		created_at: record.created_at,
+		updated_at: record.updated_at
 	}));
 };
 
@@ -202,7 +212,7 @@ export const importMemoriesFromPayload = async ({
 
 	for (const chunk of chunks) {
 		try {
-			const results = await updateMemories(token, chunk, 'tool');
+			const results = await updateMemories(token, chunk, 'import');
 			const summary = summarizeOperationResults(results);
 			created += summary.created;
 			skipped += summary.skipped;

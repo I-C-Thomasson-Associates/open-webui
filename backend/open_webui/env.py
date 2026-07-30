@@ -175,41 +175,11 @@ if _cuda_error:
     log.error(_cuda_error)
     _cuda_error = None
 
-log_sources = [
-    "AUDIO",
-    "COMFYUI",
-    "CONFIG",
-    "DB",
-    "IMAGES",
-    "MAIN",
-    "MODELS",
-    "OLLAMA",
-    "OPENAI",
-    "RAG",
-    "WEBHOOK",
-    "SOCKET",
-    "OAUTH",
-    "SECRETS"
-]
-
-SRC_LOG_LEVELS = {}
-
-for source in log_sources:
-    log_env_var = source + "_LOG_LEVEL"
-    SRC_LOG_LEVELS[source] = os.environ.get(log_env_var, '').upper()
-    if SRC_LOG_LEVELS[source] not in logging.getLevelNamesMapping():
-        SRC_LOG_LEVELS[source] = GLOBAL_LOG_LEVEL
-    log.info(f"{log_env_var}: {SRC_LOG_LEVELS[source]}")
-
-log.setLevel(SRC_LOG_LEVELS["CONFIG"])
+SRC_LOG_LEVELS = {}  # Legacy variable, do not remove
 
 ####################################
 # ENV (dev,test,prod)
 ####################################
-from open_webui.secrets import get_secret
-secrets_logger = logging.getLogger("open_webui.secrets")
-secrets_logger.setLevel(SRC_LOG_LEVELS["SECRETS"])
-
 ENV = os.getenv('ENV', 'dev')
 
 FROM_INIT_PY = os.getenv('FROM_INIT_PY', 'False').lower() == 'true'
@@ -344,14 +314,11 @@ if os.path.exists(f'{DATA_DIR}/ollama.db'):
 else:
     pass
 
-DATABASE_URL = get_secret('DATABASE_URL', f"sqlite:///{DATA_DIR}/webui.db")
-if 'postgre' in DATABASE_URL:
-    log.info('Using DATABASE_URL from secrets manager or environment variable.')
-    DATABASE_URL = DATABASE_URL + '/openwebui?sslmode=require'
+DATABASE_URL = os.getenv('DATABASE_URL', f'sqlite:///{DATA_DIR}/webui.db')
 
-DATABASE_TYPE = os.environ.get('DATABASE_TYPE')
-DATABASE_USER = os.environ.get('DATABASE_USER')
-DATABASE_PASSWORD = get_secret('DATABASE_PASSWORD', '')
+DATABASE_TYPE = os.getenv('DATABASE_TYPE')
+DATABASE_USER = os.getenv('DATABASE_USER')
+DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD')
 
 DATABASE_CRED = ''
 if DATABASE_USER:
@@ -796,20 +763,20 @@ ENABLE_SIGNUP_PASSWORD_CONFIRMATION = os.getenv('ENABLE_SIGNUP_PASSWORD_CONFIRMA
 
 # WEBUI_JWT_SECRET_KEY is deprecated; use WEBUI_SECRET_KEY instead.
 # No hardcoded fallback by design: the supported start scripts set/auto-generate it; unset is rejected below.
-WEBUI_SECRET_KEY = get_secret(
+WEBUI_SECRET_KEY = os.getenv(
     'WEBUI_SECRET_KEY',
-    get_secret('WEBUI_JWT_SECRET_KEY', ''),
+    os.getenv('WEBUI_JWT_SECRET_KEY', ''),
 )
 
 ENABLE_VALVE_ENCRYPTION = os.getenv('ENABLE_VALVE_ENCRYPTION', 'False').lower() == 'true'
 
-WEBUI_SESSION_COOKIE_SAME_SITE = get_secret('WEBUI_SESSION_COOKIE_SAME_SITE', 'lax')
-WEBUI_SESSION_COOKIE_SECURE = get_secret('WEBUI_SESSION_COOKIE_SECURE', 'false').lower() == 'true'
-WEBUI_AUTH_COOKIE_SAME_SITE = get_secret('WEBUI_AUTH_COOKIE_SAME_SITE', WEBUI_SESSION_COOKIE_SAME_SITE)
+WEBUI_SESSION_COOKIE_SAME_SITE = os.getenv('WEBUI_SESSION_COOKIE_SAME_SITE', 'lax')
+WEBUI_SESSION_COOKIE_SECURE = os.getenv('WEBUI_SESSION_COOKIE_SECURE', 'false').lower() == 'true'
+WEBUI_AUTH_COOKIE_SAME_SITE = os.getenv('WEBUI_AUTH_COOKIE_SAME_SITE', WEBUI_SESSION_COOKIE_SAME_SITE)
 WEBUI_AUTH_COOKIE_SECURE = (
-    get_secret(
+    os.getenv(
         'WEBUI_AUTH_COOKIE_SECURE',
-        get_secret('WEBUI_SESSION_COOKIE_SECURE', 'false'),
+        os.getenv('WEBUI_SESSION_COOKIE_SECURE', 'false'),
     ).lower()
     == 'true'
 )
@@ -897,13 +864,9 @@ ENABLE_OAUTH_EMAIL_FALLBACK = os.getenv('ENABLE_OAUTH_EMAIL_FALLBACK', 'False').
 
 ENABLE_OAUTH_ID_TOKEN_COOKIE = os.getenv('ENABLE_OAUTH_ID_TOKEN_COOKIE', 'True').lower() == 'true'
 
-OAUTH_CLIENT_INFO_ENCRYPTION_KEY = get_secret(
-    'OAUTH_CLIENT_INFO_ENCRYPTION_KEY', WEBUI_SECRET_KEY
-)
+OAUTH_CLIENT_INFO_ENCRYPTION_KEY = os.getenv('OAUTH_CLIENT_INFO_ENCRYPTION_KEY', WEBUI_SECRET_KEY)
 
-OAUTH_SESSION_TOKEN_ENCRYPTION_KEY = get_secret(
-    'OAUTH_SESSION_TOKEN_ENCRYPTION_KEY', WEBUI_SECRET_KEY
-)
+OAUTH_SESSION_TOKEN_ENCRYPTION_KEY = os.getenv('OAUTH_SESSION_TOKEN_ENCRYPTION_KEY', WEBUI_SECRET_KEY)
 
 # Maximum number of concurrent OAuth sessions per user per provider
 # This prevents unbounded session growth while allowing multi-device usage
@@ -935,12 +898,9 @@ ENABLE_OAUTH_BACKCHANNEL_LOGOUT = os.getenv('ENABLE_OAUTH_BACKCHANNEL_LOGOUT', '
 # SCIM Configuration
 ####################################
 
-ENABLE_SCIM = (
-    os.environ.get('ENABLE_SCIM', get_secret('SCIM_ENABLED', 'False')).lower()
-    == "true"
-)
-SCIM_TOKEN = get_secret('SCIM_TOKEN', '')
-SCIM_AUTH_PROVIDER = os.environ.get('SCIM_AUTH_PROVIDER', '')
+ENABLE_SCIM = os.getenv('ENABLE_SCIM', os.getenv('SCIM_ENABLED', 'False')).lower() == 'true'
+SCIM_TOKEN = os.getenv('SCIM_TOKEN', '')
+SCIM_AUTH_PROVIDER = os.getenv('SCIM_AUTH_PROVIDER', '')
 
 if ENABLE_SCIM and not SCIM_AUTH_PROVIDER:
     log.warning(
@@ -953,7 +913,7 @@ if ENABLE_SCIM and not SCIM_AUTH_PROVIDER:
 # LICENSE_KEY
 ####################################
 
-LICENSE_KEY = get_secret('LICENSE_KEY', '')
+LICENSE_KEY = os.getenv('LICENSE_KEY', '')
 
 LICENSE_BLOB = None
 LICENSE_BLOB_PATH = os.getenv('LICENSE_BLOB_PATH', DATA_DIR / 'l.data')

@@ -53,7 +53,7 @@ def _fetch_secret(key: str, default: str = "") -> str:
     Returns:
         The secret value
     """
-    log.info(f"Fetching secret for key: {key}")
+    log.debug(f"Fetching secret for key: {key}")
     # Try Azure Key Vault first
     if _vault_enabled and _secret_client:
         try:

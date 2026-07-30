@@ -16,6 +16,7 @@ from open_webui.utils.auth import get_admin_user, get_verified_user
 from open_webui.utils.headers import get_custom_headers
 from open_webui.utils.mcp.client import MCPClient
 from open_webui.utils.auth_callback_proxy_security import is_valid_callback_proxy_config
+from open_webui.ext.terminal_tool_gateway import is_valid_terminal_gateway_config
 
 
 from open_webui.utils.oauth import (
@@ -255,6 +256,16 @@ async def set_tool_servers_config(
                 raise HTTPException(
                     status_code=400,
                     detail='Invalid auth_callback_proxy: enabled requires non-empty host/path/url and an http(s) url',
+                )
+
+        terminal_gateway = ((connection.config or {}) if isinstance(connection.config, dict) else {}).get(
+            'terminal_gateway'
+        )
+        if isinstance(terminal_gateway, dict) and terminal_gateway.get('enabled'):
+            if not is_valid_terminal_gateway_config(terminal_gateway):
+                raise HTTPException(
+                    status_code=400,
+                    detail='Invalid terminal_gateway: enabled requires explicit valid methods and path prefixes',
                 )
 
     existing_connections = await Config.get('tool_server.connections', []) or []

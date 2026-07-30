@@ -1178,6 +1178,13 @@ def convert_responses_result(response: dict) -> dict:
     }
 
 
+def _capture_litellm_model_id(request: Request, response_headers) -> None:
+    """Keep LiteLLM deployment attribution request-local for persistence."""
+    model_id = response_headers.get('x-litellm-model-id')
+    if isinstance(model_id, str) and (model_id := model_id.strip()):
+        request.state.litellm_model_id = model_id[:512]
+
+
 @router.post('/chat/completions')
 async def generate_chat_completion(
     request: Request,
@@ -1347,6 +1354,7 @@ async def generate_chat_completion(
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
             timeout=get_client_timeout(stream=is_streaming_request),
         )
+        _capture_litellm_model_id(request, r.headers)
 
         # Check if response is SSE
         if 'text/event-stream' in r.headers.get('Content-Type', ''):

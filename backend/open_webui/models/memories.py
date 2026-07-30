@@ -151,33 +151,6 @@ class MemoriesTable:
                 return True
             except Exception:
                 return False
-            
-    async def insert_memories_batch(
-        self,
-        user_id: str,
-        contents: list[str],
-        db: Optional[AsyncSession] = None,
-    ) -> list[MemoryModel]:
-        async with get_async_db_context(db) as db:
-            try:
-                now = int(time.time())
-                memories = []
-                for content in contents:
-                    id = str(uuid.uuid4())
-                    memory = MemoryModel(
-                        id=id,
-                        user_id=user_id,
-                        content=content,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    result = Memory(**memory.model_dump())
-                    db.add(result)
-                    memories.append(memory)
-                await db.commit()
-                return memories
-            except Exception:
-                return []
 
     async def delete_memory_by_id_and_user_id(self, id: str, user_id: str, db: AsyncSession | None = None) -> bool:
         async with get_async_db_context(db) as db:
@@ -224,6 +197,10 @@ class MemoriesTable:
                         )
                         continue
 
+                    created_at = operation.get('created_at')
+                    updated_at = operation.get('updated_at')
+                    created_at = created_at if isinstance(created_at, int) and created_at >= 0 else now
+                    updated_at = updated_at if isinstance(updated_at, int) and updated_at >= 0 else created_at
                     memory = Memory(
                         id=str(uuid.uuid4()),
                         user_id=user_id,
@@ -231,8 +208,8 @@ class MemoriesTable:
                         path=path,
                         content=content,
                         meta=operation.get('meta'),
-                        created_at=now,
-                        updated_at=now,
+                        created_at=created_at,
+                        updated_at=updated_at,
                     )
                     db.add(memory)
                     await db.flush()

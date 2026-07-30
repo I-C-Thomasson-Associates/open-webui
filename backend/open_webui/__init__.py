@@ -50,7 +50,7 @@ def serve(
         typer.echo(f'Loading WEBUI_SECRET_KEY from {KEY_FILE}')
         os.environ['WEBUI_SECRET_KEY'] = KEY_FILE.read_text()
     else:
-        typer.echo(f'WEBUI_SECRET_KEY loaded from Key Vault ({len(webui_secret)} characters)')
+        typer.echo('WEBUI_SECRET_KEY loaded from the configured secret source.')
         os.environ['WEBUI_SECRET_KEY'] = webui_secret
 
     if os.getenv('USE_CUDA_DOCKER', 'false') == 'true':

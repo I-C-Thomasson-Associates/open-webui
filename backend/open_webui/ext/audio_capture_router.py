@@ -168,6 +168,7 @@ async def capture_transcription(
             detail=ERROR_MESSAGES.FILE_NOT_SUPPORTED,
         )
 
+    file_path: str | None = None
     try:
         safe_name = os.path.basename(file.filename) if file.filename else ''
         ext = safe_name.rsplit('.', 1)[-1].lower() if '.' in safe_name else ''
@@ -181,7 +182,14 @@ async def capture_transcription(
 
         file_id = uuid.uuid4()
         filename = f'{file_id}.{ext}' if ext else str(file_id)
-        contents = await file.read()
+        stt_engine = await Config.get('audio.stt.engine')
+        max_file_size = audio.AZURE_MAX_FILE_SIZE if stt_engine == 'azure' else audio.MAX_FILE_SIZE
+        contents = await file.read(max_file_size + 1)
+        if len(contents) > max_file_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f'File size exceeds limit of {max_file_size // (1024 * 1024)}MB',
+            )
 
         file_dir = os.path.join(CACHE_DIR, 'audio', 'transcriptions')
         os.makedirs(file_dir, exist_ok=True)
@@ -199,7 +207,6 @@ async def capture_transcription(
         if diarize:
             metadata['diarize'] = True
 
-        stt_engine = await Config.get('audio.stt.engine')
         if stt_engine == 'azure':
             result = await _transcribe_capture_azure(request, file_path, metadata)
         else:
@@ -217,3 +224,13 @@ async def capture_transcription(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Transcription failed.',
         )
+    finally:
+        await file.close()
+        if file_path:
+            transcript_path = os.path.splitext(file_path)[0] + '.json'
+            for cleanup_path in (file_path, transcript_path):
+                try:
+                    if os.path.isfile(cleanup_path):
+                        await asyncio.to_thread(os.remove, cleanup_path)
+                except OSError:
+                    log.warning('Failed to remove capture audio artifact: %s', cleanup_path)

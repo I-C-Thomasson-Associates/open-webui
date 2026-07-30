@@ -13,10 +13,66 @@ from open_webui.env import (
     AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER,
 )
 from open_webui.models.files import Files
+from open_webui.models.config import Config
 from open_webui.models.users import UserModel
 from open_webui.routers.files import upload_file_handler
 from open_webui.storage.provider import Storage
 from open_webui.utils.access_control.files import has_access_to_file
+
+DEFAULT_TERMINAL_FILE_MAX_BYTES = 25 * 1024 * 1024
+
+
+async def _get_terminal_file_max_bytes() -> int:
+    configured_max_mb = await Config.get('rag.file.max_size')
+    try:
+        max_bytes = int(configured_max_mb) * 1024 * 1024
+    except (TypeError, ValueError):
+        return DEFAULT_TERMINAL_FILE_MAX_BYTES
+    return max_bytes if max_bytes > 0 else DEFAULT_TERMINAL_FILE_MAX_BYTES
+
+
+def _read_bounded_file(path: str, max_bytes: int) -> bytes:
+    if os.path.getsize(path) > max_bytes:
+        raise HTTPException(status_code=413, detail='Platform file exceeds the configured upload size limit.')
+
+    chunks: list[bytes] = []
+    size = 0
+    with open(path, 'rb') as file:
+        while chunk := file.read(min(64 * 1024, max_bytes - size + 1)):
+            size += len(chunk)
+            if size > max_bytes:
+                raise HTTPException(status_code=413, detail='Platform file exceeds the configured upload size limit.')
+            chunks.append(chunk)
+    return b''.join(chunks)
+
+
+def _encode_bounded_text(content: Any, max_bytes: int) -> bytes:
+    text = str(content or '')
+    chunks: list[bytes] = []
+    size = 0
+    for offset in range(0, len(text), 64 * 1024):
+        chunk = text[offset : offset + 64 * 1024].encode('utf-8')
+        size += len(chunk)
+        if size > max_bytes:
+            raise HTTPException(status_code=413, detail='Platform file exceeds the configured upload size limit.')
+        chunks.append(chunk)
+    return b''.join(chunks)
+
+
+async def _read_bounded_response(response: aiohttp.ClientResponse) -> bytes:
+    max_bytes = await _get_terminal_file_max_bytes()
+    content_length = response.content_length
+    if content_length is not None and content_length > max_bytes:
+        raise HTTPException(status_code=413, detail='Terminal file exceeds the configured upload size limit.')
+
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.content.iter_chunked(64 * 1024):
+        size += len(chunk)
+        if size > max_bytes:
+            raise HTTPException(status_code=413, detail='Terminal file exceeds the configured upload size limit.')
+        chunks.append(chunk)
+    return b''.join(chunks)
 
 
 def _safe_filename_from_path(path: str) -> str:
@@ -118,9 +174,7 @@ async def persist_terminal_file_to_platform(
                     detail=f'Failed to fetch file from terminal: HTTP {file_response.status}: {body[:300]}',
                 )
 
-            file_bytes = await file_response.read()
-            if file_bytes is None:
-                file_bytes = b''
+            file_bytes = await _read_bounded_response(file_response)
 
             content_type = file_response.headers.get('Content-Type', 'application/octet-stream')
             fallback_name = _safe_filename_from_path(normalized_path)
@@ -189,23 +243,28 @@ async def transfer_platform_file_to_terminal(
         content_type = source_file.meta.get('content_type')
 
     directory, target_filename = _resolve_terminal_upload_target(path, source_filename)
+    max_bytes = await _get_terminal_file_max_bytes()
 
     if source_file.path:
         try:
             source_path = await asyncio.to_thread(Storage.get_file, source_file.path)
-            with open(source_path, 'rb') as f:
-                file_bytes = f.read()
+            file_bytes = await asyncio.to_thread(_read_bounded_file, source_path, max_bytes)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail='Stored file content not found.')
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=500, detail=f'Failed to read stored file: {str(e)}')
     else:
         content = ''
         if isinstance(source_file.data, dict):
             content = source_file.data.get('content', '')
-        file_bytes = str(content or '').encode('utf-8')
+        file_bytes = _encode_bounded_text(content, max_bytes)
         if content_type == 'application/octet-stream':
             content_type = 'text/plain'
+
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(status_code=413, detail='Platform file exceeds the configured upload size limit.')
 
     base = base_url.rstrip('/')
     query = urlencode({'directory': directory})

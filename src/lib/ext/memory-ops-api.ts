@@ -6,6 +6,9 @@ export type MemoryOperation = {
 	content?: string;
 	type?: 'user' | 'context';
 	path?: string;
+	meta?: Record<string, unknown>;
+	created_at?: number;
+	updated_at?: number;
 };
 
 export type MemoryOperationResult = {
@@ -19,7 +22,7 @@ export type MemoryOperationResult = {
 export const updateMemories = async (
 	token: string,
 	operations: MemoryOperation[],
-	source: 'tool' | 'background_review' = 'tool'
+	source: 'tool' | 'background_review' | 'import' = 'tool'
 ) => {
 	let error = null;
 

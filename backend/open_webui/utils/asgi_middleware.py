@@ -39,9 +39,7 @@ import aiohttp
 
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
-from open_webui.env import CUSTOM_API_KEY_HEADER
-from open_webui.internal.db import ScopedSession
-from open_webui.utils.auth import get_http_authorization_cred
+from open_webui.models.config import Config
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -57,6 +55,7 @@ from open_webui.utils.auth_callback_proxy_security import (
 )
 
 log = logging.getLogger(__name__)
+MAX_CALLBACK_RESPONSE_BYTES = MAX_CALLBACK_BODY_BYTES
 
 
 class CommitSessionMiddleware:
@@ -242,17 +241,26 @@ class AuthCallbackProxyMiddleware:
         target_url = self._append_query(target_url, scope.get('query_string', b''))
 
         request_headers = _scope_headers(scope)
+        sensitive_request_headers = {
+            'authorization',
+            'cookie',
+            'forwarded',
+            'proxy-authorization',
+            'x-api-key',
+            CUSTOM_API_KEY_HEADER.lower(),
+        }
         proxy_headers = {
             key: value
             for key, value in request_headers.items()
-            if key not in {'host', 'content-length', 'connection'}
+            if key not in {'host', 'content-length', 'connection'} | sensitive_request_headers
+            and not key.startswith('x-forwarded-')
+            and not key.startswith('x-openwebui-user-')
         }
 
         host_header = request_headers.get('host', '').strip()
-        if host_header and 'x-forwarded-host' not in proxy_headers:
+        if host_header:
             proxy_headers['x-forwarded-host'] = host_header
-        if 'x-forwarded-proto' not in proxy_headers:
-            proxy_headers['x-forwarded-proto'] = scope.get('scheme', 'http')
+        proxy_headers['x-forwarded-proto'] = scope.get('scheme', 'http')
 
         try:
             async with aiohttp.ClientSession(
@@ -267,7 +275,15 @@ class AuthCallbackProxyMiddleware:
                     allow_redirects=False,
                     ssl=AIOHTTP_CLIENT_SESSION_SSL,
                 ) as upstream_response:
-                    response_body = await upstream_response.read()
+                    try:
+                        response_body = await self._read_response_body(upstream_response)
+                    except ValueError:
+                        response = JSONResponse(
+                            status_code=502,
+                            content={'detail': 'Auth callback response too large'},
+                        )
+                        await response(scope, receive, send)
+                        return
                     response_headers = [
                         (key.encode('latin-1'), value.encode('latin-1'))
                         for key, value in strip_sensitive_response_headers(upstream_response.headers)
@@ -316,6 +332,20 @@ class AuthCallbackProxyMiddleware:
             if not message.get('more_body', False):
                 break
 
+        return b''.join(chunks)
+
+    async def _read_response_body(self, response: aiohttp.ClientResponse) -> bytes:
+        content_length = response.content_length
+        if content_length is not None and content_length > MAX_CALLBACK_RESPONSE_BYTES:
+            raise ValueError('auth callback response body exceeds size limit')
+
+        chunks = []
+        total_size = 0
+        async for chunk in response.content.iter_chunked(16 * 1024):
+            total_size += len(chunk)
+            if total_size > MAX_CALLBACK_RESPONSE_BYTES:
+                raise ValueError('auth callback response body exceeds size limit')
+            chunks.append(chunk)
         return b''.join(chunks)
 
     async def _resolve_target_url(self, scope: Scope) -> str | None:

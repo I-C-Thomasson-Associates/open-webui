@@ -1,6 +1,6 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
 
-export type UserUsage = {
+export type UserUsageLimitResponse = {
 	percent: number | null;
 	tier: string | null;
 	month: string;
@@ -8,10 +8,10 @@ export type UserUsage = {
 	exempt: boolean;
 };
 
-export const getUserUsage = async (token: string): Promise<UserUsage> => {
+export const getUserUsageLimit = async (token: string): Promise<UserUsageLimitResponse> => {
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/usage/`, {
+	const res = await fetch(`${WEBUI_API_BASE_URL}/usage/limit`, {
 		method: 'GET',
 		headers: {
 			'Content-Type': 'application/json',
