@@ -199,7 +199,7 @@
 						className="w-full"
 					>
 						<button
-							class="flex w-full gap-2 items-center px-3 py-1.5 text-sm select-none cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl {!fileUploadEnabled
+							class="flex w-full gap-2 items-center h-[1.6875rem] px-2 text-[13px] font-normal select-none cursor-pointer hover:bg-gray-50/40 dark:hover:bg-gray-800/40 rounded-xl {!fileUploadEnabled
 								? 'opacity-50'
 								: ''}"
 							type="button"
@@ -211,7 +211,7 @@
 							}}
 						>
 							<CursorArrowRays />
-							<div class=" line-clamp-1">{$i18n.t('Capture Audio')}</div>
+							<div class="line-clamp-1">{$i18n.t('Capture Audio')}</div>
 						</button>
 					</Tooltip>
 
