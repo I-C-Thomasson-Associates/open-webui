@@ -5,8 +5,10 @@ import hashlib
 import json
 import logging
 import re
+import time
 from typing import Optional
 from urllib.parse import quote, urlparse
+from uuid import uuid4
 
 import aiofiles
 import aiohttp
@@ -47,6 +49,7 @@ from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.model_ids import strip_provider_model_prefix
 from open_webui.utils.misc import (
     convert_logit_bias_input_to_json,
+    openai_chat_chunk_message_template,
     stream_chunks_handler,
 )
 from open_webui.utils.payload import (
@@ -1178,6 +1181,206 @@ def convert_responses_result(response: dict) -> dict:
     }
 
 
+def _normalize_responses_usage(usage):
+    if not isinstance(usage, dict):
+        return None
+
+    normalized = {}
+    prompt_tokens = usage.get('prompt_tokens', usage.get('input_tokens'))
+    completion_tokens = usage.get('completion_tokens', usage.get('output_tokens'))
+    if prompt_tokens is not None:
+        normalized['prompt_tokens'] = prompt_tokens
+    if completion_tokens is not None:
+        normalized['completion_tokens'] = completion_tokens
+
+    total_tokens = usage.get('total_tokens')
+    if total_tokens is None and isinstance(prompt_tokens, (int, float)) and isinstance(completion_tokens, (int, float)):
+        total_tokens = prompt_tokens + completion_tokens
+    if total_tokens is not None:
+        normalized['total_tokens'] = total_tokens
+
+    prompt_details = usage.get('prompt_tokens_details', usage.get('input_tokens_details'))
+    completion_details = usage.get('completion_tokens_details', usage.get('output_tokens_details'))
+    if isinstance(prompt_details, dict):
+        normalized['prompt_tokens_details'] = prompt_details
+    if isinstance(completion_details, dict):
+        normalized['completion_tokens_details'] = completion_details
+    return normalized
+
+
+def responses_stream_chunks_handler(stream: aiohttp.StreamReader):
+    """Convert a Responses API SSE stream to Chat Completions SSE."""
+
+    async def converted_stream():
+        buffer = b''
+        data_lines = []
+        completion_id = f'chatcmpl-{uuid4()}'
+        model = ''
+        created = int(time.time())
+        metadata_locked = False
+        role_emitted = False
+        terminal_emitted = False
+        has_tool_calls = False
+        tool_indexes = {}
+
+        def update_metadata(event):
+            nonlocal completion_id, model, created
+            if metadata_locked:
+                return
+            response = event.get('response') or {}
+            if response.get('id'):
+                completion_id = response['id']
+            if response.get('model'):
+                model = response['model']
+            if response.get('created_at') is not None:
+                created = int(response['created_at'])
+
+        def make_chunk(content=None, reasoning_content=None, tool_calls=None, usage=None, finish_reason=None):
+            nonlocal metadata_locked, role_emitted
+            chunk = openai_chat_chunk_message_template(
+                model,
+                content=content,
+                reasoning_content=reasoning_content,
+                tool_calls=tool_calls,
+                usage=usage,
+                message_id=completion_id,
+            )
+            chunk['created'] = created
+            if usage is not None:
+                chunk['usage'] = usage
+            meaningful = content is not None or reasoning_content is not None or tool_calls is not None
+            if not role_emitted and (meaningful or finish_reason is not None):
+                chunk['choices'][0]['delta']['role'] = 'assistant'
+                role_emitted = True
+            if finish_reason is not None:
+                chunk['choices'][0]['finish_reason'] = finish_reason
+            metadata_locked = True
+            return f'data: {JSONCodec.dumps(chunk)}\n\n'.encode()
+
+        def tool_index(event, item=None):
+            item = item or {}
+            keys = [event.get('item_id'), item.get('id'), item.get('call_id'), event.get('output_index')]
+            index = next((tool_indexes[key] for key in keys if key is not None and key in tool_indexes), None)
+            if index is None:
+                index = len(set(tool_indexes.values()))
+            for key in keys:
+                if key is not None:
+                    tool_indexes[key] = index
+            return index
+
+        async def process_data(data_string):
+            nonlocal terminal_emitted, has_tool_calls
+            if terminal_emitted:
+                return
+            if data_string == '[DONE]':
+                terminal_emitted = True
+                yield make_chunk(finish_reason='tool_calls' if has_tool_calls else 'stop')
+                yield b'data: [DONE]\n\n'
+                return
+
+            try:
+                event = JSONCodec.loads(data_string)
+            except (JSONCodec.JSONDecodeError, TypeError, ValueError):
+                return
+            if not isinstance(event, dict):
+                return
+
+            update_metadata(event)
+            event_type = event.get('type', '')
+            if event_type in ('response.output_text.delta', 'response.text.delta'):
+                delta = event.get('delta')
+                if isinstance(delta, str) and delta:
+                    yield make_chunk(content=delta)
+            elif event_type in (
+                'response.reasoning.delta',
+                'response.reasoning_text.delta',
+                'response.reasoning_summary.delta',
+                'response.reasoning_summary_text.delta',
+            ):
+                delta = event.get('delta')
+                if isinstance(delta, str) and delta:
+                    yield make_chunk(reasoning_content=delta)
+            elif event_type == 'response.output_item.added':
+                item = event.get('item') or {}
+                if item.get('type') in ('function_call', 'tool_call'):
+                    has_tool_calls = True
+                    index = tool_index(event, item)
+                    call_id = item.get('call_id') or item.get('id') or f'call_{uuid4().hex}'
+                    function = {'name': item.get('name', ''), 'arguments': item.get('arguments', '')}
+                    yield make_chunk(
+                        tool_calls=[{'index': index, 'id': call_id, 'type': 'function', 'function': function}]
+                    )
+            elif event_type in ('response.function_call_arguments.delta', 'response.tool_call_arguments.delta'):
+                has_tool_calls = True
+                index = tool_index(event)
+                delta = event.get('delta')
+                if isinstance(delta, str) and delta:
+                    yield make_chunk(tool_calls=[{'index': index, 'function': {'arguments': delta}}])
+            elif event_type == 'response.completed':
+                response = event.get('response') or {}
+                usage = _normalize_responses_usage(response.get('usage'))
+                terminal_emitted = True
+                yield make_chunk(
+                    usage=usage,
+                    finish_reason='tool_calls' if has_tool_calls else 'stop',
+                )
+                yield b'data: [DONE]\n\n'
+            elif event_type == 'response.incomplete':
+                response = event.get('response') or {}
+                usage = _normalize_responses_usage(response.get('usage'))
+                reason = (response.get('incomplete_details') or {}).get('reason')
+                finish_reason = 'content_filter' if reason == 'content_filter' else 'length'
+                terminal_emitted = True
+                yield make_chunk(usage=usage, finish_reason=finish_reason)
+                yield b'data: [DONE]\n\n'
+            elif event_type == 'response.failed':
+                response = event.get('response') or {}
+                error = event.get('error') or response.get('error') or {}
+                if not isinstance(error, dict):
+                    error = {'message': str(error)}
+                terminal_emitted = True
+                yield f'data: {JSONCodec.dumps({"error": error})}\n\n'.encode()
+                yield b'data: [DONE]\n\n'
+
+        async def process_line(line):
+            nonlocal data_lines
+            line = line.rstrip(b'\r')
+            if line:
+                if line.startswith(b'data:'):
+                    value = line[5:]
+                    if value.startswith(b' '):
+                        value = value[1:]
+                    data_lines.append(value)
+                return
+            if not data_lines:
+                return
+            data_string = b'\n'.join(data_lines).decode('utf-8', errors='replace')
+            data_lines = []
+            async for output in process_data(data_string):
+                yield output
+
+        async for chunk, _ in stream.iter_chunks():
+            if terminal_emitted or not chunk:
+                continue
+            lines = (buffer + chunk).split(b'\n')
+            buffer = lines.pop()
+            for line in lines:
+                async for output in process_line(line):
+                    yield output
+
+        if not terminal_emitted:
+            if buffer:
+                async for output in process_line(buffer):
+                    yield output
+            async for output in process_line(b''):
+                yield output
+            if not terminal_emitted:
+                yield make_chunk(finish_reason='tool_calls' if has_tool_calls else 'stop')
+                yield b'data: [DONE]\n\n'
+
+    return converted_stream()
+
+
 def _capture_litellm_model_id(request: Request, response_headers) -> None:
     """Keep LiteLLM deployment attribution request-local for persistence."""
     model_id = response_headers.get('x-litellm-model-id')
@@ -1399,7 +1602,10 @@ async def generate_chat_completion(
 
             streaming = True
             return StreamingResponse(
-                stream_wrapper(r, content_handler=stream_chunks_handler),
+                stream_wrapper(
+                    r,
+                    content_handler=responses_stream_chunks_handler if is_responses else stream_chunks_handler,
+                ),
                 status_code=r.status,
                 headers=_clean_proxy_headers(r.headers),
             )
