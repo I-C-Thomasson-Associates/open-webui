@@ -230,9 +230,11 @@ async def get_analytics(
     litellm_backends = litellm_rates.get('backend', {})
     for row in rows:
         usage = row.usage or {}
-        prompt_tokens = _coerce_int(usage.get('prompt_tokens', usage.get('input_tokens')))
+        # input/output_tokens are the canonical full-turn sums (merge_usage);
+        # prompt/completion_tokens hold only the latest call of a tool loop.
+        prompt_tokens = _coerce_int(usage.get('input_tokens') or usage.get('prompt_tokens'))
         completion_tokens = _coerce_int(
-            usage.get('completion_tokens', usage.get('output_tokens'))
+            usage.get('output_tokens') or usage.get('completion_tokens')
         )
         total_tokens = _coerce_int(usage.get('total_tokens'))
 
