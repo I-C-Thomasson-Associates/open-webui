@@ -195,9 +195,11 @@ def strip_connection_prefix(model_id: Optional[str]) -> Optional[str]:
 
 def _rate_cost(rates: dict, usage: dict) -> Optional[float]:
     """tokens x rate ($/million), with cache-read discount and long-context tier."""
-    prompt_tokens = _coerce_int(usage.get('prompt_tokens') or usage.get('input_tokens'))
+    # input/output_tokens are the canonical full-turn sums (merge_usage);
+    # prompt/completion_tokens hold only the latest call of a tool loop.
+    prompt_tokens = _coerce_int(usage.get('input_tokens') or usage.get('prompt_tokens'))
     completion_tokens = _coerce_int(
-        usage.get('completion_tokens') or usage.get('output_tokens')
+        usage.get('output_tokens') or usage.get('completion_tokens')
     )
     if prompt_tokens == 0 and completion_tokens == 0:
         return None
