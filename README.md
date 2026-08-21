@@ -97,6 +97,14 @@ Open WebUI is the core, surrounded by companion apps and infrastructure that ext
 
 - ⚡ **Open Terminal** and **Terminals (Enterprise)** ([open-webui/open-terminal](https://github.com/open-webui/open-terminal) & [open-webui/terminals](https://github.com/open-webui/terminals)): A self-hosted computing environment that plugs into Open WebUI, giving the AI a place to write code, run it, read output, fix errors, and iterate inside the chat. Terminals gives you per-user isolated containers with separate credentials, resource limits, and network rules. Automatic lifecycle management on Docker or Kubernetes.
 
+### Terminal upload streaming
+
+Terminal file uploads are streamed through the Open WebUI backend. Set
+`OPEN_WEBUI_TERMINAL_UPLOAD_MAX_BYTES` to cap a request body (default
+`4294967296`, 4 GiB) and `OPEN_WEBUI_TERMINAL_UPLOAD_TIMEOUT_SECONDS` to set
+the upload total timeout (default `3600` seconds). These should align with the
+terminal orchestrator and runtime limits.
+
 - 🔄 **oikb** ([open-webui/oikb](https://github.com/open-webui/oikb)): Feed your Knowledge Bases from 45+ sources (GitHub, Confluence, ServiceNow, Salesforce, Jira, Slack, SharePoint, Notion, and more), keeping the tools your team already uses continuously in sync.
 
 - 🖥️ **Native Desktop App** ([open-webui/desktop](https://github.com/open-webui/desktop)): Run Open WebUI as a native app on macOS, Windows, and Linux. System-wide Spotlight chat bar with screenshot capture, push-to-talk voice, and optional fully-local inference via a built-in llama.cpp engine.

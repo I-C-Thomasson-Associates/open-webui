@@ -183,15 +183,16 @@ export const uploadToTerminal = async (
 	file: File,
 	sessionId?: string
 ): Promise<{ path: string; size: number } | null> => {
-	const url = `${baseUrl.replace(/\/$/, '')}/files/upload?directory=${encodeURIComponent(directory)}`;
-	const body = new FormData();
-	body.append('file', file);
-	const headers: Record<string, string> = bearerHeaders(apiKey);
+	const url = `${baseUrl.replace(/\/$/, '')}/files/upload-stream?directory=${encodeURIComponent(directory)}&filename=${encodeURIComponent(file.name)}`;
+	const headers: Record<string, string> = {
+		...bearerHeaders(apiKey),
+		'Content-Type': file.type || 'application/octet-stream'
+	};
 	if (sessionId) headers['X-Session-Id'] = sessionId;
 	const res = await fetch(url, {
 		method: 'POST',
 		headers,
-		body
+		body: file
 	})
 		.then(async (res) => {
 			if (!res.ok) throw await res.json();
