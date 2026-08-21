@@ -127,7 +127,7 @@ from open_webui.events import (
     publish_event,
     upsert_event_webhook,
 )
-from open_webui.ext import audio_capture_router, terminal_tool_gateway
+from open_webui.ext import audio_capture_router, memory_admin_router, terminal_tool_gateway
 from open_webui.internal.db import engine, get_async_session
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.channels import Channels
@@ -829,6 +829,7 @@ app.include_router(tools.router, prefix='/api/v1/tools', tags=['tools'])
 app.include_router(skills.router, prefix='/api/v1/skills', tags=['skills'])
 
 app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
+app.include_router(memory_admin_router.router, prefix='/api/v1/memories', tags=['memories'])
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])
 app.include_router(files.router, prefix='/api/v1/files', tags=['files'])
