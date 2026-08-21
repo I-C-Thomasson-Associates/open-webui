@@ -16,6 +16,7 @@ from open_webui.config import TERMINAL_PROXY_HEADERS
 from open_webui.events import EVENTS, publish_event
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
 from open_webui.ext.terminal_tool_gateway import build_terminal_tool_gateway_seed_headers
+from open_webui.ext.terminal_upload_proxy import proxy_terminal_upload
 from open_webui.models.config import Config
 from open_webui.models.groups import Groups
 from open_webui.utils.access_control import has_connection_access
@@ -154,6 +155,9 @@ async def proxy_terminal(
     if content_type:
         headers['Content-Type'] = content_type
     headers.update(await build_terminal_tool_gateway_seed_headers(request, user, server_id, {'chat_id': session_id or ''}))
+
+    if request.method == 'POST' and safe_path == 'files/upload-stream':
+        return await proxy_terminal_upload(request, target_url, headers, cookies)
 
     body = await request.body()
     session = aiohttp.ClientSession(
