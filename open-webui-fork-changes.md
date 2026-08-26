@@ -864,6 +864,7 @@ because the Anthropic stream converter expects Chat Completions `choices[].delta
 **Fix:**
 
 - Added Responses-SSE to Chat-Completions-SSE normalization.
+- Upstream v0.11.1 removed the shared `stream_wrapper` `content_handler` parameter while the fork's Responses streaming call still required it. Restored the optional keyword hook while retaining the v0.11.1 positional calling contract, so Responses normalization remains active.
 - Applied only to connections configured with `api_type == "responses"`.
 - Standard Chat Completions providers continue using the existing stream handler.
 - Preserves stable completion ID, model, and timestamp.
@@ -884,6 +885,7 @@ because the Anthropic stream converter expects Chat Completions `choices[].delta
 **Files Modified:**
 
 - `backend/open_webui/routers/openai.py`
+- `backend/open_webui/utils/session_pool.py`
 - `test/test_responses_stream_conversion.py`
 
 **Commit:**
@@ -902,8 +904,9 @@ Focused regression tests were added for:
 - multiple interleaved tool calls
 - duplicate terminal suppression
 - Anthropic content-block conversion
+- the `session_pool.stream_wrapper` compatibility boundary: keyword `content_handler`, handler precedence over `passthrough`, positional passthrough compatibility, and early-close response cleanup
 
-The final focused validation ran all 9 Responses streaming tests successfully. The covered behavior includes fragmented and CRLF SSE, text and reasoning deltas, empty completions, usage normalization, incomplete responses, interleaved tool calls, duplicate-terminal suppression, and Anthropic content-block conversion.
+Focused validation ran all 12 Responses streaming tests successfully, with 27 focused aggregate tests passing. The covered behavior includes fragmented and CRLF SSE, text and reasoning deltas, empty completions, usage normalization, incomplete responses, interleaved tool calls, duplicate-terminal suppression, Anthropic content-block conversion, and `session_pool.stream_wrapper` compatibility.
 
 ---
 
@@ -999,7 +1002,7 @@ This authorization boundary complements the terminal gateway controls in item 11
 
 ### Final Focused Validation
 
-The final backend-focused validation completed with **24 passed** and **5 dependency/deprecation warnings** in 11.29 seconds:
+The final backend-focused validation completed with **27 passed** in 10.91 seconds, with **5 pytest-reported dependency/deprecation warnings** plus one final interpreter-shutdown SWIG deprecation warning:
 
 - `test/test_responses_stream_conversion.py`
 - `backend/open_webui/ext/test_memory_admin_router.py`

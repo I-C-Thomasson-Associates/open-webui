@@ -4,15 +4,33 @@ import pytest
 
 from open_webui.routers.openai import responses_stream_chunks_handler
 from open_webui.utils.anthropic import openai_stream_to_anthropic_stream
+from open_webui.utils.session_pool import stream_wrapper
 
 
 class FragmentedStream:
     def __init__(self, chunks):
         self.chunks = chunks
+        self.iter_any_called = False
 
     async def iter_chunks(self):
         for chunk in self.chunks:
             yield chunk, False
+
+    async def iter_any(self):
+        self.iter_any_called = True
+        for chunk in self.chunks:
+            yield chunk
+
+
+class FakeResponse:
+    def __init__(self, chunks):
+        self.content = FragmentedStream(chunks)
+        self.closed = False
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
+        self.closed = True
 
 
 def sse_event(event):
@@ -227,3 +245,64 @@ async def test_failed_response_emits_error_and_terminates_once():
 
     assert payloads == [{'error': {'message': 'upstream failed', 'code': 'server_error'}}]
     assert b''.join(output).count(b'data: [DONE]') == 1
+
+
+@pytest.mark.asyncio
+async def test_session_pool_stream_wrapper_uses_responses_handler_and_closes_response():
+    events = [
+        {'type': 'response.created', 'response': {'id': 'resp_wrapper', 'model': 'gpt-test'}},
+        {'type': 'response.output_text.delta', 'delta': 'Normalized'},
+        {'type': 'response.completed', 'response': {}},
+    ]
+    response = FakeResponse([b''.join(sse_event(event) for event in events)])
+
+    output = [
+        chunk
+        async for chunk in stream_wrapper(
+            response,
+            passthrough=True,
+            content_handler=responses_stream_chunks_handler,
+        )
+    ]
+
+    payloads = [
+        json.loads(chunk.decode().removeprefix('data: ').strip())
+        for chunk in output
+        if chunk != b'data: [DONE]\n\n'
+    ]
+    assert payloads[0]['choices'][0]['delta'] == {'role': 'assistant', 'content': 'Normalized'}
+    assert payloads[-1]['choices'][0]['finish_reason'] == 'stop'
+    assert b''.join(output).count(b'data: [DONE]') == 1
+    assert b'response.output_text.delta' not in b''.join(output)
+    assert response.close_calls == 1
+    assert response.closed
+
+
+@pytest.mark.asyncio
+async def test_session_pool_stream_wrapper_retains_default_and_passthrough_streams():
+    default_response = FakeResponse([b'first\nsecond\n'])
+    passthrough_response = FakeResponse([b'first', b'\nsecond\n'])
+
+    default_output = [chunk async for chunk in stream_wrapper(default_response)]
+    passthrough_output = [chunk async for chunk in stream_wrapper(passthrough_response, None, True)]
+
+    assert default_output == [b'first\n', b'second\n']
+    assert passthrough_output == [b'first', b'\nsecond\n']
+    assert not default_response.content.iter_any_called
+    assert passthrough_response.content.iter_any_called
+    assert default_response.closed
+    assert passthrough_response.closed
+
+
+@pytest.mark.asyncio
+async def test_session_pool_stream_wrapper_closes_response_when_interrupted():
+    response = FakeResponse([b'first\nsecond\n'])
+    stream = stream_wrapper(response)
+
+    assert await anext(stream) == b'first\n'
+    assert not response.closed
+
+    await stream.aclose()
+
+    assert response.close_calls == 1
+    assert response.closed
