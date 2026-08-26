@@ -8,17 +8,17 @@ The `jp_dev` and `prod` branches are based on Open WebUI with custom modificatio
 
 ### Verified Branch Status
 
-Verified against the repository on August 7, 2026:
+Verified against the repository on August 26, 2026:
 
-- `jp_dev`: `87f270a73`
-- `jp_dev` Open WebUI version: `0.11.0`
-- Upstream comparison point: `origin/main` at `01f4282f1`, tagged `v0.11.0`
+- `jp_dev` upstream-integration commit: `1f5656d6babe13227d41a6f188775927c966a93e` (`merge upstream v0.11.1 into jp_dev`)
+- `jp_dev` Open WebUI version: `0.11.1`
+- Upstream comparison point: `origin/main` at `d3e8bf3405e848cfba377814d0aa7ba7290e414d`, tagged `v0.11.1`
 - `prod`: `9057cd039`
 - `prod` Open WebUI version: `0.9.6`
 
-> **Important:** `prod` is currently behind `jp_dev`. Features documented below are verified against `jp_dev` unless otherwise noted. Do not assume that a feature is deployed to `prod` until the corresponding `jp_dev` changes have been promoted.
+> **Important:** `prod` is currently behind `jp_dev` and was not evaluated, changed, or promoted during this upstream sync. Features documented below are verified against `jp_dev` unless otherwise noted. Do not assume that a feature is deployed to `prod` until the corresponding `jp_dev` changes have been promoted.
 
-Open WebUI frequently changes internal APIs, database models, memory handling, tool execution, permissions, and frontend settings components. Fork features should be revalidated after every upstream rebase.
+Open WebUI frequently changes internal APIs, database models, memory handling, tool execution, permissions, and frontend settings components. Fork features should be revalidated after every merge-based upstream sync.
 
 ---
 
@@ -321,16 +321,23 @@ The complete database name, SSL mode, and query parameters must be included in t
 
 ### 10. OAuth Callback Proxy for Tool Servers
 
-**Status:** Active fork behavior, with a corrected URL policy.
+**Status:** Active fork behavior on Open WebUI 0.11.1, with a corrected URL policy.
 
 **What Changed:**
 
 - Added `auth_callback_proxy` configuration to tool servers.
-- Added backend middleware that matches configured callback hosts and paths.
+- Added extension-owned backend middleware at `backend/open_webui/ext/auth_callback_proxy_middleware.py` that matches configured callback hosts and paths.
 - Added centralized callback configuration validation.
 - Filters sensitive request headers, including authorization, cookies, and API-key headers.
 - Filters sensitive response headers such as `Set-Cookie`.
 - Applies request body limits and forwards appropriate host/protocol metadata.
+- Filters the complete standard and `Connection`-nominated hop-by-hop header sets in both directions.
+- Registers the callback middleware before upstream `AppHTTPMiddleware`, leaving `AppHTTPMiddleware` as the outermost middleware envelope.
+
+**Operational Caveat:**
+
+- Configuration validation rejects callback paths `/health`, `/ready`, `/health/db`, and any path ending in `/watch`.
+- A non-empty `shared` query parameter on a callback `GET` remains an operational caveat because upstream redirect handling can intercept it.
 
 **Current URL Policy:**
 
@@ -344,10 +351,15 @@ An older commit enforced HTTPS-only targets, but current source no longer enforc
 **Files Modified:**
 
 - `src/lib/components/AddToolServerModal.svelte`
+- `backend/open_webui/ext/auth_callback_proxy_middleware.py`
 - `backend/open_webui/main.py`
 - `backend/open_webui/routers/configs.py`
-- `backend/open_webui/utils/asgi_middleware.py`
 - `backend/open_webui/utils/auth_callback_proxy_security.py`
+- `backend/open_webui/ext/test_auth_callback_proxy_middleware.py`
+
+**Upstream Integration Point:**
+
+- `backend/open_webui/utils/asgi_middleware.py` owns the consolidated `AppHTTPMiddleware` envelope; it is not the callback-proxy implementation.
 
 **Commits:**
 
@@ -891,17 +903,7 @@ Focused regression tests were added for:
 - duplicate terminal suppression
 - Anthropic content-block conversion
 
-The targeted test command was attempted locally, but the repository virtual environment did not contain `pytest`, so no tests ran:
-
-```cmd
-set PYTHONPATH=backend&& .venv\Scripts\python.exe -m pytest -q test\test_responses_stream_conversion.py
-```
-
-Reported error:
-
-```text
-No module named pytest
-```
+The final focused validation ran all 9 Responses streaming tests successfully. The covered behavior includes fragmented and CRLF SSE, text and reasoning deltas, empty completions, usage normalization, incomplete responses, interleaved tool calls, duplicate-terminal suppression, and Anthropic content-block conversion.
 
 ---
 
@@ -927,6 +929,8 @@ curl -X POST "http://localhost:8080/api/v1/files/upload-stream" \
 
 ### 24. Administrator Memory-Index Rebuild
 
+**Status:** Active fork behavior.
+
 Administrators can rebuild the vector-memory collections for all users without deleting the SQL-backed memory records.
 
 - **Endpoint:** `POST /api/v1/memories/reset/all`
@@ -939,6 +943,35 @@ curl -X POST "http://localhost:8080/api/v1/memories/reset/all" \
 ```
 
 - **Commit:** [`57b86fb77`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/57b86fb77)
+- **Focused validation:** 9 tests passed.
+
+**Files Modified:**
+
+- `backend/open_webui/ext/memory_admin_router.py`
+- `backend/open_webui/main.py` (narrow registration)
+- `backend/open_webui/ext/test_memory_admin_router.py`
+
+---
+
+### 25. Terminal Context Authorization
+
+**Status:** Active fork behavior; required to safely integrate upstream 0.11.1 chat-scoped terminal contexts.
+
+**What Changed:**
+
+- Saved-chat terminal context selection is limited to the chat owner or an administrator for HTTP `X-Session-Id` and WebSocket authentication-message `chat_id` inputs.
+- Shared-chat access and folder read access are insufficient to select a saved chat as a terminal context.
+- Administrators are permitted only when `ENABLE_ADMIN_CHAT_ACCESS` applies or the chat is an internal-chat exception.
+- Unauthorized saved-chat context IDs fail closed: HTTP returns `403`; WebSocket authentication closes with `4003`.
+- Default and automation contexts remain unchanged.
+
+This authorization boundary complements the terminal gateway controls in item 11 without changing its request-forwarding behavior.
+
+**Files Modified:**
+
+- `backend/open_webui/ext/terminal_context_authorization.py`
+- `backend/open_webui/routers/terminals.py`
+- `backend/open_webui/ext/test_terminal_context_authorization.py`
 
 ---
 
@@ -964,9 +997,20 @@ curl -X POST "http://localhost:8080/api/v1/memories/reset/all" \
 - Terminal gateway requests intentionally do not forward browser/session credentials.
 - Treat callback proxy and terminal gateway allowlists as security-sensitive configuration.
 
+### Final Focused Validation
+
+The final backend-focused validation completed with **24 passed** and **5 dependency/deprecation warnings** in 11.29 seconds:
+
+- `test/test_responses_stream_conversion.py`
+- `backend/open_webui/ext/test_memory_admin_router.py`
+- `backend/open_webui/ext/test_terminal_context_authorization.py`
+- `backend/open_webui/ext/test_auth_callback_proxy_middleware.py`
+
+Frontend tests were not run because the final changes were backend-focused and the frontend conflict resolution was additive only.
+
 ### Rebase Checklist
 
-After rebasing onto a newer upstream version, verify:
+After merging a newer upstream version, verify:
 
 - The package version and upstream base are updated in this page.
 - The `prod` branch has actually received the intended `jp_dev` changes.
@@ -975,7 +1019,9 @@ After rebasing onto a newer upstream version, verify:
 - Capture Audio routes and frontend API signatures still match.
 - The audio capture router is registered exactly once.
 - Terminal gateway and terminal transfer routes remain registered.
-- OAuth callback proxy middleware remains registered.
+- Terminal context authorization remains enforced at both HTTP and WebSocket ingress for saved-chat contexts.
+- OAuth callback proxy middleware is registered exactly once, before `AppHTTPMiddleware`, and filters standard and `Connection`-nominated hop-by-hop headers in both directions.
+- The callback-proxy implementation remains extension-owned at `backend/open_webui/ext/auth_callback_proxy_middleware.py`.
 - Salas O'Brien analytics and Usage routers are registered exactly once.
 - Tool result attachment handling remains wired into tool-result processing.
 - Structured `__content_blocks__` handling remains compatible with current middleware.
