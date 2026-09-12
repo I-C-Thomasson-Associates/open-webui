@@ -6,6 +6,7 @@ from urllib.parse import urlsplit, urlunsplit
 MAX_CALLBACK_BODY_BYTES = 64 * 1024
 _SENSITIVE_RESPONSE_HEADERS = frozenset({'set-cookie', 'set-cookie2'})
 _CALLBACK_TARGET_URL_SCHEMES = frozenset({'http', 'https'})
+_RESERVED_CALLBACK_PATHS = frozenset({'/health', '/ready', '/health/db'})
 
 
 def strip_sensitive_response_headers(
@@ -46,6 +47,9 @@ def is_valid_callback_proxy_config(proxy_dict: dict | None) -> bool:
         return False
 
     if not path.startswith('/') or path.startswith('//') or any(character in path for character in '?#'):
+        return False
+    normalized_path = path[:-1] if path != '/' and path.endswith('/') else path
+    if normalized_path in _RESERVED_CALLBACK_PATHS or normalized_path.endswith('/watch'):
         return False
 
     parsed_url = urlsplit(url)

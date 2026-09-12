@@ -88,7 +88,14 @@
 				}))
 			);
 			terminalServersData = terminalServersData.filter((data: any) => data && !data.error);
-			terminalServers.set([...terminalServersData, ...existingSystemTerminals] as any);
+			terminalServers.set([
+				...terminalServersData.map((data: any, i: number) => ({
+					...data,
+					key: activeTerminals[i]?.key ?? '',
+					config: activeTerminals[i]?.config ?? data?.config ?? {}
+				})),
+				...existingSystemTerminals
+			] as any);
 		} else {
 			terminalServers.set(existingSystemTerminals as any);
 		}
@@ -156,6 +163,9 @@
 						{$i18n.t('Connect to your own OpenAPI compatible external tool servers.')}
 					</div>
 					<div class={helpTextClass}>
+						<!-- LICENSE covers this Open WebUI wordmark.
+							Do not alter, remove, obscure, or replace it except as LICENSE permits:
+							https://docs.openwebui.com/license. -->
 						{$i18n.t(
 							'CORS must be properly configured by the provider to allow requests from Open WebUI.'
 						)}
