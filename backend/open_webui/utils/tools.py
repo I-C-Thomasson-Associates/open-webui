@@ -1278,94 +1278,171 @@ async def get_terminal_system_prompt(
                     data = await resp.json()
                     return data.get('prompt')
     except Exception as e:
-        log.debug('Failed to fetch terminal system prompt: %s', e)
+        log.debug('Failed to fetch terminal system prompt: %s', type(e).__name__)
     return None
 
 
-async def set_terminal_servers(request: Request):
-    """Load and cache OpenAPI specs from all TERMINAL_SERVER_CONNECTIONS."""
+def _terminal_discovery_cache(request):
+    """Return the app-scoped cache; never use a process-global cache."""
+    from open_webui.ext.terminal_discovery_cache import TerminalDiscoveryCache
+
+    cache = getattr(request.app.state, 'terminal_discovery_cache', None)
+    if cache is None:
+        cache = TerminalDiscoveryCache(prefix=REDIS_KEY_PREFIX, redis=getattr(request.app.state, 'redis', None))
+        request.app.state.terminal_discovery_cache = cache
+    else:
+        # Redis clients may be replaced after an application reconnect.
+        cache.redis = getattr(request.app.state, 'redis', None)
+    return cache
+
+
+async def _fresh_terminal_connection(terminal_id: str, expected_fingerprint: str | None = None):
+    """Return exactly one enabled current connection, never an ambiguous ID."""
+    from open_webui.ext.terminal_discovery_cache import terminal_fingerprint
+
     connections = await Config.get('terminal_server.connections', []) or []
+    matches = [item for item in connections if isinstance(item, dict) and item.get('id') == terminal_id]
+    if len(matches) != 1:
+        return None
+    connection = matches[0]
+    if not connection.get('enabled', True) or not connection.get('url'):
+        return None
+    snapshot = copy.deepcopy(connection)
+    try:
+        base_url = get_terminal_server_url(snapshot)
+        spec_url = get_tool_server_url(base_url, snapshot.get('path') or '/openapi.json')
+    except Exception:
+        return None
+    fingerprint = terminal_fingerprint(snapshot, base_url, spec_url)
+    if not fingerprint or (expected_fingerprint and fingerprint != expected_fingerprint):
+        return None
+    return snapshot, base_url, spec_url, fingerprint
 
-    # Build server configs compatible with get_tool_servers_data
-    # Terminal connections store id/name at top level; translate to info dict
-    server_configs = []
-    for connection in connections:
-        if not connection.get('url'):
-            continue
 
-        enabled = connection.get('enabled', True)
+def _apply_terminal_display_name(data: dict, connection: dict) -> dict:
+    """Apply mutable presentation metadata without changing cache identity."""
+    result = copy.deepcopy(data)
+    name = connection.get('name')
+    if name:
+        openapi = result.get('openapi')
+        if isinstance(openapi, dict):
+            info = openapi.get('info')
+            if not isinstance(info, dict):
+                info = {}
+                openapi['info'] = info
+            info['title'] = name
+            result['info'] = info
+    return result
 
-        base_url = get_terminal_server_url(connection)
 
-        server_configs.append(
-            {
-                'url': base_url,
-                'key': normalize_bearer_token(connection.get('key', '')),
-                'auth_type': connection.get('auth_type', 'bearer'),
-                'path': connection.get('path', '/openapi.json'),
-                'spec_type': 'url',
-                # get_tool_servers_data reads config.enable to filter active servers
-                'config': {'enable': enabled},
-                'info': {
-                    'id': connection.get('id', ''),
-                    'name': connection.get('name', ''),
-                },
+async def _discover_terminal_server(request: Request, connection: dict) -> tuple[dict | None, str | None]:
+    """Discover one terminal without falling back to another connection."""
+    from open_webui.ext.terminal_discovery_cache import DiscoveryResult, safe_fetch_openapi
+
+    from open_webui.ext.terminal_discovery_cache import terminal_fingerprint
+
+    snapshot = copy.deepcopy(connection) if isinstance(connection, dict) else None
+    terminal_id = snapshot.get('id') if snapshot else None
+    if not isinstance(terminal_id, str) or not terminal_id or not snapshot.get('enabled', True) or not snapshot.get('url'):
+        return None, 'invalid_connection'
+    try:
+        base_url = get_terminal_server_url(snapshot)
+        spec_url = get_tool_server_url(base_url, snapshot.get('path') or '/openapi.json')
+        expected_fingerprint = terminal_fingerprint(snapshot, base_url, spec_url)
+    except Exception:
+        return None, 'invalid_connection'
+    if not expected_fingerprint:
+        return None, 'invalid_connection'
+    deadline = asyncio.get_running_loop().time() + AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA
+
+    async def discover():
+        headers = bearer_auth_header(snapshot.get('key', '')) if snapshot.get('auth_type', 'bearer') == 'bearer' else {}
+        result = await safe_fetch_openapi(
+            spec_url, headers, timeout=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA, ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
+        )
+        document = result.data
+        if not isinstance(document, dict) or not isinstance(document.get('paths'), dict):
+            return DiscoveryResult(None, result.category or 'invalid_schema')
+        document = copy.deepcopy(document)
+        try:
+            specs = [add_terminal_display_file_inline_param(spec) for spec in convert_openapi_to_tool_payload(document)]
+        except Exception:
+            return DiscoveryResult(None, 'invalid_schema')
+        if not specs:
+            return DiscoveryResult(None, 'empty_tools')
+        data = {
+                'id': terminal_id,
+                'url': base_url.rstrip('/'),
+                'openapi': document,
+                'info': document.get('info', {}),
+                'specs': specs,
             }
-        )
+        # A static cached prompt is optional.  It shares the schema record's
+        # fingerprint, never carries caller credentials, and cannot make a
+        # successful schema unavailable when unsupported or slow.
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining >= 0.1:
+            prompt_headers = dict(headers)
+            if snapshot.get('policy_id'):
+                prompt_headers['X-User-Id'] = 'system'
+            try:
+                prompt = await asyncio.wait_for(
+                    get_terminal_system_prompt(base_url, prompt_headers), timeout=min(1.0, remaining)
+                )
+                if prompt:
+                    data['system_prompt'] = prompt
+            except (asyncio.TimeoutError, TimeoutError):
+                pass
+            except Exception:
+                pass
+        return DiscoveryResult(_apply_terminal_display_name(data, snapshot))
 
-    request.app.state.TERMINAL_SERVERS = await get_tool_servers_data(server_configs)
+    async def validate():
+        try:
+            return bool(
+                await asyncio.wait_for(_fresh_terminal_connection(terminal_id, expected_fingerprint), timeout=0.5)
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            return False
 
-    # Fetch system prompts concurrently (runs at cache time, not per-request)
-    connections_by_id = {c.get('id'): c for c in connections if c.get('id')}
-
-    async def _fetch_system_prompt(server):
-        connection = connections_by_id.get(server.get('id'))
-        if not connection:
-            return
-        headers = {}
-        if connection.get('auth_type', 'bearer') == 'bearer':
-            headers.update(bearer_auth_header(connection.get('key', '')))
-        if connection.get('policy_id'):
-            headers['X-User-Id'] = 'system'
-        prompt = await get_terminal_system_prompt(server['url'], headers)
-        if prompt:
-            server['system_prompt'] = prompt
-
-    await asyncio.gather(
-        *[_fetch_system_prompt(s) for s in request.app.state.TERMINAL_SERVERS],
-        return_exceptions=True,
+    result = await _terminal_discovery_cache(request).get_or_discover(
+        snapshot, base_url, spec_url, discover, validate=validate, timeout=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA
     )
+    # Also validate cache hits: Config/Redis are not an atomic store.
+    try:
+        current = await asyncio.wait_for(_fresh_terminal_connection(terminal_id, expected_fingerprint), timeout=0.5)
+    except (asyncio.TimeoutError, TimeoutError):
+        current = None
+    if not current:
+        return None, 'configuration_changed'
+    return _apply_terminal_display_name(result.data, current[0]) if result.data else None, result.category
 
-    if request.app.state.redis is not None:
-        await request.app.state.redis.set(
-            f'{REDIS_KEY_PREFIX}:terminal_servers', JSONCodec.dumps(request.app.state.TERMINAL_SERVERS)
-        )
+
+async def set_terminal_servers(request: Request):
+    """Best-effort projection of independently cached terminal specs."""
+    connections = await Config.get('terminal_server.connections', []) or []
+    enabled = [item for item in connections if isinstance(item, dict) and item.get('enabled', True) and item.get('url')]
+    if not enabled:
+        request.app.state.TERMINAL_SERVERS = []
+        return []
+    # Duplicate/empty IDs are deliberately excluded: URL is not an identity.
+    ids = [item.get('id') for item in enabled]
+    valid = [item for item in enabled if isinstance(item.get('id'), str) and item['id'] and ids.count(item['id']) == 1]
+    semaphore = asyncio.Semaphore(4)
+    async def bounded_discover(item):
+        async with semaphore:
+            return await _discover_terminal_server(request, item)
+    discovered = await asyncio.gather(*[bounded_discover(item) for item in valid], return_exceptions=True)
+    # This is merely a display projection. Individual cache records remain the
+    # authority and each result was revalidated by _discover_terminal_server.
+    request.app.state.TERMINAL_SERVERS = [item[0] for item in discovered if isinstance(item, tuple) and item[0]]
 
     return request.app.state.TERMINAL_SERVERS
 
 
 async def get_terminal_servers(request: Request):
-    """Return cached terminal server specs, loading if needed."""
-    terminal_servers = None
-    if request.app.state.redis is not None:
-        try:
-            data = await request.app.state.redis.get(f'{REDIS_KEY_PREFIX}:terminal_servers')
-            if data is not None:
-                terminal_servers = JSONCodec.loads(data)
-                connections = await Config.get('terminal_server.connections', []) or []
-                if terminal_servers or not any(
-                    connection.get('url') and connection.get('enabled', True) for connection in connections
-                ):
-                    request.app.state.TERMINAL_SERVERS = terminal_servers
-                else:
-                    terminal_servers = None
-        except Exception as e:
-            log.error(f'Error fetching terminal_servers from Redis: {e}')
-
-    if terminal_servers is None:
-        terminal_servers = await set_terminal_servers(request)
-
-    return terminal_servers
+    """Return a validated projection; legacy aggregate Redis data is untrusted."""
+    return await set_terminal_servers(request)
 
 
 async def get_terminal_tools(
@@ -1381,23 +1458,29 @@ async def get_terminal_tools(
     - Loads specs from cache
     - Builds callables that route through the terminal proxy
     """
-    connections = await Config.get('terminal_server.connections', []) or []
-    connection = next(
-        (terminal_connection for terminal_connection in connections if terminal_connection.get('id') == terminal_id),
-        None,
-    )
-    if connection is None:
+    fresh_initial = await _fresh_terminal_connection(terminal_id)
+    if fresh_initial is None:
         raise RuntimeError(f"Terminal server '{terminal_id}' not found")
-    if not connection.get('enabled', True):
-        raise RuntimeError(f"Terminal server '{terminal_id}' is disabled")
+    connection, _, _, expected_fingerprint = fresh_initial
 
     user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
     if not await has_connection_access(user, connection, user_group_ids):
         raise RuntimeError(f'Access denied to terminal {terminal_id}')
 
-    # Find the cached spec data for this terminal
-    terminal_servers = await get_terminal_servers(request)
-    server_data = next((server for server in terminal_servers if server.get('id') == terminal_id), None)
+    # Context is an authorization boundary: do it before cache recovery or any
+    # gateway/upstream request.
+    metadata = extra_params.get('__metadata__', {})
+    terminal_context = 'automation' if metadata.get('automation_id') else 'chat'
+    if not terminal_context_available(connection, terminal_context):
+        raise RuntimeError(f"Terminal server '{terminal_id}' is not available for {terminal_context}")
+    context_id = terminal_context_id(connection, metadata, terminal_context)
+    config = terminal_context_config(connection, terminal_context)
+    if isinstance(config, dict) and config.get('context_id') in {'chat_id', 'automation_id'} and not context_id:
+        raise RuntimeError(f"Terminal server '{terminal_id}' requires a saved {terminal_context} context")
+
+    # Resolve only the selected ID.  An unhealthy unrelated terminal must not
+    # delay this one, and aggregate cache data is never authority.
+    server_data, category = await _discover_terminal_server(request, connection)
     if server_data is None:
         raise RuntimeError(f"Terminal server '{terminal_id}' is unavailable")
 
@@ -1405,45 +1488,49 @@ async def get_terminal_tools(
     if not specs:
         raise RuntimeError(f"Terminal server '{terminal_id}' has no available tools")
 
-    # Build auth headers
-    auth_type = connection.get('auth_type', 'bearer')
-    cookies = getattr(request, 'cookies', {}) if connection.get('forward_cookies', False) else {}
-    headers = {'Content-Type': 'application/json', 'X-User-Id': user.id}
-
-    if auth_type == 'bearer':
-        headers.update(bearer_auth_header(connection.get('key', '')))
-    elif auth_type == 'session':
-        headers.update(bearer_auth_header(request.state.token.credentials))
-    elif auth_type == 'system_oauth':
-        oauth_token = extra_params.get('__oauth_token__', None)
-        if oauth_token:
-            headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
-    # auth_type == "none": no Authorization header
-
-    # Use chat_id as the per-session key for cwd tracking
-    metadata = extra_params.get('__metadata__', {})
-    terminal_context = 'automation' if metadata.get('automation_id') else 'chat'
-    if not terminal_context_available(connection, terminal_context):
-        raise RuntimeError(f"Terminal server '{terminal_id}' is not available for {terminal_context}")
-
-    session_id = metadata.get('chat_id')
-    if session_id:
-        headers['X-Session-Id'] = session_id
-    try:
-        from open_webui.ext.terminal_tool_gateway import build_terminal_tool_gateway_seed_headers
-
-        headers.update(await build_terminal_tool_gateway_seed_headers(request, user, terminal_id, metadata))
-    except Exception as e:
-        log.debug(f'Failed to seed terminal tool gateway headers: {e}')
-
-    context_id = terminal_context_id(connection, metadata, terminal_context)
-    config = terminal_context_config(connection, terminal_context)
-    if isinstance(config, dict) and config.get('context_id') in {'chat_id', 'automation_id'} and not context_id:
-        raise RuntimeError(f"Terminal server '{terminal_id}' requires a saved {terminal_context} context")
-    if context_id:
-        headers[TERMINAL_CONTEXT_HEADER] = context_id
+    async def fresh_connection_and_headers():
+        """Fail closed if a displayed schema no longer matches configuration."""
+        fresh_result = await _fresh_terminal_connection(terminal_id, expected_fingerprint)
+        if fresh_result is None:
+            raise RuntimeError(f"Terminal server '{terminal_id}' configuration changed; start a new turn")
+        fresh, _, _, _ = fresh_result
+        fresh_groups = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+        if not await has_connection_access(user, fresh, fresh_groups):
+            raise RuntimeError(f'Access denied to terminal {terminal_id}')
+        fresh_context = 'automation' if metadata.get('automation_id') else 'chat'
+        fresh_context_id = terminal_context_id(fresh, metadata, fresh_context)
+        fresh_config = terminal_context_config(fresh, fresh_context)
+        if not terminal_context_available(fresh, fresh_context) or (
+            isinstance(fresh_config, dict)
+            and fresh_config.get('context_id') in {'chat_id', 'automation_id'}
+            and not fresh_context_id
+        ):
+            raise RuntimeError(f"Terminal server '{terminal_id}' is unavailable for this context")
+        fresh_headers = {'Content-Type': 'application/json', 'X-User-Id': user.id}
+        fresh_cookies = getattr(request, 'cookies', {}) if fresh.get('forward_cookies', False) else {}
+        if fresh.get('auth_type', 'bearer') == 'bearer':
+            fresh_headers.update(bearer_auth_header(fresh.get('key', '')))
+        elif fresh.get('auth_type') == 'session':
+            fresh_headers.update(bearer_auth_header(request.state.token.credentials))
+        elif fresh.get('auth_type') == 'system_oauth':
+            oauth_token = extra_params.get('__oauth_token__')
+            if oauth_token:
+                fresh_headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
+        if metadata.get('chat_id'):
+            fresh_headers['X-Session-Id'] = metadata['chat_id']
+        try:
+            from open_webui.ext.terminal_tool_gateway import build_terminal_tool_gateway_seed_headers
+            fresh_headers.update(await build_terminal_tool_gateway_seed_headers(request, user, terminal_id, metadata))
+        except Exception:
+            # Gateway seeding is optional, but no exception details are safe
+            # to log because forwarded headers can contain credentials.
+            pass
+        if fresh_context_id:
+            fresh_headers[TERMINAL_CONTEXT_HEADER] = fresh_context_id
+        return fresh, fresh_headers, fresh_cookies
 
     # Fetch live with the user's credentials so prompt changes apply without a restart
+    _, headers, cookies = await fresh_connection_and_headers()
     terminal_cwd, system_prompt = await asyncio.gather(
         get_terminal_cwd(server_data['url'], headers, cookies),
         get_terminal_system_prompt(server_data['url'], headers, cookies),
@@ -1461,15 +1548,16 @@ async def get_terminal_tools(
                 tool_spec.get('description', '') + f'\n\nThe current working directory is: {terminal_cwd}'
             )
 
-        async def make_tool_function(fn_name, srv_data, hdrs, cks):
+        async def make_tool_function(fn_name, srv_data):
             async def tool_function(**kwargs):
+                fresh, operation_headers, operation_cookies = await fresh_connection_and_headers()
                 params = dict(kwargs)
                 if fn_name == 'display_file':
                     params.pop('page', None)
                 return await execute_tool_server(
-                    url=srv_data['url'],
-                    headers=hdrs,
-                    cookies=cks,
+                    url=get_terminal_server_url(fresh),
+                    headers=operation_headers,
+                    cookies=operation_cookies,
                     name=fn_name,
                     params=params,
                     server_data=srv_data,
@@ -1477,7 +1565,7 @@ async def get_terminal_tools(
 
             return tool_function
 
-        tool_function = await make_tool_function(function_name, server_data, headers, cookies)
+        tool_function = await make_tool_function(function_name, server_data)
         callable = await get_async_tool_function_and_apply_extra_params(tool_function, {})
 
         tools_dict[function_name] = {
@@ -1488,23 +1576,25 @@ async def get_terminal_tools(
         }
 
     async def persist_file_to_chat(path: str):
+        fresh, operation_headers, operation_cookies = await fresh_connection_and_headers()
         return await persist_terminal_file_to_platform(
             request=request,
             user=user,
-            base_url=server_data['url'],
-            headers=headers,
-            cookies=cookies,
+            base_url=get_terminal_server_url(fresh),
+            headers=operation_headers,
+            cookies=operation_cookies,
             path=path,
             metadata=metadata,
         )
 
     async def transfer_file_to_terminal(file_id: str, path: str):
+        fresh, operation_headers, operation_cookies = await fresh_connection_and_headers()
         return await transfer_platform_file_to_terminal(
             request=request,
             user=user,
-            base_url=server_data['url'],
-            headers=headers,
-            cookies=cookies,
+            base_url=get_terminal_server_url(fresh),
+            headers=operation_headers,
+            cookies=operation_cookies,
             file_id=file_id,
             path=path,
         )
