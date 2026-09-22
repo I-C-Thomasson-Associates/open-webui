@@ -263,6 +263,7 @@ async def update_memories(
 
     operations = validate_memory_operations(form_data)
     metadata = getattr(request.state, 'metadata', {}) or {}
+    model = metadata.get('model')
     source = form_data.source or 'tool'
     for operation in operations:
         if operation.get('action') in {'add', 'replace', 'move'}:
@@ -274,7 +275,7 @@ async def update_memories(
                     'created_by': source,
                     'chat_id': metadata.get('chat_id'),
                     'message_id': metadata.get('message_id'),
-                    'model': metadata.get('model'),
+                    'model': model.get('id') if isinstance(model, dict) else model,
                 }
                 operation.pop('created_at', None)
                 operation.pop('updated_at', None)
@@ -553,7 +554,7 @@ async def read_memory_path(
     )
     return {
         **result,
-        'memories': [memory.model_dump() for memory in result['memories']],
+        'memories': [memory.model_dump(exclude={'meta'}) for memory in result['memories']],
     }
 
 

@@ -120,6 +120,7 @@ async def proxy_terminal_upload(
             cookies=dict(cookies),
             data=_counted_stream(request, max_bytes),
             ssl=AIOHTTP_CLIENT_SESSION_SSL,
+            allow_redirects=False,
         )
     except asyncio.CancelledError:
         await session.close()
