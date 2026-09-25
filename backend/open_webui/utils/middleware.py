@@ -1344,6 +1344,36 @@ async def terminal_event_handler(
                 'data': {},
             }
         )
+    elif tool_function_name == 'persist_file_to_chat':
+        # Attach the uploaded file to the assistant message so the download card
+        # appears regardless of whether the model pastes download_markdown.
+        parsed = tool_result
+        if isinstance(parsed, str):
+            try:
+                parsed = JSONCodec.loads(parsed)
+            except (JSONCodec.JSONDecodeError, TypeError):
+                return
+        if not isinstance(parsed, dict) or not parsed.get('file_id'):
+            return  # upload failed; nothing to attach
+        file_id = parsed['file_id']
+        md = parsed.get('download_markdown', '')
+        name = md.split('[Download ', 1)[-1].split('](', 1)[0] if '[Download ' in md else file_id
+        await event_emitter(
+            {
+                'type': 'files',
+                'data': {
+                    'files': [
+                        {
+                            'type': 'file',
+                            'id': file_id,
+                            'url': parsed.get('download_url') or f'/api/v1/files/{file_id}/content',
+                            'name': name,
+                            'status': 'uploaded',
+                        }
+                    ]
+                },
+            }
+        )
 
 
 async def chat_completion_tools_handler(
