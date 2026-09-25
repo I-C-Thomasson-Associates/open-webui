@@ -1344,36 +1344,59 @@ async def terminal_event_handler(
                 'data': {},
             }
         )
-    elif tool_function_name == 'persist_file_to_chat':
-        # Attach the uploaded file to the assistant message so the download card
-        # appears regardless of whether the model pastes download_markdown.
-        parsed = tool_result
-        if isinstance(parsed, str):
-            try:
-                parsed = JSONCodec.loads(parsed)
-            except (JSONCodec.JSONDecodeError, TypeError):
-                return
-        if not isinstance(parsed, dict) or not parsed.get('file_id'):
-            return  # upload failed; nothing to attach
-        file_id = parsed['file_id']
-        md = parsed.get('download_markdown', '')
-        name = md.split('[Download ', 1)[-1].split('](', 1)[0] if '[Download ' in md else file_id
-        await event_emitter(
-            {
-                'type': 'files',
-                'data': {
-                    'files': [
-                        {
-                            'type': 'file',
-                            'id': file_id,
-                            'url': parsed.get('download_url') or f'/api/v1/files/{file_id}/content',
-                            'name': name,
-                            'status': 'uploaded',
-                        }
-                    ]
-                },
-            }
+
+
+
+def append_missing_persist_links(output: list) -> None:
+    """Guarantee that files uploaded with persist_file_to_chat are linked in the reply.
+
+    The tool returns download_markdown and the model is told to paste it, but it
+    often ends its turn on a narrative instead. If any persisted file in this
+    turn's output is not linked in the assistant's message text, append a final
+    message item carrying the download link(s). The link is then part of the
+    saved reply, not dependent on the model.
+    """
+    if not isinstance(output, list):
+        return
+    persist_call_ids = {
+        item.get('call_id')
+        for item in output
+        if isinstance(item, dict)
+        and item.get('type') == 'function_call'
+        and item.get('name') == 'persist_file_to_chat'
+    }
+    if not persist_call_ids:
+        return
+    links = []
+    for item in output:
+        if not isinstance(item, dict) or item.get('type') != 'function_call_output':
+            continue
+        if item.get('call_id') not in persist_call_ids:
+            continue
+        text = ''.join(
+            str(part.get('text', '')) for part in (item.get('output') or []) if isinstance(part, dict)
         )
+        try:
+            parsed = JSONCodec.loads(text)
+        except (JSONCodec.JSONDecodeError, TypeError, ValueError):
+            continue
+        if isinstance(parsed, dict) and parsed.get('file_id') and parsed.get('download_markdown'):
+            links.append((parsed['file_id'], parsed['download_markdown']))
+    if not links:
+        return
+    reply_text = get_output_text(output)
+    missing = [md for file_id, md in links if f'/api/v1/files/{file_id}/content' not in reply_text]
+    if not missing:
+        return
+    output.append(
+        {
+            'type': 'message',
+            'id': output_id('msg'),
+            'status': 'completed',
+            'role': 'assistant',
+            'content': [{'type': 'output_text', 'text': '\n\n'.join(missing)}],
+        }
+    )
 
 
 async def chat_completion_tools_handler(
@@ -6596,6 +6619,9 @@ async def streaming_chat_response_handler(response, ctx):
                 for item in output:
                     if item.get('status') == 'in_progress':
                         item['status'] = 'completed'
+
+                # Persisted files must be linked in the reply even if the model did not paste the link.
+                append_missing_persist_links(output)
 
                 current_output = full_output()
                 title = await Chats.get_chat_title_by_id(metadata['chat_id']) if save_to_chat else ''
