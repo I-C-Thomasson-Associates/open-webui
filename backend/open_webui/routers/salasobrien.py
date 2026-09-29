@@ -54,6 +54,9 @@ class AnalyticsRow(BaseModel):
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     cost_usd: Optional[float] = None
+    # 'litellm' (cost LiteLLM reported), 'provider' (legacy inline cost),
+    # 'estimate' (priced from rates), or None when unpriced.
+    cost_source: Optional[str] = None
 
 
 class AnalyticsResponse(BaseModel):
@@ -242,11 +245,11 @@ async def get_analytics(
         # present) lets us price by the exact backend and label its source.
         deployment_id = usage.get('litellm_model_id') if isinstance(usage, dict) else None
 
-        # PRICING: agents log under their own id (no pricing info); resolve to
-        # the base model. resolve_cost tries inline cost -> exact deployment ->
-        # model-name rate -> frozen Key Vault book.
+        # PRICING: the cost LiteLLM reported wins. Otherwise estimate from rates;
+        # agents log under their own id (no pricing info), so resolve to the base
+        # model first.
         pricing_model_id = _resolve_pricing_model_id(row.model_id, row.base_model_id)
-        cost_usd = resolve_cost(
+        cost_usd, cost_source = resolve_cost(
             pricing_model_id,
             usage,
             litellm_rates,
@@ -276,6 +279,7 @@ async def get_analytics(
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
                 cost_usd=cost_usd,
+                cost_source=cost_source,
             )
         )
 
