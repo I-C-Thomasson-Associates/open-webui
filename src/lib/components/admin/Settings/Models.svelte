@@ -276,10 +276,6 @@
 			.filter((id) => id);
 
 		savedModels = await getAllModels(localStorage.token);
-		tags = [...new Set(savedModels.flatMap(modelTags))].sort();
-		if (selectedTag && !tags.includes(selectedTag)) {
-			selectedTag = '';
-		}
 
 		allModels = await getModels(localStorage.token);
 
@@ -289,29 +285,33 @@
 			...allModels,
 			...providerModels.filter((model: ModelListItem) => !allModelIds.has(model.id))
 		];
-		const listedModelIds = new Set(allModels.map((model) => model.id));
-		allModels.push(...savedModels.filter((model) => !listedModelIds.has(model.id)));
+		// Saved rows are overrides for models a connection still serves, not models
+		// in their own right: a row whose model is no longer listed is not shown.
+		const mergedModels = allModels.map((m: ModelListItem) => {
+			const savedModel = savedModels.find((model: ModelListItem) => model.id === m.id);
 
-		models = allModels
-			.map((m: ModelListItem) => {
-				const savedModel = savedModels.find((model: ModelListItem) => model.id === m.id);
+			if (savedModel) {
+				return {
+					...m,
+					...savedModel
+				};
+			} else {
+				return {
+					...m,
+					id: m.id,
+					name: m.name,
 
-				if (savedModel) {
-					return {
-						...m,
-						...savedModel
-					};
-				} else {
-					return {
-						...m,
-						id: m.id,
-						name: m.name,
+					is_active: true
+				};
+			}
+		});
 
-						is_active: true
-					};
-				}
-			})
-			.filter((model) => !selectedTag || modelTags(model).includes(selectedTag));
+		tags = [...new Set(mergedModels.flatMap(modelTags))].sort();
+		if (selectedTag && !tags.includes(selectedTag)) {
+			selectedTag = '';
+		}
+
+		models = mergedModels.filter((model) => !selectedTag || modelTags(model).includes(selectedTag));
 
 		modelOrderList = [
 			...modelOrderList.filter((id) => models.some((model) => model.id === id)),
