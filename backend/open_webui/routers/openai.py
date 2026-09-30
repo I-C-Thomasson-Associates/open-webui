@@ -1513,6 +1513,12 @@ def _normalize_responses_usage(usage):
         normalized['prompt_tokens_details'] = prompt_details
     if isinstance(completion_details, dict):
         normalized['completion_tokens_details'] = completion_details
+
+    # Provider-reported cost (LiteLLM's include_cost_in_streaming_usage); the
+    # analytics route and rate-limit filter treat it as the cost of record.
+    cost = usage.get('cost')
+    if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        normalized['cost'] = cost
     return normalized
 
 
