@@ -134,7 +134,7 @@ from open_webui.events import (
     publish_event,
     upsert_event_webhook,
 )
-from open_webui.ext import audio_capture_router, memory_admin_router, terminal_tool_gateway
+from open_webui.ext import audio_capture_router, memory_admin_router, subagent_chats_router, terminal_tool_gateway
 from open_webui.ext.auth_callback_proxy_middleware import AuthCallbackProxyMiddleware
 from open_webui.events import (
     get_event_catalog as get_event_catalog_items,
@@ -888,6 +888,7 @@ app.include_router(skills.router, prefix='/api/v1/skills', tags=['skills'])
 
 app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
 app.include_router(memory_admin_router.router, prefix='/api/v1/memories', tags=['memories'])
+app.include_router(subagent_chats_router.router, prefix='/api/v1/ext/subagent-chats', tags=['chats'])
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])
 app.include_router(files.router, prefix='/api/v1/files', tags=['files'])

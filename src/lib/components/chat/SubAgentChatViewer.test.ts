@@ -283,6 +283,7 @@ describe('selected native sidebar controller', () => {
 			'ChatControls.svelte',
 			'../../ext/SubAgentTabButton.svelte',
 			'SubAgentChatViewer.svelte',
+			'../common/Select.svelte',
 			'Messages/ResponseMessage.svelte'
 		]) {
 			const source = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
@@ -290,5 +291,47 @@ describe('selected native sidebar controller', () => {
 				expect(() => compile(source, { filename: file, generate })).not.toThrow();
 			}
 		}
+	});
+	it('keeps the tab visible for an empty saved or new active owner scope in both layouts', () => {
+		const source = readFileSync(new URL('./ChatControls.svelte', import.meta.url), 'utf8');
+		const expression = source.match(/\$: showSubAgentsTab =[\s\S]*?;/)![0].replace('$:', '');
+		for (const parentId of ['', id]) {
+			const context = {
+				showSubAgentsTab: false,
+				scopeMounted: true,
+				chatId: parentId,
+				chatUser: null,
+				$activeChatId: parentId,
+				$user: { id: 'owner' },
+				$subAgentViewer: { parentId, userId: 'owner', catalog: [], discovery: 'ready' }
+			};
+			runInNewContext(expression, context);
+			expect(context.showSubAgentsTab).toBe(true);
+			for (const changes of [
+				{ scopeMounted: false },
+				{ $user: null },
+				{ chatUser: { id: 'other' } },
+				{ $activeChatId: 'other' },
+				{ chatId: 'other' },
+				{ $subAgentViewer: { parentId, userId: 'other', catalog: [] } }
+			]) {
+				const changed = { ...context, ...changes };
+				runInNewContext(expression, changed);
+				expect(changed.showSubAgentsTab).toBe(false);
+			}
+		}
+		expect(source.match(/\{#if showSubAgentsTab\}/g)).toHaveLength(2);
+	});
+	it('uses the house Select with UUID values, title labels and accessible read-only context', () => {
+		const viewer = readFileSync(new URL('./SubAgentChatViewer.svelte', import.meta.url), 'utf8');
+		expect(viewer).toContain("import Select from '$lib/components/common/Select.svelte'");
+		expect(viewer).not.toMatch(/<select\b|<option\b/);
+		expect(viewer).toContain('value: chat.chatId, label: chat.title');
+		expect(viewer).toContain('onChange={selectSubAgentChat}');
+		expect(viewer).toContain('<span class="sr-only">Sub-agent · Read-only: </span>');
+		expect(viewer).toContain('No sub-agents have been used in this chat yet.');
+		expect(viewer).toContain('Loading sub-agent catalog');
+		expect(viewer).toContain('Retry catalog');
+		expect(viewer).toContain('on:click={refreshSubAgentCatalog}');
 	});
 });

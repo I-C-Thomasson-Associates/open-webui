@@ -3,8 +3,16 @@
 	import { getChatById } from '$lib/apis/chats';
 	import { socket, user } from '$lib/stores';
 	import Spinner from '$lib/components/common/Spinner.svelte';
+	import Select from '$lib/components/common/Select.svelte';
+	import ChevronDown from '$lib/components/icons/ChevronDown.svelte';
+	import Check from '$lib/components/icons/Check.svelte';
 	import Messages from './Messages.svelte';
-	import { isOwnedSubAgentChat, selectSubAgentChat, subAgentViewer } from './subAgentViewer';
+	import {
+		isOwnedSubAgentChat,
+		refreshSubAgentCatalog,
+		selectSubAgentChat,
+		subAgentViewer
+	} from './subAgentViewer';
 
 	export let parentChatId: string;
 	export let visible = false;
@@ -143,19 +151,37 @@
 
 <section class="flex h-full min-h-0 flex-col" aria-label="Sub-agent conversation">
 	<div class="shrink-0 space-y-2 border-b p-3 dark:border-gray-800">
-		<label for="subagent-selector" class="block text-xs font-medium text-gray-500"
-			>Sub-agent · Read-only</label
-		>
-		<select
-			id="subagent-selector"
-			class="w-full rounded-lg bg-gray-50 p-2 text-sm dark:bg-gray-850"
+		<p class="block text-xs font-medium text-gray-500">Sub-agent · Read-only</p>
+		<Select
 			value={$subAgentViewer.selectedId}
-			on:change={(event) => selectSubAgentChat(event.currentTarget.value)}
+			items={$subAgentViewer.catalog.map((chat) => ({ value: chat.chatId, label: chat.title }))}
+			placeholder="Select a sub-agent"
+			triggerClass="relative h-8 w-full flex items-center gap-0.5 px-1.5 py-1.5 bg-transparent rounded-xl text-[0.8125rem] font-normal text-gray-700 transition hover:text-gray-900 dark:text-gray-200 dark:hover:text-gray-100"
+			itemClass="flex min-h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100"
+			onChange={selectSubAgentChat}
 		>
-			{#each $subAgentViewer.catalog as chat (chat.chatId)}
-				<option value={chat.chatId}>{chat.title}</option>
-			{/each}
-		</select>
+			<svelte:fragment slot="trigger" let:selectedLabel>
+				<span class="sr-only">Sub-agent · Read-only: </span>
+				<span class="min-w-0 flex-1 truncate text-left">{selectedLabel}</span>
+				<ChevronDown className="size-2.5" strokeWidth="2.5" />
+			</svelte:fragment>
+			<svelte:fragment slot="item" let:item let:selected>
+				<span class="min-w-0 flex-1 truncate text-left">{item.label}</span>
+				<span class="ml-auto {selected ? '' : 'invisible'}"><Check /></span>
+			</svelte:fragment>
+		</Select>
+		{#if $subAgentViewer.discovery === 'loading'}
+			<p role="status" class="text-xs text-gray-500">Loading sub-agent catalog…</p>
+		{:else if $subAgentViewer.discovery === 'error'}
+			<div class="text-xs text-gray-500">
+				<p role="alert">Sub-agent catalog is unavailable.</p>
+				<button
+					type="button"
+					class="rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5"
+					on:click={refreshSubAgentCatalog}>Retry catalog</button
+				>
+			</div>
+		{/if}
 		{#if selection}
 			<div class="flex items-center justify-between gap-2 text-xs">
 				<a class="underline" href={`/c/${selection.id}`} target="_blank" rel="noopener noreferrer"
@@ -208,6 +234,10 @@
 					chatActionHandler={noop}
 				/>
 			{/key}
+		{:else if !selection}
+			{#if $subAgentViewer.discovery === 'ready' || $subAgentViewer.discovery === 'idle'}
+				<p class="p-6 text-sm text-gray-500">No sub-agents have been used in this chat yet.</p>
+			{/if}
 		{:else}<p class="p-6 text-sm text-gray-500">No messages yet.</p>{/if}
 	</div>
 </section>

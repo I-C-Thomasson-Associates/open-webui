@@ -65,9 +65,11 @@
 	let activatedTerminalId: string | null = null;
 	$: showSubAgentsTab =
 		scopeMounted &&
-		$subAgentViewer.parentId === chatId &&
+		!!$user?.id &&
+		(!chatUser || chatUser.id === $user.id) &&
+		$subAgentViewer.parentId === (chatId ?? '') &&
 		$subAgentViewer.userId === $user?.id &&
-		$subAgentViewer.catalog.length > 0;
+		$activeChatId === (chatId ?? '');
 	$: if (scopeMounted && handledScopeRevision !== $subAgentViewer.scopeRevision) {
 		handledScopeRevision = $subAgentViewer.scopeRevision;
 		handledOpenRevision = 0;
@@ -328,7 +330,7 @@
 						>
 							{#if activeTab === 'subagents' && showSubAgentsTab}
 								<SubAgentChatViewer
-									parentChatId={chatId}
+									parentChatId={chatId ?? ''}
 									visible={$showControls && !specialPanel}
 								/>
 							{:else if activeTab === 'overview'}
@@ -463,7 +465,7 @@
 						>
 							{#if activeTab === 'subagents' && showSubAgentsTab}
 								<SubAgentChatViewer
-									parentChatId={chatId}
+									parentChatId={chatId ?? ''}
 									visible={$showControls && !specialPanel}
 								/>
 							{:else if activeTab === 'overview'}
