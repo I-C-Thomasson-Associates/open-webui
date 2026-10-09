@@ -8,7 +8,7 @@ The `jp_dev` and `prod` branches are based on Open WebUI with custom modificatio
 
 ### Verified Branch Status
 
-Verified against the repository on August 26, 2026:
+**Historical snapshot, not current status.** Verified against the repository on August 26, 2026:
 
 - `jp_dev` upstream-integration commit: `1f5656d6babe13227d41a6f188775927c966a93e` (`merge upstream v0.11.1 into jp_dev`)
 - `jp_dev` Open WebUI version: `0.11.1`
@@ -980,7 +980,13 @@ This authorization boundary complements the terminal gateway controls in item 11
 
 ### 26. Native Sub-Agent Conversation Viewer
 
-**Status:** Implemented locally against Open WebUI 0.11.4; not yet deployed or live-browser validated.
+**Status:** Committed in the local checkout against Open WebUI 0.11.4; deployment and live-browser behavior are not verified.
+
+**Commits:**
+
+- [`1e381f7d6`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/1e381f7d6ff4fc7720d37e3daba5c9001b592d19) — feat: enhance sub-agent viewer with live catalog updates and keyboard navigation
+- [`e580903ff`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/e580903ff18ccdb1a76a7a15c19b2613495d47d6) — feat: Implement Sub-Agent Catalog with new API and UI enhancements
+- [`5c8fd0e83`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/5c8fd0e83dc926363a4a369262b61fb232e698c0) — feat: sub-agent viewer functionality and testing
 
 **What Changed:**
 
@@ -1046,10 +1052,10 @@ Upstream-file edits are limited to what cannot live in a new file: the iframe ho
 **Validation:**
 
 - Frontend: 77 focused Vitest tests passed: 33 catalog-helper (`subAgentViewer.test.ts`), 15 `SubAgentChatViewer.test.ts`, and 29 `select-keyboard.test.ts` (27 handler-double tests plus 2 client/SSR compilation tests of `Select.svelte`).
-- Backend: 39 tests passed before the final keyboard-only repair, which touched no backend code: 9 SQLite-backed `backend/open_webui/ext/test_subagent_chats_router.py`, 21 `test/test_internal_response_stream_tracking.py`, and 9 memory-admin. The PostgreSQL filter was checked by SQL compilation only, not against a live database. Stream-tracking command: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/Scripts/python.exe -W error -m pytest -q -p pytest_asyncio.plugin -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function test/test_internal_response_stream_tracking.py`. Plugin autoload is disabled because installed OpenTelemetry emits a deprecation during import; the fake-Redis fixture omits Redis's type-only import rather than suppressing warnings.
+- Backend: 39 tests passed before the final keyboard-only repair, which touched no backend code: 9 SQLite-backed `backend/open_webui/ext/test_subagent_chats_router.py`, 21 `test/test_internal_response_stream_tracking.py`, and 9 memory-admin. The PostgreSQL filter was checked by SQL compilation only, not against a live database. Combined command: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/Scripts/python.exe -m pytest -q -p pytest_asyncio.plugin -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function backend/open_webui/ext/test_subagent_chats_router.py test/test_internal_response_stream_tracking.py backend/open_webui/ext/test_memory_admin_router.py`. Plugin autoload is disabled because installed OpenTelemetry emits a deprecation during import; known dependency deprecation warnings are not suppressed and this is not a warning-clean claim. The fake-Redis fixture omits Redis's type-only import rather than suppressing warnings.
 - Companion tool: 55 tests passed, Wizard validation reported 0 issues, and the source, README, and dev/prod manifests align at version 1.2.1.
 - `git diff --check` and `git diff --cached --check` were clean.
-- Reviewed: the strict JSON-boolean `internal` filter and the catalog refresh/live-registration repairs. The final trigger/focus-out ordering fix for the shared Select is covered by a handler-double regression test, not verified in a live browser.- The unrelated working-tree deletions under `backend/open_webui/static/` are not part of this feature and were left untouched.
+- Reviewed: the strict JSON-boolean `internal` filter and the catalog refresh/live-registration repairs. The final trigger/focus-out ordering fix for the shared Select is covered by a handler-double regression test, not verified in a live browser.
 - Not performed: no live browser, server, Redis, PostgreSQL, deployment, or multi-worker run; no full frontend build (skipped because it needs network access for Pyodide); checkout-wide `svelte-check` skipped because of roughly 7,000 existing type errors. This is not a clean full-check or browser-validation claim.
 
 **Upstream Sync Checks:**
@@ -1060,7 +1066,11 @@ Revalidate the `subagent_chats_router` registration in `main.py` (exactly once),
 
 ### 27. Shared Select Keyboard Accessibility
 
-**Status:** Implemented locally against Open WebUI 0.11.4; not yet deployed. Actual browser behavior is untested.
+**Status:** Committed in the local checkout against Open WebUI 0.11.4; deployment and live-browser behavior are not verified. Actual browser behavior is untested.
+
+**Commits:**
+
+- [`1e381f7d6`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/1e381f7d6ff4fc7720d37e3daba5c9001b592d19) — feat: enhance sub-agent viewer with live catalog updates and keyboard navigation
 
 **What Changed:**
 
@@ -1112,16 +1122,16 @@ After upstream merges, revalidate that `Select.svelte` still delegates to `selec
 - Terminal gateway requests intentionally do not forward browser/session credentials.
 - Treat callback proxy and terminal gateway allowlists as security-sensitive configuration.
 
-### Final Focused Validation
+### Historical Upstream-Sync Focused Validation
 
-The final backend-focused validation completed with **27 passed** in 10.91 seconds, with **5 pytest-reported dependency/deprecation warnings** plus one final interpreter-shutdown SWIG deprecation warning:
+This validation belongs to the earlier upstream sync and is not the latest validation. The latest Sub-Agent/Select validation is recorded in items 26 and 27. The backend-focused validation completed with **27 passed** in 10.91 seconds, with **5 pytest-reported dependency/deprecation warnings** plus one final interpreter-shutdown SWIG deprecation warning:
 
 - `test/test_responses_stream_conversion.py`
 - `backend/open_webui/ext/test_memory_admin_router.py`
 - `backend/open_webui/ext/test_terminal_context_authorization.py`
 - `backend/open_webui/ext/test_auth_callback_proxy_middleware.py`
 
-Frontend tests were not run because the final changes were backend-focused and the frontend conflict resolution was additive only.
+For that earlier sync, frontend tests were not run because its final changes were backend-focused and the frontend conflict resolution was additive only.
 
 ### Rebase Checklist
 
