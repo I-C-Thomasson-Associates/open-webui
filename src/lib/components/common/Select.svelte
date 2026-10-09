@@ -1,6 +1,13 @@
 <script lang="ts">
 	import { flyAndScale } from '$lib/utils/transitions';
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
+	import { v4 as uuidv4 } from 'uuid';
+	import {
+		focusSelectOption,
+		selectContentFocusout,
+		selectContentKeydown,
+		selectTriggerKeydown
+	} from '$lib/ext/select-keyboard';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 
 	/** Currently selected value */
@@ -44,6 +51,23 @@
 
 	let triggerEl;
 	let contentEl;
+	let contentId: string;
+	let wasOpen = false;
+	let restoreOnClose = true;
+
+	onMount(() => {
+		contentId = `select-${uuidv4()}`;
+	});
+
+	$: if (open !== wasOpen) {
+		wasOpen = open;
+		if (open) focusContent();
+		else {
+			if (restoreOnClose && contentEl?.contains(document.activeElement)) triggerEl?.focus();
+			restoreOnClose = true;
+			onClose();
+		}
+	}
 
 	$: selectedLabel = items.find((i) => i.value === value)?.label ?? placeholder;
 
@@ -93,39 +117,41 @@
 		}
 	}
 
-	async function toggleOpen() {
-		open = !open;
-		if (open) {
-			await tick();
-			positionContent();
-		}
+	async function focusContent() {
+		await tick();
+		if (!open || !contentEl) return;
+		positionContent();
+		focusSelectOption(contentEl);
+	}
+
+	function close(restoreFocus = true) {
+		if (!open) return;
+		restoreOnClose = restoreFocus;
+		open = false;
+		if (restoreFocus) triggerEl?.focus();
+	}
+
+	function toggleOpen() {
+		if (open) close();
+		else open = true;
 	}
 
 	function handleWindowClick(event) {
 		if (!open) return;
 		if (triggerEl?.contains(event.target)) return;
 		if (contentEl?.contains(event.target)) return;
-		open = false;
-		onClose();
-	}
-
-	function handleKeydown(event) {
-		if (event.key === 'Escape' && open) {
-			open = false;
-			onClose();
-		}
+		close(false);
 	}
 
 	export function selectItem(item) {
 		value = item.value;
-		open = false;
+		close();
 		onChange(value);
 	}
 </script>
 
 <svelte:window
 	on:click={handleWindowClick}
-	on:keydown={handleKeydown}
 	on:scroll|capture={positionContent}
 	on:resize={positionContent}
 />
@@ -135,7 +161,24 @@
 	class="focus-ring {triggerClass}"
 	type="button"
 	aria-expanded={open}
+	aria-haspopup={$$slots.default ? 'dialog' : 'menu'}
+	aria-controls={open ? contentId : undefined}
+	id={contentId ? `${contentId}-trigger` : undefined}
 	on:click={toggleOpen}
+	on:focusout={(event) => {
+		if (open && contentEl) selectContentFocusout(event, contentEl, triggerEl, close);
+	}}
+	on:keydown={(event) =>
+		selectTriggerKeydown(
+			event,
+			triggerEl,
+			open,
+			() => {
+				if (open) focusContent();
+				else open = true;
+			},
+			() => close()
+		)}
 >
 	<slot name="trigger" {selectedLabel} {open}>
 		<span class={labelClass}>
@@ -145,11 +188,32 @@
 </button>
 
 {#if open}
-	<div use:portal bind:this={contentEl} transition:flyAndScale>
+	<div
+		use:portal
+		bind:this={contentEl}
+		id={contentId}
+		role={$$slots.default ? 'dialog' : 'menu'}
+		aria-labelledby={contentId ? `${contentId}-trigger` : undefined}
+		tabindex="-1"
+		on:keydown|capture={(event) => {
+			if (open) selectContentKeydown(event, contentEl, triggerEl, close);
+		}}
+		on:focusout={(event) => {
+			if (open) selectContentFocusout(event, contentEl, triggerEl, close);
+		}}
+		transition:flyAndScale
+	>
 		<DropdownMenu className={contentClass} style={`max-height: ${maxHeight}; overflow-y: auto;`}>
 			<slot {open} {selectItem}>
 				{#each items as item}
-					<button class="focus-ring {itemClass}" type="button" on:click={() => selectItem(item)}>
+					<button
+						class="focus-ring {itemClass}"
+						type="button"
+						role="menuitemradio"
+						aria-checked={value === item.value}
+						tabindex="-1"
+						on:click={() => selectItem(item)}
+					>
 						<slot name="item" {item} selected={value === item.value}>
 							{item.label}
 						</slot>

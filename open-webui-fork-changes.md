@@ -8,7 +8,7 @@ The `jp_dev` and `prod` branches are based on Open WebUI with custom modificatio
 
 ### Verified Branch Status
 
-Verified against the repository on August 26, 2026:
+**Historical snapshot, not current status.** Verified against the repository on August 26, 2026:
 
 - `jp_dev` upstream-integration commit: `1f5656d6babe13227d41a6f188775927c966a93e` (`merge upstream v0.11.1 into jp_dev`)
 - `jp_dev` Open WebUI version: `0.11.1`
@@ -978,6 +978,128 @@ This authorization boundary complements the terminal gateway controls in item 11
 
 ---
 
+### 26. Native Sub-Agent Conversation Viewer
+
+**Status:** Committed in the local checkout against Open WebUI 0.11.4; deployment and live-browser behavior are not verified.
+
+**Commits:**
+
+- [`1e381f7d6`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/1e381f7d6ff4fc7720d37e3daba5c9001b592d19) — feat: enhance sub-agent viewer with live catalog updates and keyboard navigation
+- [`e580903ff`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/e580903ff18ccdb1a76a7a15c19b2613495d47d6) — feat: Implement Sub-Agent Catalog with new API and UI enhancements
+- [`5c8fd0e83`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/5c8fd0e83dc926363a4a369262b61fb232e698c0) — feat: sub-agent viewer functionality and testing
+
+**What Changed:**
+
+- The **Sub-agents** tab is a permanent tab in the existing `ChatControls` panel (the resized desktop sidebar, or the mobile `Drawer`) whenever the mounted active chat matches the signed-in user and parent, including a new chat with no sub-agents yet (it then shows an empty state). Hydration never opens the sidebar. Clicking a persisted child-chat row from the companion Sub Agent tool opens the tab and selects that child. The tab replaces the earlier modal/multi-pane grid (up to eight panes), which is obsolete.
+- The tab shows ONE compact, read-only conversation at a time. The child selector is the house `common/Select` dropdown (with a screen-reader label) rather than a native `<select>`; it switches between catalogued children, and each selection has **Open full chat** and Refresh controls. The viewer is read-only (`readOnly`).
+- A row click both opens the tab and selects that child. Merging a `subagent:chats` catalog alone never opens the sidebar or changes the selection of an already-selected child. Opening clears the special artifacts, embeds, and call-overlay panels and shows controls.
+- Uses the existing `Messages` renderer with read-only/compact-preview settings rather than nested full application iframes. The viewer does not mutate the global active-chat store (it only reads it) or expose generation/editing controls.
+- Catalog state is a module-level store scoped to the active parent chat and signed-in user. It is reset on parent navigation, user change, and logout, and stale response callbacks from an earlier scope are rejected even when returning to the same parent. It survives activity-embed cleanup.
+- **Historical availability (catalog hydration).** For a saved parent with a canonical UUID, the catalog is hydrated once per scope from the new native authenticated extension API (`GET /api/v1/ext/subagent-chats/{parent_id}`, below), so children remain available after a page reload or later session. The viewer shows loading, empty, and error states; the error state offers a **Retry catalog** action. The request is aborted, and its result discarded as stale, on parent change, user change, or teardown. A hydrated result never bumps `openRevision`, so it cannot open the sidebar. The server response is authoritative: children deleted since the last refresh drop out of the catalog, and the current selection is preserved only while it remains in the refreshed catalog (otherwise it falls back to the first returned child). Only live registrations received while that request was in flight are merged over the response, so a spawn racing the request is not lost. Hydrated historical results are unlimited (all returned children are merged); live `subagent:chats` snapshots keep their existing 64-chat batch bound unchanged.
+- While the tab is visible, the selected running child refreshes through the authenticated chat API at most once per second, with no overlapping requests; a selection change queues behind an in-flight request. The existing API overlays active response-stream content. Socket events and reconnects request refreshes; terminal children stop routine polling after one final reconciliation. Hiding the tab or closing the panel stops tracking without stopping delegation.
+- Preserves scrollback and follows new output only when the reader is already near the bottom. Late responses for an unmounted, hidden, or superseded selection are ignored.
+- The terminal-activation auto-switch to Files now fires once per newly activated terminal rather than on every update, so it no longer steals a user-chosen tab (including Sub-agents).
+
+**Live Catalog Socket Event and Reconciling Refresh (frontend):**
+
+- The companion tool emits a parent-chat socket event, independent of the dashboard iframe, `{type: "subagent:catalog", data: {chats: [{chatId, title}]}}` (canonical child ID and display title), once per child after the child chat is persisted and before the foreground/background handler starts. The tool supplies no routing or authentication data. This is a separate path from the dashboard iframe `subagent:chats` snapshot bridge, which is unchanged; the dashboard worker/iframe is not involved, so the catalog survives activity-embed cleanup.
+- The consumer lives in `trackSubAgentScope` in `subAgentViewer.ts` (extension-owned, mounted by the existing `ChatControls` tracker; no new upstream hook). It subscribes to the existing `socket` store `events` channel and accepts an event only while the mounted scope owner is current and the event `chat_id` equals the active parent chat, signed in. The payload is validated as a bounded (at most 64) catalog or a single chat with canonical UUIDs and bounded titles; invalid payloads are ignored.
+- A matching event merges the child into the catalog for the active parent, preserving any current selection (the first selection defaults to the first child). It does not bump `openRevision`, so it never opens the sidebar and needs no page reload; a new background child appears in the tab as it is spawned.
+- Reconnect or socket replacement: the consumer re-registers `events`/`connect` listeners on the new socket and, after a `connect` or a replaced socket, requests one reconciling refresh through the catalog API (`refreshSubAgentCatalog(true)`) to recover spawns missed while disconnected. At most one such refresh is queued behind an in-flight request (no overlapping requests). A refresh over an already-ready catalog is quiet: no loading spinner and no error flash.
+- Live registrations (socket events and bridge snapshots) seen during an in-flight refresh override that response, so the authoritative-server rule above cannot drop a child that was just spawned. Scope change, user change, or teardown aborts the request and clears the queued refresh and live-registration set; socket listeners are removed on cleanup.
+**Live-Child Stream Tracking (backend):**
+
+- `chat_completion` (`backend/open_webui/main.py`) now has a single `create_task(redis, process, id=chat_id, task_id=metadata['task_id'])` registration site for every fan-out model. Internal (`request.state.internal`) calls then `await` the returned task internally and collect its result; external calls append the task ID and detach as before. The metadata task UUID is therefore registered under the child chat, so response-stream snapshots are exposed through the authenticated chat API while the child runs. The internal `results` and external `task_ids: []` response shapes are unchanged.
+- `backend/open_webui/tasks.py` `create_task` gates the coroutine body behind a registration event (unchanged by this update): it starts only after the Redis registration (`redis_save_task`) succeeds, so the body cannot run before the task is saved. If registration fails or is cancelled, the task is cancelled, the never-started coroutine is closed (no "never awaited" warning), local state is cleaned, and the original exception propagates. There is no "started" flag: the done callback unconditionally closes the coroutine, which is a no-op once it has finished and also covers a task cancelled before its first step.
+- `cleanup_task` now removes the local `tasks`, `response_streams`, and `item_tasks` entries first, then performs Redis cleanup inside a `try/except`; Redis errors are logged with `log.exception` rather than raised, so local state is always released. This prevents a failed registration from leaving a coordinator waiting on a caller decision (deadlock) or the built-in foreground reservation from being released twice.
+
+**Sub-Agent Catalog Endpoint (backend, new):**
+
+- `GET /api/v1/ext/subagent-chats/{parent_id}` (`backend/open_webui/ext/subagent_chats_router.py`, `get_verified_user`) returns summaries only: `[{chatId, title}]` ordered oldest first. No transcript, message, or model data is read; titles are trimmed and capped at 200 UTF-16 code units (matching the frontend's JS `title.length` check) without splitting a character, so non-BMP emoji titles cannot make the frontend reject the whole catalog (default `New Chat`).
+- The parent ID must be a canonical UUID and the parent chat must be owned by the requesting user; otherwise (missing, foreign, malformed, or shared) the response is a uniform 404. Child rows must also belong to the user and have strict `meta.internal === true`, `meta.type === 'subagent'`, `meta.source === 'ai_team_delegate'`, and `meta.parent_chat_id` equal to the parent; returned IDs are canonical UUIDs.
+- Native built-in sub-agent chats lack `meta.source` and are intentionally NOT shown, and legacy chats lacking the marker are excluded.
+- The `internal` filter is a strict JSON-boolean-true test, not a text-to-boolean cast (which would also accept values such as the strings `"true"`/`"yes"`/`1`): SQLite uses `json_type(meta, '$.internal') = 'true'`; PostgreSQL requires `json_typeof(meta -> 'internal') = 'boolean'` and the text value `true` (the column is `json`, not `jsonb`). Numeric and string values (for example `"true"`, `1`) are not matched. The `source`, `type`, and owner predicates and the response shape are unchanged. An unsupported dialect raises `NotImplementedError` rather than silently using a lenient cast.
+- Performance/dialect note: the JSON `meta` filter runs over the requesting user's own chats using the existing per-user indexed base query; no migrations or new indices were added. A large per-user history scan is a known potential cost; it was not measured or optimized here. SQL generation was compile-checked for PostgreSQL but not run against a live PostgreSQL database.
+
+**Tool-to-Frontend Contract and Access Checks:**
+
+- Requires the companion `sobe-ai-tools/Tools/Sub Agent` tool v1.2.1 (its dev/prod manifests align), which emits the parent `subagent:catalog` socket event described above in addition to the unchanged iframe bridge. An older tool still works through the iframe bridge and historical hydration but gives no live catalog without reload. Deploy by rebuilding the Open WebUI frontend and backend together; the sidebar tab and socket consumer need the frontend, live-child snapshots and the strict catalog filter need the backend change.
+- Dashboard snapshots send `{type: 'subagent:chats', chats: [{chatId, title}]}`. The host acknowledges accepted catalogs with `{type: 'subagent:viewer-ready'}`; a plain row click then sends `{type: 'subagent:open-chat', chatId, title}`.
+- `FullHeightIframe.svelte` exposes a generic `onEmbedMessage(data, source)` callback, invoked only after the message's `source` exactly equals its iframe `contentWindow`. It contains no feature acknowledgement or sub-agent strings. `createSubAgentBridge` (in `subAgentViewer.ts`) validates the payload and parent-chat/user/read-only scope, then sends the `subagent:viewer-ready` readiness message to the supplied `source` via `source.postMessage`. The bridge message schema is unchanged. The viewer validates canonical UUIDs, bounded titles/catalogs, and fetched chat identity before rendering.
+- Fetched chats must belong to the signed-in user and have `meta.internal === true`, `meta.type === 'subagent'`, `meta.source === 'ai_team_delegate'`, and `meta.parent_chat_id` matching the invoking parent chat.
+- Credentials remain at the native authenticated chat API boundary; tokens and transcripts are not transferred through iframe messages.
+- No iframe **Allow Same Origin** setting is required. Without the companion frontend, rows retain normal `/c/<uuid>` new-tab links; modified clicks retain native link behavior.
+
+**Files Modified / Added:**
+
+- `src/lib/components/common/FullHeightIframe.svelte` — narrow upstream edit: generic `onEmbedMessage(data, source)` hook called after exact source equality; the feature-specific readiness acknowledgement was removed from this file.
+- `src/lib/components/chat/Messages/ResponseMessage.svelte` — narrow upstream edit: builds the scoped bridge handler with `createSubAgentBridge` and passes it as `onEmbedMessage`; no longer mounts the viewer.
+- `src/lib/components/chat/ChatControls.svelte` — narrow upstream edit: the tab is now permanent for the mounted active chat/user/parent (no longer requires a non-empty catalog); the tab button is now the extension-owned `SubAgentTabButton` at both the desktop sidebar and mobile `Drawer` sites, plus the necessary local lifecycle/scope tracking, tab/open handling (precedence over artifacts/embeds/call overlay), and terminal-tab activation fix. These must stay in this file because they depend on its local tab state and `showControls` lifecycle.
+- `src/lib/ext/SubAgentTabButton.svelte` (new, extension-owned) — the Sub-agents tab button, replacing the duplicated tab markup in both `ChatControls` layouts.
+- `src/lib/components/chat/SubAgentChatViewer.svelte` — single compact read-only conversation, house `common/Select` child selector, loading/empty/error-retry states, and refresh lifecycle (existing feature viewer; kept in place, not moved).
+- `src/lib/components/chat/subAgentViewer.ts` — scoped catalog store, one-time historical hydration (abort/stale handling), authoritative-server refresh with in-flight live-registration precedence, the `subagent:catalog` socket consumer with reconnect/socket-replacement reconciling refresh, `createSubAgentBridge`, payload validation, catalog merging (historical results unlimited; live snapshots keep their 64-chat batch bound), and child-chat provenance checks (existing feature helper; kept in place, not moved).
+- `src/lib/ext/subagent-chats-api.ts` (new, extension-owned) - authenticated `GET` client for the catalog endpoint, with `AbortSignal` support.
+- `backend/open_webui/ext/subagent_chats_router.py` (new, extension-owned) - the owner-only catalog router, including the strict per-dialect JSON-boolean `internal` filter.
+- `backend/open_webui/ext/test_subagent_chats_router.py` (new) - SQLite-backed router tests (including non-boolean `internal` values) plus a dialect SQL-compile check.
+- `src/lib/components/chat/SubAgentChatViewer.test.ts` and `src/lib/components/chat/subAgentViewer.test.ts` — controller, sidebar, scope/stale-callback, bridge, provenance, catalog, and compile checks (the compile check now includes `SubAgentTabButton.svelte`).
+- `backend/open_webui/main.py` — router registration (the import plus one `include_router` line at `/api/v1/ext/subagent-chats`) and the single task registration site; internal fan-out awaits the registered child task, external fan-out detaches and returns `task_ids`.
+- `backend/open_webui/tasks.py` — registration-gated `create_task` (unconditional coroutine close in the done callback) and `cleanup_task` that releases local state before Redis cleanup and logs Redis errors.
+
+Upstream-file edits are limited to what cannot live in a new file: the iframe hook, the `ResponseMessage` bridge hookup, the `ChatControls` invocations and local tab/lifecycle state, and the backend registration/cleanup fixes. Feature logic stays in the new or existing feature-owned files, and no speculative wrappers were added.
+- `backend/open_webui/utils/subagents.py` — the built-in delegate's narrow registration handler restores foreground/background capacity exactly once on registration failure or cancellation; cancellation is re-raised, while ordinary exceptions still return `Error: ...`. Successful body cleanup is unchanged.
+- `test/test_internal_response_stream_tracking.py` (new) — task registration, cancellation, cleanup, and reservation regression tests.
+
+**Validation:**
+
+- Frontend: 77 focused Vitest tests passed: 33 catalog-helper (`subAgentViewer.test.ts`), 15 `SubAgentChatViewer.test.ts`, and 29 `select-keyboard.test.ts` (27 handler-double tests plus 2 client/SSR compilation tests of `Select.svelte`).
+- Backend: 39 tests passed before the final keyboard-only repair, which touched no backend code: 9 SQLite-backed `backend/open_webui/ext/test_subagent_chats_router.py`, 21 `test/test_internal_response_stream_tracking.py`, and 9 memory-admin. The PostgreSQL filter was checked by SQL compilation only, not against a live database. Combined command: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/Scripts/python.exe -m pytest -q -p pytest_asyncio.plugin -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function backend/open_webui/ext/test_subagent_chats_router.py test/test_internal_response_stream_tracking.py backend/open_webui/ext/test_memory_admin_router.py`. Plugin autoload is disabled because installed OpenTelemetry emits a deprecation during import; known dependency deprecation warnings are not suppressed and this is not a warning-clean claim. The fake-Redis fixture omits Redis's type-only import rather than suppressing warnings.
+- Companion tool: 55 tests passed, Wizard validation reported 0 issues, and the source, README, and dev/prod manifests align at version 1.2.1.
+- `git diff --check` and `git diff --cached --check` were clean.
+- Reviewed: the strict JSON-boolean `internal` filter and the catalog refresh/live-registration repairs. The final trigger/focus-out ordering fix for the shared Select is covered by a handler-double regression test, not verified in a live browser.
+- Not performed: no live browser, server, Redis, PostgreSQL, deployment, or multi-worker run; no full frontend build (skipped because it needs network access for Pyodide); checkout-wide `svelte-check` skipped because of roughly 7,000 existing type errors. This is not a clean full-check or browser-validation claim.
+
+**Upstream Sync Checks:**
+
+Revalidate the `subagent_chats_router` registration in `main.py` (exactly once), its `meta` JSON filters on the supported database dialects, the permanent tab condition in `ChatControls`, iframe source-scoping and the generic `onEmbedMessage(data, source)` hook, the `ResponseMessage` bridge hookup, and the `ChatControls` `SubAgentTabButton` invocations; `Messages` read-only/compact-preview behavior; the `ChatControls` Sub-agents tab (desktop sidebar and mobile `Drawer`), including open precedence over artifacts/embeds/call overlay and the terminal-tab activation behavior; scope reset on parent/user/logout; the child metadata contract; chat API stream overlays and socket event shapes; and, in `main.py`/`tasks.py`, internal-task registration under the child chat, registration-gated start, cancel/failure coroutine closing, and local cleanup despite Redis errors, after upstream merges.
+
+---
+
+### 27. Shared Select Keyboard Accessibility
+
+**Status:** Committed in the local checkout against Open WebUI 0.11.4; deployment and live-browser behavior are not verified. Actual browser behavior is untested.
+
+**Commits:**
+
+- [`1e381f7d6`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/1e381f7d6ff4fc7720d37e3daba5c9001b592d19) — feat: enhance sub-agent viewer with live catalog updates and keyboard navigation
+
+**What Changed:**
+
+- The shared `common/Select.svelte` dropdown is now keyboard-operable everywhere it is used (for example the Sub-agents child selector in item 26). Behavior is implemented in the new extension-owned `src/lib/ext/select-keyboard.ts`; `Select.svelte` has only narrow integration hooks. No `Drawer.svelte` edit and no per-caller edits were needed.
+- **Opening and initial focus.** Opening focuses the selected option, else the first option, for the default menu. For slotted (custom) content, which is exposed as a `dialog`, initial focus goes to the first enabled search/text control, falling back to the selected or first option, then the content container.
+- **Navigation.** ArrowDown/ArrowUp (wrapping), Home, and End move among enabled options; Enter and Space activate through the native button behavior. ArrowUp/ArrowDown on the trigger opens the menu; typing, caret movement, and activation inside a custom search input are left to that input.
+- **Tab.** In the default menu, Tab returns focus to the trigger and closes so that the browser then tabs onward from the trigger rather than from the portal at the end of `body`. In custom dialog content, Tab moves internally between its controls.
+- **Focus-out.** The trigger and custom dialog content form one local focus boundary. Moving focus onto the trigger keeps the dropdown open until its click toggles closed, even if mouseup occurs after the focus-out timer. Keyboard focus leaving both trigger and content closes without restoring focus; internal search/button traversal remains native.
+- **Escape.** Escape is consumed (`preventDefault` and `stopPropagation`) by the open trigger or content before it can reach an ancestor `Drawer`, closes only the select, and restores focus to the trigger. The window-level Escape handler was removed.
+- **ARIA.** The trigger gains `aria-haspopup`, `aria-controls`, and an id; the content gets `role` (`menu` or `dialog`), id, and `aria-labelledby`; default items are `menuitemradio` with `aria-checked`. Item buttons use `tabindex=-1`.
+- Outside clicks close without refocusing the trigger; focus is restored to the trigger on keyboard or selection close. Selection behavior and the public props/callbacks are otherwise unchanged.
+
+**Files Modified / Added:**
+
+- `src/lib/ext/select-keyboard.ts` (new, extension-owned) — the focus, navigation, Tab, focus-out, and Escape helpers.
+- `src/lib/components/common/Select.svelte` — narrow upstream edit: imports the helpers, generates an id, replaces `toggleOpen`/window Escape handling with `open`-driven focus and close handling, and adds the ARIA attributes and keydown/focusout bindings. This must stay in this file because it depends on its local `open` state and portal.
+- `src/lib/ext/select-keyboard.test.ts` (new) — 27 handler-double tests of the helper behavior, plus 2 client/SSR compilation tests of `Select.svelte` (29 tests total). Includes delayed trigger-click ordering and keyboard traversal from content through the trigger to an outside control.
+
+**Validation:**
+
+- 29 `select-keyboard.test.ts` tests passed (27 handler-double tests plus 2 client/SSR compilation tests of `Select.svelte`, zero compiler warnings), as part of the 77 frontend tests in item 26. Targeted TypeScript `--noEmit`, scoped Prettier, and `git diff --check` / `git diff --cached --check` were clean. The final trigger/focus-out ordering fix is covered by a regression test using handler doubles. There is no installed mounted-DOM harness in this checkout, so the component was never mounted and no real browser exercised focus, Tab order, or `Drawer` interaction. **Actual native browser behavior is untested; do not treat this as a browser test.**
+- No live deployment, full frontend check, or build was performed. Checkout-wide `svelte-check` remains unusable because of existing type errors.
+
+**Upstream Sync Checks:**
+
+After upstream merges, revalidate that `Select.svelte` still delegates to `select-keyboard.ts` with the same `open`/portal lifecycle, that the upstream `Drawer` still has no competing Escape handling that runs before the select's capture handler, and that upstream has not added its own keyboard handling to `Select.svelte`.
+
+---
+
 ## Deployment Notes
 
 ### Required Configuration
@@ -1000,16 +1122,16 @@ This authorization boundary complements the terminal gateway controls in item 11
 - Terminal gateway requests intentionally do not forward browser/session credentials.
 - Treat callback proxy and terminal gateway allowlists as security-sensitive configuration.
 
-### Final Focused Validation
+### Historical Upstream-Sync Focused Validation
 
-The final backend-focused validation completed with **27 passed** in 10.91 seconds, with **5 pytest-reported dependency/deprecation warnings** plus one final interpreter-shutdown SWIG deprecation warning:
+This validation belongs to the earlier upstream sync and is not the latest validation. The latest Sub-Agent/Select validation is recorded in items 26 and 27. The backend-focused validation completed with **27 passed** in 10.91 seconds, with **5 pytest-reported dependency/deprecation warnings** plus one final interpreter-shutdown SWIG deprecation warning:
 
 - `test/test_responses_stream_conversion.py`
 - `backend/open_webui/ext/test_memory_admin_router.py`
 - `backend/open_webui/ext/test_terminal_context_authorization.py`
 - `backend/open_webui/ext/test_auth_callback_proxy_middleware.py`
 
-Frontend tests were not run because the final changes were backend-focused and the frontend conflict resolution was additive only.
+For that earlier sync, frontend tests were not run because its final changes were backend-focused and the frontend conflict resolution was additive only.
 
 ### Rebase Checklist
 
@@ -1028,6 +1150,8 @@ After merging a newer upstream version, verify:
 - Salas O'Brien analytics and Usage routers are registered exactly once.
 - Tool result attachment handling remains wired into tool-result processing.
 - Structured `__content_blocks__` handling remains compatible with current middleware.
+- Native sub-agent viewer iframe source validation, read-only rendering, parent/owner checks, stream overlays, companion tool bridge, the `subagent:catalog` socket consumer, and the strict `internal` JSON-boolean filter remain compatible (item 26).
+- The shared `common/Select.svelte` keyboard integration and `ext/select-keyboard.ts` still behave as described in item 27, and no other upstream component needs its own keyboard handling.
 - Responses-backed streaming is normalized before reaching Chat Completions and Anthropic clients.
 - Key Vault integration still retrieves secrets requiring direct secret-manager access.
 - Microsoft OAuth environment hydration occurs before OAuth configuration is evaluated.
