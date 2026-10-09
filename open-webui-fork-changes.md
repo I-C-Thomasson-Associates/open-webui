@@ -978,6 +978,50 @@ This authorization boundary complements the terminal gateway controls in item 11
 
 ---
 
+### 26. Native Sub-Agent Conversation Viewer
+
+**Status:** Implemented locally against Open WebUI 0.11.4; not yet deployed or live-browser validated.
+
+**What Changed:**
+
+- Clicking a persisted child-chat row from the companion Sub Agent tool opens a native read-only conversation modal.
+- Up to eight conversations can be viewed concurrently, side by side on desktop and stacked on smaller screens, with independent scrolling, pane close controls, Refresh, and **Open full chat** links.
+- Uses the existing `Messages` renderer with read-only/compact-preview settings rather than nested full application iframes. The viewer does not change the shared active-chat store or expose generation/editing controls.
+- The viewer lives outside the response's replaceable embeds. Its catalog and open modal survive activity-embed cleanup for the lifetime of the mounted parent response; reload/navigation discards the browser-local catalog.
+- Closing the modal stops refresh tracking and clears panes without stopping delegation.
+- While open, running panes refresh through the authenticated chat API at most once per second per pane, with no overlapping requests. The existing API overlays active response-stream content. Socket events and reconnects request refreshes; terminal panes stop routine polling.
+- Preserves scrollback and follows new output only when the reader is already near the bottom. Closed/unmounted panes ignore late responses.
+
+**Tool-to-Frontend Contract and Access Checks:**
+
+- Requires the companion `sobe-ai-tools/Tools/Sub Agent` tool v1.2.0 source with the native-viewer bridge; rebuild the frontend and update the tool together.
+- Dashboard snapshots send `{type: 'subagent:chats', chats: [{chatId, title}]}`. The host acknowledges accepted catalogs with `{type: 'subagent:viewer-ready'}`; a plain row click then sends `{type: 'subagent:open-chat', chatId, title}`.
+- `FullHeightIframe.svelte` accepts callbacks only for messages from its exact iframe `contentWindow`. The viewer validates canonical UUIDs, bounded titles/catalogs, and fetched chat identity before rendering.
+- Fetched chats must belong to the signed-in user and have `meta.internal === true`, `meta.type === 'subagent'`, `meta.source === 'ai_team_delegate'`, and `meta.parent_chat_id` matching the invoking parent chat.
+- Credentials remain at the native authenticated chat API boundary; tokens and transcripts are not transferred through iframe messages.
+- No iframe **Allow Same Origin** setting is required. Without the companion frontend, rows retain normal `/c/<uuid>` new-tab links; modified clicks retain native link behavior.
+
+**Files Modified / Added:**
+
+- `src/lib/components/common/FullHeightIframe.svelte` — scoped embed callback and readiness acknowledgement.
+- `src/lib/components/chat/Messages/ResponseMessage.svelte` — response-scoped viewer integration, excluded from read-only previews.
+- `src/lib/components/chat/SubAgentChatViewer.svelte` — native multi-pane modal and refresh lifecycle.
+- `src/lib/components/chat/subAgentViewer.ts` — payload validation, catalog merging, and child-chat provenance checks.
+- `src/lib/components/chat/SubAgentChatViewer.test.ts` — controller/source-boundary, stale-fetch, and scroll regression checks.
+- `src/lib/components/chat/subAgentViewer.test.ts` — payload, ownership/provenance, and catalog checks.
+
+**Validation:**
+
+- Eight focused frontend tests passed; all three touched Svelte components compile. The new viewer compiles with no warnings; existing iframe/response components retain their existing compiler warnings.
+- Companion tool validation: 49 tests passed and Wizard validation reported no issues.
+- Checkout-wide `svelte-check` remains blocked by widespread existing type errors; a newly reported mock-signature error in the viewer test was corrected. This is not a clean full-check or browser-validation claim.
+
+**Upstream Sync Checks:**
+
+Revalidate iframe source-scoping and callback wiring, `Messages` read-only/compact-preview behavior, response lifetime across embed replacement, the child metadata contract, and chat API stream overlays/socket event shapes after upstream merges.
+
+---
+
 ## Deployment Notes
 
 ### Required Configuration
@@ -1028,6 +1072,7 @@ After merging a newer upstream version, verify:
 - Salas O'Brien analytics and Usage routers are registered exactly once.
 - Tool result attachment handling remains wired into tool-result processing.
 - Structured `__content_blocks__` handling remains compatible with current middleware.
+- Native sub-agent viewer iframe source validation, read-only rendering, parent/owner checks, stream overlays, and companion tool bridge remain compatible (item 26).
 - Responses-backed streaming is normalized before reaching Chat Completions and Anthropic clients.
 - Key Vault integration still retrieves secrets requiring direct secret-manager access.
 - Microsoft OAuth environment hydration occurs before OAuth configuration is evaluated.

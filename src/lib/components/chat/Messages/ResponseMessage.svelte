@@ -65,6 +65,7 @@
 	import RegenerateMenu from './ResponseMessage/RegenerateMenu.svelte';
 	import StatusHistory from './ResponseMessage/StatusHistory.svelte';
 	import FullHeightIframe from '$lib/components/common/FullHeightIframe.svelte';
+	import SubAgentChatViewer from '../SubAgentChatViewer.svelte';
 	import OutputEditView from './OutputEditView.svelte';
 	import { getOutputText, replaceOutputMessageText, type OutputItem } from './structuredOutput';
 
@@ -177,6 +178,7 @@
 	export let editCodeBlock = true;
 	export let topPadding = false;
 	export let onInsertToNote: ((content: string) => void) | null = null;
+	let subAgentViewer: SubAgentChatViewer | undefined;
 
 	let citationsElement: HTMLDivElement;
 
@@ -735,6 +737,7 @@
 											allowForms={$settings?.iframeSandboxAllowForms ?? true}
 											allowSameOrigin={$settings?.iframeSandboxAllowSameOrigin ?? false}
 											allowPopups={true}
+											onEmbedMessage={(data) => subAgentViewer?.handleEmbedMessage(data) ?? false}
 										/>
 									</div>
 								{/each}
@@ -1651,6 +1654,12 @@
 		</div>
 	</div>
 {/key}
+
+{#if !readOnly}
+	{#key `${chatId}:${messageId}`}
+		<SubAgentChatViewer bind:this={subAgentViewer} parentChatId={chatId} />
+	{/key}
+{/if}
 
 <style>
 	.buttons::-webkit-scrollbar {
