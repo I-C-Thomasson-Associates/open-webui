@@ -342,3 +342,217 @@ describe('sub-agent viewer boundaries', () => {
 		expect(get(subAgentViewer).catalog).toHaveLength(1);
 	});
 });
+
+describe('live sub-agent catalog events', () => {
+	const parentId = '32345678-1234-1234-1234-123456789abc';
+	const child = { chatId: id, title: 'Saved task' };
+	const late = { chatId: '42345678-1234-1234-1234-123456789abc', title: 'Late task' };
+	const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+	const json = (value: unknown) => ({ ok: true, json: async () => value });
+	const event = (data: unknown, chat_id = parentId) => ({
+		chat_id,
+		message_id: 'm',
+		data: { type: 'subagent:catalog', data }
+	});
+	function fakeSocket() {
+		const handlers: Record<string, Set<(...args: any[]) => void>> = {};
+		return {
+			on: vi.fn((name: string, fn: any) => (handlers[name] ??= new Set()).add(fn)),
+			off: vi.fn((name: string, fn: any) => handlers[name]?.delete(fn)),
+			emit: (name: string, ...args: unknown[]) => handlers[name]?.forEach((fn) => fn(...args)),
+			count: () => Object.values(handlers).reduce((sum, set) => sum + set.size, 0)
+		};
+	}
+	let fetchCatalog: ReturnType<typeof vi.fn>;
+	beforeEach(() => {
+		vi.stubGlobal('window', {});
+		vi.stubGlobal('localStorage', { token: 'private-token' });
+		fetchCatalog = vi.fn().mockResolvedValue(json([]));
+		vi.stubGlobal('fetch', fetchCatalog);
+	});
+	function live(socketStore = writable<any>(fakeSocket())) {
+		stop = trackSubAgentScope(
+			writable(parentId),
+			writable<{ id: string } | null>({ id: 'owner' }),
+			socketStore
+		);
+		return socketStore;
+	}
+	it('adds a late spawn after hydration without a reload or opening the panel', async () => {
+		const store = live();
+		await settle();
+		expect(get(subAgentViewer)).toMatchObject({ discovery: 'ready', catalog: [] });
+		(get(store) as any).emit('events', event(late));
+		expect(get(subAgentViewer)).toMatchObject({
+			catalog: [late],
+			selectedId: late.chatId,
+			openRevision: 0
+		});
+		(get(store) as any).emit('events', event({ chats: [child] }));
+		expect(get(subAgentViewer)).toMatchObject({ catalog: [late, child], selectedId: late.chatId });
+		expect(fetchCatalog).toHaveBeenCalledOnce();
+	});
+	it('keeps an event received while discovery is pending', async () => {
+		let resolve!: (value: unknown) => void;
+		fetchCatalog.mockReturnValueOnce(new Promise((done) => (resolve = done)));
+		const store = live();
+		(get(store) as any).emit('events', event(late));
+		resolve(json([child]));
+		await settle();
+		expect(get(subAgentViewer)).toMatchObject({ catalog: [child, late], discovery: 'ready' });
+	});
+	it('refreshes after reconnect or a replaced socket and queues one refresh while in flight', async () => {
+		const store = live();
+		await settle();
+		fetchCatalog.mockResolvedValue(json([late]));
+		(get(store) as any).emit('connect');
+		await settle();
+		expect(get(subAgentViewer).catalog).toEqual([late]);
+		const replacement = fakeSocket();
+		const old = get(store) as any;
+		store.set(replacement);
+		expect(old.count()).toBe(0);
+		await settle();
+		expect(fetchCatalog).toHaveBeenCalledTimes(3);
+		let resolve!: (value: unknown) => void;
+		fetchCatalog.mockReturnValueOnce(new Promise((done) => (resolve = done)));
+		replacement.emit('connect');
+		replacement.emit('connect');
+		replacement.emit('connect');
+		resolve(json([late]));
+		await settle();
+		await settle();
+		expect(fetchCatalog).toHaveBeenCalledTimes(5);
+	});
+	it('ignores unrelated parents, event types, user-less scopes and malformed payloads', async () => {
+		const store = live();
+		await settle();
+		const emit = (e: unknown) => (get(store) as any).emit('events', e);
+		emit(event(late, 'other'));
+		emit({ chat_id: parentId, data: { type: 'status', data: late } });
+		emit({ chat_id: parentId, data: { type: 'subagent:catalog', data: { ...late, chatId: '../x' } } });
+		emit(event({ chats: [] }));
+		emit(event({ chats: [late, { chatId: '../bad', title: 'x' }] }));
+		emit(event({ chats: Array.from({ length: 65 }, () => late) }));
+		emit(event({ ...late, title: 'x'.repeat(201) }));
+		emit(null);
+		emit(undefined);
+		expect(get(subAgentViewer).catalog).toEqual([]);
+	});
+	it('drops stale parent events after navigation and removes listeners on teardown or replacement', async () => {
+		const parent = writable(parentId);
+		const socketStore = writable<any>(fakeSocket());
+		const sock = get(socketStore);
+		stop = trackSubAgentScope(parent, writable({ id: 'owner' }), socketStore);
+		await settle();
+		parent.set('other');
+		sock.emit('events', event(late));
+		expect(get(subAgentViewer).catalog).toEqual([]);
+		stop();
+		expect(sock.count()).toBe(0);
+		sock.emit('events', event(late, 'other'));
+		expect(get(subAgentViewer).catalog).toEqual([]);
+		const first = fakeSocket();
+		stop = trackSubAgentScope(writable(parentId), writable({ id: 'owner' }), writable<any>(first));
+		const second = fakeSocket();
+		stop = trackSubAgentScope(writable(parentId), writable({ id: 'owner' }), writable<any>(second));
+		expect(first.count()).toBe(0);
+		expect(second.count()).toBe(2);
+	});
+	it('does not fail when no socket exists (SSR)', () => {
+		vi.stubGlobal('window', undefined);
+		live(writable<any>(null));
+		expect(get(subAgentViewer).catalog).toEqual([]);
+	});
+});
+describe('authoritative reconnect refresh', () => {
+	const parentId = '32345678-1234-1234-1234-123456789abc';
+	const child = { chatId: id, title: 'Old title' };
+	const other = { chatId: '42345678-1234-1234-1234-123456789abc', title: 'Other' };
+	const live = { chatId: '52345678-1234-1234-1234-123456789abc', title: 'Live' };
+	const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+	const json = (value: unknown) => ({ ok: true, json: async () => value });
+	const pending = () => {
+		let resolve!: (value: unknown) => void;
+		return { promise: new Promise((done) => (resolve = done)), resolve };
+	};
+	let fetchCatalog: ReturnType<typeof vi.fn>;
+	let sock: any;
+	let handlers: Set<(...args: any[]) => void>;
+	beforeEach(() => {
+		vi.stubGlobal('window', {});
+		vi.stubGlobal('localStorage', { token: 'private-token' });
+		fetchCatalog = vi.fn().mockResolvedValue(json([child, other]));
+		vi.stubGlobal('fetch', fetchCatalog);
+		handlers = new Set();
+		sock = {
+			on: (name: string, fn: any) => name === 'events' && handlers.add(fn),
+			off: (name: string, fn: any) => name === 'events' && handlers.delete(fn)
+		};
+		stop = trackSubAgentScope(writable(parentId), writable({ id: 'owner' }), writable(sock));
+	});
+	const emit = (data: unknown) =>
+		handlers.forEach((fn) =>
+			fn({ chat_id: parentId, data: { type: 'subagent:catalog', data } })
+		);
+	it('server titles and deletions replace stale state and reselect when the selection vanished', async () => {
+		await settle();
+		selectSubAgentChat(other.chatId);
+		fetchCatalog.mockResolvedValue(json([{ ...child, title: 'New title' }]));
+		await refreshSubAgentCatalog();
+		expect(get(subAgentViewer)).toMatchObject({
+			catalog: [{ ...child, title: 'New title' }],
+			selectedId: id,
+			openRevision: 0
+		});
+	});
+	it('keeps registrations from socket and bridge that arrive during the request, and a user selection', async () => {
+		await settle();
+		const gate = pending();
+		fetchCatalog.mockReturnValueOnce(gate.promise);
+		const refreshing = refreshSubAgentCatalog();
+		emit({ ...child, title: 'Live title' });
+		emit(live);
+		const bridge = createSubAgentBridge(
+			parentId,
+			'owner',
+			false,
+			get(subAgentViewer).scopeRevision
+		);
+		bridge({ type: 'subagent:chats', chats: [live] }, source() as unknown as Window);
+		selectSubAgentChat(live.chatId);
+		gate.resolve(json([child]));
+		await refreshing;
+		expect(get(subAgentViewer)).toMatchObject({
+			catalog: [{ ...child, title: 'Live title' }, live],
+			selectedId: live.chatId
+		});
+	});
+	it('a later request starts with an empty live set', async () => {
+		await settle();
+		const first = pending();
+		fetchCatalog.mockReturnValueOnce(first.promise);
+		const refreshing = refreshSubAgentCatalog();
+		emit(live);
+		first.resolve(json([child]));
+		await refreshing;
+		fetchCatalog.mockResolvedValue(json([child]));
+		await refreshSubAgentCatalog();
+		expect(get(subAgentViewer).catalog).toEqual([child]);
+	});
+	it('queues one refresh behind an in-flight one and a failed quiet refresh keeps the catalog', async () => {
+		await settle();
+		const gate = pending();
+		fetchCatalog.mockReturnValueOnce(gate.promise);
+		const refreshing = refreshSubAgentCatalog(true);
+		void refreshSubAgentCatalog(true);
+		void refreshSubAgentCatalog(true);
+		expect(fetchCatalog).toHaveBeenCalledTimes(2);
+		fetchCatalog.mockRejectedValue(new Error('offline'));
+		gate.resolve(json([child]));
+		await refreshing;
+		await settle();
+		expect(fetchCatalog).toHaveBeenCalledTimes(3);
+		expect(get(subAgentViewer)).toMatchObject({ discovery: 'ready', catalog: [child] });
+	});
+});

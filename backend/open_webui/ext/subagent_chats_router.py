@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 
 from open_webui.internal.db import get_async_db_context
 from open_webui.models.chats import Chat
@@ -22,6 +22,16 @@ def _canonical_uuid(value: str) -> bool:
         return str(UUID(value)) == value
     except (ValueError, AttributeError, TypeError):
         return False
+
+
+def _internal_is_json_true(dialect_name: str):
+    # as_boolean() casts text (SQLite 'true'/'yes', PG CAST ... AS BOOLEAN); require a real JSON true instead.
+    # ponytail: Chat.meta is sa.JSON (PG `json`, not `jsonb`); switch to jsonb_typeof if the column type changes.
+    if dialect_name == 'sqlite':
+        return func.json_type(Chat.meta, '$.internal') == 'true'
+    if dialect_name == 'postgresql':
+        return and_(func.json_typeof(Chat.meta['internal']) == 'boolean', Chat.meta['internal'].as_string() == 'true')
+    raise NotImplementedError(f'Unsupported dialect: {dialect_name}')
 
 
 def _title(value: str | None) -> str:
@@ -46,7 +56,7 @@ async def get_subagent_chats(parent_id: str, user=Depends(get_verified_user)):
             select(Chat.id, Chat.title)
             .where(
                 Chat.user_id == user.id,
-                Chat.meta['internal'].as_boolean().is_(True),
+                _internal_is_json_true(db.bind.dialect.name),
                 Chat.meta['type'].as_string() == 'subagent',
                 Chat.meta['source'].as_string() == 'ai_team_delegate',
                 Chat.meta['parent_chat_id'].as_string() == parent_id,

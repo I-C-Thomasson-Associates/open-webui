@@ -141,16 +141,46 @@ async def test_title_cap_is_utf16_units_without_splitting_emoji(session_factory)
     assert all(len(r['title'].encode('utf-16-le')) // 2 <= 200 for r in result)
 
 
-def test_sql_selects_only_id_title_and_extracts_json_on_both_dialects():
+@pytest.mark.asyncio
+async def test_internal_must_be_json_boolean_true(session_factory):
+    wrong = [1, 0, 'true', 'yes', 'note', '1', None, [], [True], {}, {'a': True}, False]
+    good = str(uuid4())
+    absent = _chat(created_at=1, title='absent')
+    absent.meta = {k: v for k, v in META.items() if k != 'internal'}
+    await _seed(
+        session_factory,
+        _chat(PARENT, meta={'internal': False}),
+        *[_chat(meta={'internal': v}, created_at=1, title=f'wrong {v!r}') for v in wrong],
+        absent,
+        _chat(good, created_at=2, title='good'),
+    )
+    assert await _call() == [{'chatId': good, 'title': 'good'}]
+
+
+def test_sql_selects_only_id_title_and_never_casts_internal_to_boolean():
     from sqlalchemy import select
 
-    stmt = select(Chat.id, Chat.title).where(
-        Chat.meta['internal'].as_boolean().is_(True),
-        Chat.meta['parent_chat_id'].as_string() == PARENT,
-    )
     for dialect in (sqlite.dialect(), postgresql.dialect()):
+        stmt = select(Chat.id, Chat.title).where(
+            router_module._internal_is_json_true(dialect.name),
+            Chat.meta['parent_chat_id'].as_string() == PARENT,
+        )
         sql = str(stmt.compile(dialect=dialect))
         assert sql.startswith('SELECT chat.id, chat.title')
         assert 'chat.chat' not in sql
-    assert 'JSON_EXTRACT(chat.meta' in str(stmt.compile(dialect=sqlite.dialect()))
-    assert 'chat.meta ->' in str(stmt.compile(dialect=postgresql.dialect()))
+        assert 'AS BOOLEAN' not in sql.upper()
+
+    sqlite_sql = str(
+        select(Chat.id).where(router_module._internal_is_json_true('sqlite')).compile(dialect=sqlite.dialect())
+    )
+    assert 'json_type(chat.meta, ?) = ?' in sqlite_sql
+    pg_sql = str(
+        select(Chat.id).where(router_module._internal_is_json_true('postgresql')).compile(dialect=postgresql.dialect())
+    )
+    assert 'json_typeof((chat.meta -> %(meta_1)s)) = %(json_typeof_1)s' in pg_sql
+    assert 'CAST((chat.meta ->> %(meta_2)s) AS VARCHAR) = %(param_1)s' in pg_sql
+
+
+def test_unsupported_dialect_raises():
+    with pytest.raises(NotImplementedError):
+        router_module._internal_is_json_true('mysql')
