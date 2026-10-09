@@ -668,12 +668,14 @@ async def delegate(
             run_background() if background else run_reserved(),
             id=chat_id,
         )
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         if background:
             async with _background_lock:
                 _background_active.discard(delegation_id)
         elif foreground_semaphore:
             foreground_semaphore.release()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         return f'Error: {exc}'
 
     if background:

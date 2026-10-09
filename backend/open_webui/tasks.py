@@ -141,9 +141,6 @@ async def cleanup_task(redis, task_id: str, id=None):
     """
     Remove a completed or canceled task from the global `tasks` dictionary.
     """
-    if redis:
-        await redis_cleanup_task(redis, task_id, id)
-
     tasks.pop(task_id, None)  # Remove the task if it exists
     response_streams.pop(task_id, None)
 
@@ -153,16 +150,33 @@ async def cleanup_task(redis, task_id: str, id=None):
         if not item_tasks[id]:  # If no tasks left for this ID, remove the entry
             item_tasks.pop(id, None)
 
+    try:
+        if redis:
+            await redis_cleanup_task(redis, task_id, id)
+    except Exception:
+        log.exception('Redis task cleanup failed for %s', task_id)
+
 
 async def create_task(redis, coroutine, id=None, task_id=None):
     """
     Create a new asyncio task and add it to the global task dictionary.
     """
     task_id = task_id or str(uuid4())  # Generate a unique ID for the task
-    task = asyncio.create_task(coroutine)  # Create the task
+    registration_gate = asyncio.Event()
+
+    async def run_registered():
+        await registration_gate.wait()
+        return await coroutine
+
+    def on_done(task):
+        # Close a never-started body; closing a finished coroutine is a no-op.
+        coroutine.close()
+        asyncio.create_task(cleanup_task(redis, task_id, id))
+
+    task = asyncio.create_task(run_registered())
 
     # Add a done callback for cleanup
-    task.add_done_callback(lambda t: asyncio.create_task(cleanup_task(redis, task_id, id)))
+    task.add_done_callback(on_done)
     tasks[task_id] = task
 
     # If an ID is provided, associate the task with that ID
@@ -173,8 +187,18 @@ async def create_task(redis, coroutine, id=None, task_id=None):
             item_tasks[id] = [task_id]
 
     if redis:
-        await redis_save_task(redis, task_id, id)
+        try:
+            await redis_save_task(redis, task_id, id)
+        except (Exception, asyncio.CancelledError):
+            task.cancel()
+            try:
+                with suppress(Exception, asyncio.CancelledError):
+                    await task
+            finally:
+                await cleanup_task(redis, task_id, id)
+            raise
 
+    registration_gate.set()
     return task_id, task
 
 

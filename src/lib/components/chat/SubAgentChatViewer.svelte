@@ -2,111 +2,110 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { getChatById } from '$lib/apis/chats';
 	import { socket, user } from '$lib/stores';
-	import Modal from '$lib/components/common/Modal.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Messages from './Messages.svelte';
-	import {
-		isOwnedSubAgentChat,
-		mergeSubAgentChats,
-		parseSubAgentChat,
-		type SubAgentChat
-	} from './subAgentViewer';
-	export let parentChatId: string;
-	type Pane = SubAgentChat & {
-		chat: any;
-		busy: boolean;
-		error: string;
-		element: HTMLDivElement | null;
-	};
-	let catalog: SubAgentChat[] = [];
-	let panes: Pane[] = [];
-	let show = false;
-	let mounted = false;
-	let stopTracking: (() => void) | null = null;
-	let ownerId = '';
-	const noop = () => {};
-	const current = (pane: Pane) => mounted && show && panes.includes(pane);
-	const running = (pane: Pane) =>
-		pane.chat?.chat?.history?.messages?.[pane.chat?.chat?.history?.currentId]?.done === false;
-	const pending = new Set<Pane>();
+	import { isOwnedSubAgentChat, selectSubAgentChat, subAgentViewer } from './subAgentViewer';
 
-	export function handleEmbedMessage(value: unknown): boolean {
-		if (!value || typeof value !== 'object') return false;
-		const data = value as Record<string, unknown>;
-		if (data.type === 'subagent:chats' && Array.isArray(data.chats) && data.chats.length <= 64) {
-			const chats = data.chats.map(parseSubAgentChat);
-			if (chats.some((chat) => !chat)) return false;
-			catalog = mergeSubAgentChats(catalog, chats as SubAgentChat[]);
-			return true;
+	export let parentChatId: string;
+	export let visible = false;
+	type Selection = {
+		id: string;
+		parentId: string;
+		ownerId: string;
+		scopeRevision: number;
+		chat: any;
+		error: string;
+	};
+	let selection: Selection | null = null;
+	let element: HTMLDivElement | null = null;
+	let mounted = false;
+	let busy = false;
+	let pending = false;
+	let stopTracking: (() => void) | null = null;
+	const noop = () => {};
+	const current = (entry: Selection) =>
+		mounted &&
+		visible &&
+		selection === entry &&
+		entry.parentId === parentChatId &&
+		entry.ownerId === $user?.id &&
+		entry.parentId === $subAgentViewer.parentId &&
+		entry.ownerId === $subAgentViewer.userId &&
+		entry.id === $subAgentViewer.selectedId &&
+		entry.scopeRevision === $subAgentViewer.scopeRevision;
+	const running = (entry: Selection) =>
+		entry.chat?.chat?.history?.messages?.[entry.chat?.chat?.history?.currentId]?.done === false;
+
+	function syncSelection(state: typeof $subAgentViewer, ownerId: string, parentId: string) {
+		if (!ownerId || state.userId !== ownerId || state.parentId !== parentId || !state.selectedId) {
+			selection = null;
+			pending = false;
+			return;
 		}
-		if (data.type === 'subagent:open-chat') {
-			const chat = parseSubAgentChat(data);
-			if (!chat) return false;
-			catalog = mergeSubAgentChats(catalog, [chat]);
-			return openChat(chat);
-		}
-		return false;
+		if (selection?.id === state.selectedId && selection?.scopeRevision === state.scopeRevision)
+			return;
+		selection = {
+			id: state.selectedId,
+			parentId,
+			ownerId,
+			scopeRevision: state.scopeRevision,
+			chat: null,
+			error: ''
+		};
+		if (element) element.scrollTop = 0;
+		pending = true;
+		if (mounted && visible) void refresh(selection);
 	}
-	function openChat(chat: SubAgentChat): boolean {
-		show = true;
-		if (panes.some((pane) => pane.chatId === chat.chatId)) return true;
-		// ponytail: cap concurrent previews at eight; revisit for larger comparison batches.
-		if (panes.length >= 8) return false;
-		const pane: Pane = { ...chat, chat: null, busy: false, error: '', element: null };
-		panes = [...panes, pane];
-		void refresh(pane);
-		return true;
+	$: syncSelection($subAgentViewer, $user?.id ?? '', parentChatId);
+	$: if (mounted && visible && !stopTracking) {
+		stopTracking = startTracking();
+		pending = true;
+		if (selection) void refresh(selection);
 	}
-	async function refresh(pane: Pane) {
-		if (!current(pane) || pane.busy) return;
-		pane.busy = true;
-		panes = [...panes];
-		const owner = $user?.id ?? '';
-		try {
-			if (!owner || !parentChatId) throw new Error('Unavailable');
-			const chat = await getChatById(localStorage.token, pane.chatId);
-			if (!current(pane) || owner !== $user?.id) return;
-			if (!isOwnedSubAgentChat(chat, pane.chatId, owner, parentChatId))
-				throw new Error('Unavailable');
-			const element = pane.element;
-			const top = element?.scrollTop ?? 0;
-			const follow =
-				!pane.chat || !element || element.scrollHeight - top - element.clientHeight < 80;
-			pane.chat = chat;
-			pane.error = '';
-			panes = [...panes];
-			await tick();
-			// Messages rebuilds streaming history on the next animation frame.
-			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-			if (current(pane) && pane.element)
-				pane.element.scrollTop = follow ? pane.element.scrollHeight : top;
-		} catch {
-			if (current(pane)) {
-				pane.chat = null;
-				pane.error = 'This sub-agent chat is unavailable. Use Refresh to retry.';
-			}
-		} finally {
-			pane.busy = false;
-			if (current(pane)) panes = [...panes];
-		}
-	}
-	function closePane(pane: Pane) {
-		pending.delete(pane);
-		panes = panes.filter((entry) => entry !== pane);
-	}
-	$: if (!show) {
-		pending.clear();
-		panes = [];
-	}
-	$: if (mounted && show && !stopTracking) stopTracking = startTracking();
-	$: if (!show && stopTracking) {
+	$: if (!visible && stopTracking) {
 		stopTracking();
 		stopTracking = null;
+		pending = false;
 	}
-	$: if (($user?.id ?? '') !== ownerId) {
-		ownerId = $user?.id ?? '';
-		show = false;
+
+	async function refresh(entry: Selection) {
+		if (!current(entry) || busy) return;
+		busy = true;
+		pending = false;
+		const wasRunning = running(entry);
+		try {
+			const token = localStorage.token;
+			if (!token) throw new Error('Unavailable');
+			const chat = await getChatById(token, entry.id);
+			if (!current(entry)) return;
+			if (!isOwnedSubAgentChat(chat, entry.id, entry.ownerId, entry.parentId))
+				throw new Error('Unavailable');
+			const top = element?.scrollTop ?? 0;
+			const follow =
+				!entry.chat || !element || element.scrollHeight - top - element.clientHeight < 80;
+			entry.chat = chat;
+			entry.error = '';
+			selection = entry;
+			// Reconcile once more after the API reports completion, including late persisted metadata.
+			if (wasRunning && !running(entry)) pending = true;
+			await tick();
+			// Messages rebuilds history on the next animation frame.
+			await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+			if (current(entry) && element) element.scrollTop = follow ? element.scrollHeight : top;
+		} catch {
+			if (current(entry)) {
+				entry.chat = null;
+				entry.error = 'This sub-agent chat is unavailable. Use Refresh to retry.';
+				selection = entry;
+			}
+		} finally {
+			busy = false;
+			// A selection change queues behind the old request rather than overlapping it.
+			if (selection && selection !== entry && pending && current(selection))
+				void refresh(selection);
+		}
 	}
+
 	onMount(() => {
 		mounted = true;
 	});
@@ -115,21 +114,14 @@
 		stopTracking?.();
 	});
 	function startTracking() {
-		// A short delay lets the chat API overlay stream content after socket emission.
 		const timer = setInterval(() => {
-			for (const pane of panes)
-				if (pending.has(pane) || running(pane)) {
-					if (!pane.busy) {
-						pending.delete(pane);
-						void refresh(pane);
-					}
-				}
+			if (selection && (pending || running(selection)) && !busy) void refresh(selection);
 		}, 1000);
 		const onEvent = (event: any) => {
-			for (const pane of panes) if (pane.chatId === event?.chat_id) pending.add(pane);
+			if (selection?.id === event?.chat_id) pending = true;
 		};
 		const onConnect = () => {
-			for (const pane of panes) pending.add(pane);
+			pending = true;
 		};
 		let connected: any = null;
 		const unsubscribe = socket.subscribe((value) => {
@@ -138,6 +130,7 @@
 			connected = value;
 			connected?.on('events', onEvent);
 			connected?.on('connect', onConnect);
+			onConnect();
 		});
 		return () => {
 			clearInterval(timer);
@@ -148,110 +141,73 @@
 	}
 </script>
 
-{#if catalog.length}
-	<button
-		type="button"
-		class="my-2 rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/5"
-		on:click={() => {
-			show = true;
-		}}>Sub-agent chats ({catalog.length})</button
-	>
-{/if}
-<Modal bind:show size="3xl">
-	<div class="modal-content p-4">
-		<div class="flex items-center justify-between gap-3">
-			<h2 class="text-lg font-semibold">
-				Sub-agent chats <span class="text-sm font-normal text-gray-500">Read-only</span>
-			</h2>
-			<button
-				type="button"
-				class="rounded-lg px-3 py-2 hover:bg-black/5 dark:hover:bg-white/5"
-				on:click={() => {
-					show = false;
-				}}>Close</button
-			>
-		</div>
-		<div
-			class="my-3 flex max-h-28 flex-wrap gap-2 overflow-y-auto"
-			aria-label="Available sub-agent chats"
+<section class="flex h-full min-h-0 flex-col" aria-label="Sub-agent conversation">
+	<div class="shrink-0 space-y-2 border-b p-3 dark:border-gray-800">
+		<label for="subagent-selector" class="block text-xs font-medium text-gray-500"
+			>Sub-agent · Read-only</label
 		>
-			{#each catalog as chat (chat.chatId)}
+		<select
+			id="subagent-selector"
+			class="w-full rounded-lg bg-gray-50 p-2 text-sm dark:bg-gray-850"
+			value={$subAgentViewer.selectedId}
+			on:change={(event) => selectSubAgentChat(event.currentTarget.value)}
+		>
+			{#each $subAgentViewer.catalog as chat (chat.chatId)}
+				<option value={chat.chatId}>{chat.title}</option>
+			{/each}
+		</select>
+		{#if selection}
+			<div class="flex items-center justify-between gap-2 text-xs">
+				<a class="underline" href={`/c/${selection.id}`} target="_blank" rel="noopener noreferrer"
+					>Open full chat</a
+				>
 				<button
 					type="button"
-					class="max-w-full truncate rounded-lg border px-3 py-1.5 text-sm dark:border-gray-700"
-					aria-pressed={panes.some((pane) => pane.chatId === chat.chatId)}
-					disabled={panes.length >= 8 && !panes.some((pane) => pane.chatId === chat.chatId)}
-					on:click={() => openChat(chat)}>{chat.title}</button
+					class="rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5"
+					disabled={busy}
+					on:click={() => selection && refresh(selection)}>Refresh</button
 				>
-			{/each}
-		</div>
-		{#if !panes.length}<p class="py-12 text-center text-gray-500">
-				Select a sub-agent to view its conversation.
-			</p>{/if}
-		<div
-			class="grid max-h-[75dvh] gap-3 overflow-y-auto {panes.length > 1 ? 'md:grid-cols-2' : ''}"
-		>
-			{#each panes as pane (pane.chatId)}
-				<section
-					class="min-w-0 overflow-hidden rounded-xl border dark:border-gray-700"
-					aria-label={pane.title}
-				>
-					<div class="flex items-center gap-2 border-b p-3 dark:border-gray-700">
-						<h3 class="min-w-0 flex-1 truncate text-sm font-medium" title={pane.title}>
-							{pane.title}
-						</h3>
-						<a
-							class="text-xs underline"
-							href={`/c/${pane.chatId}`}
-							target="_blank"
-							rel="noopener noreferrer">Open full chat</a
-						>
-						<button
-							type="button"
-							class="rounded px-2 py-1 text-xs hover:bg-black/5 dark:hover:bg-white/5"
-							disabled={pane.busy}
-							on:click={() => refresh(pane)}>Refresh</button
-						>
-						<button
-							type="button"
-							class="rounded px-2 py-1 hover:bg-black/5 dark:hover:bg-white/5"
-							aria-label={`Close ${pane.title}`}
-							on:click={() => closePane(pane)}>×</button
-						>
-					</div>
-					<div
-						bind:this={pane.element}
-						id={`subagent-viewer-${parentChatId}-${pane.chatId}`}
-						class="h-[55dvh] overflow-y-auto @container"
-					>
-						{#if pane.error}<p role="alert" class="p-6 text-sm text-gray-500">{pane.error}</p>
-						{:else if !pane.chat}<div class="flex justify-center p-8"><Spinner /></div>
-						{:else if pane.chat.chat?.history?.currentId}
-							<Messages
-								chatId={pane.chatId}
-								user={$user}
-								history={pane.chat.chat.history}
-								selectedModels={pane.chat.chat.models ?? []}
-								atSelectedModel={null}
-								prompt=""
-								readOnly={true}
-								compactPreview={true}
-								editCodeBlock={false}
-								allowDelete={false}
-								autoScroll={false}
-								messagesCount={null}
-								messagesContainerId={`subagent-viewer-${parentChatId}-${pane.chatId}`}
-								className="flex w-full pt-3 [&_.message-listitem]:!px-3 [&_.message-listitem]:!max-w-none"
-								sendMessage={noop}
-								continueResponse={noop}
-								regenerateResponse={noop}
-								mergeResponses={noop}
-								chatActionHandler={noop}
-							/>
-						{:else}<p class="p-6 text-sm text-gray-500">No messages yet.</p>{/if}
-					</div>
-				</section>
-			{/each}
-		</div>
+			</div>
+		{/if}
 	</div>
-</Modal>
+	<div
+		bind:this={element}
+		id={`subagent-viewer-${parentChatId}`}
+		class="min-h-0 flex-1 overflow-y-auto @container"
+		aria-busy={busy}
+	>
+		{#if selection?.error}<p role="alert" class="p-6 text-sm text-gray-500">{selection.error}</p>
+		{:else if selection && !selection.chat}<div
+				role="status"
+				aria-label="Loading sub-agent chat"
+				class="flex justify-center p-8"
+			>
+				<Spinner />
+			</div>
+		{:else if selection?.chat?.chat?.history?.currentId}
+			{#key selection.id}
+				<Messages
+					chatId={selection.id}
+					user={$user}
+					history={selection.chat.chat.history}
+					selectedModels={selection.chat.chat.models ?? []}
+					atSelectedModel={null}
+					prompt=""
+					readOnly={true}
+					compactPreview={true}
+					editCodeBlock={false}
+					allowDelete={false}
+					autoScroll={false}
+					messagesCount={null}
+					messagesContainerId={`subagent-viewer-${parentChatId}`}
+					className="flex w-full pt-3 [&_.message-listitem]:!px-3 [&_.message-listitem]:!max-w-none"
+					sendMessage={noop}
+					continueResponse={noop}
+					regenerateResponse={noop}
+					mergeResponses={noop}
+					chatActionHandler={noop}
+				/>
+			{/key}
+		{:else}<p class="p-6 text-sm text-gray-500">No messages yet.</p>{/if}
+	</div>
+</section>

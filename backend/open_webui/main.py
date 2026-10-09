@@ -1864,16 +1864,16 @@ async def chat_completion(
                 }
                 or None,
             )
-            if is_internal:
-                subagent_results.append(await process)
-                continue
-
-            task_id, _ = await create_task(
+            task_id, task = await create_task(
                 request.app.state.redis,
                 process,
                 id=chat_id,
                 task_id=per_model_metadata['task_id'],
             )
+            if is_internal:
+                subagent_results.append(await task)
+                continue
+
             task_ids.append(task_id)
 
         if is_internal:

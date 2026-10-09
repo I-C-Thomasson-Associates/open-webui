@@ -984,41 +984,56 @@ This authorization boundary complements the terminal gateway controls in item 11
 
 **What Changed:**
 
-- Clicking a persisted child-chat row from the companion Sub Agent tool opens a native read-only conversation modal.
-- Up to eight conversations can be viewed concurrently, side by side on desktop and stacked on smaller screens, with independent scrolling, pane close controls, Refresh, and **Open full chat** links.
-- Uses the existing `Messages` renderer with read-only/compact-preview settings rather than nested full application iframes. The viewer does not change the shared active-chat store or expose generation/editing controls.
-- The viewer lives outside the response's replaceable embeds. Its catalog and open modal survive activity-embed cleanup for the lifetime of the mounted parent response; reload/navigation discards the browser-local catalog.
-- Closing the modal stops refresh tracking and clears panes without stopping delegation.
-- While open, running panes refresh through the authenticated chat API at most once per second per pane, with no overlapping requests. The existing API overlays active response-stream content. Socket events and reconnects request refreshes; terminal panes stop routine polling.
-- Preserves scrollback and follows new output only when the reader is already near the bottom. Closed/unmounted panes ignore late responses.
+- Clicking a persisted child-chat row from the companion Sub Agent tool opens a **Sub-agents** tab in the existing `ChatControls` panel: the resized desktop sidebar, or the mobile `Drawer`. The tab replaces the earlier modal/multi-pane grid (up to eight panes), which is obsolete.
+- The tab shows ONE compact, read-only conversation at a time. An accessible child selector (labeled `<select>`) switches between catalogued children; each selection has **Open full chat** and Refresh controls.
+- A row click both opens the tab and selects that child. Merging a `subagent:chats` catalog alone never opens the sidebar or changes the selection of an already-selected child. Opening clears the special artifacts, embeds, and call-overlay panels and shows controls.
+- Uses the existing `Messages` renderer with read-only/compact-preview settings rather than nested full application iframes. The viewer does not mutate the global active-chat store (it only reads it) or expose generation/editing controls.
+- Catalog state is a module-level store scoped to the active parent chat and signed-in user. It is reset on parent navigation, user change, and logout, and stale response callbacks from an earlier scope are rejected even when returning to the same parent. It survives activity-embed cleanup, but a page reload discards the browser-local catalog (persisted `/c/<uuid>` links remain).
+- While the tab is visible, the selected running child refreshes through the authenticated chat API at most once per second, with no overlapping requests; a selection change queues behind an in-flight request. The existing API overlays active response-stream content. Socket events and reconnects request refreshes; terminal children stop routine polling after one final reconciliation. Hiding the tab or closing the panel stops tracking without stopping delegation.
+- Preserves scrollback and follows new output only when the reader is already near the bottom. Late responses for an unmounted, hidden, or superseded selection are ignored.
+- The terminal-activation auto-switch to Files now fires once per newly activated terminal rather than on every update, so it no longer steals a user-chosen tab (including Sub-agents).
+
+**Live-Child Stream Tracking (backend):**
+
+- `chat_completion` (`backend/open_webui/main.py`) now has a single `create_task(redis, process, id=chat_id, task_id=metadata['task_id'])` registration site for every fan-out model. Internal (`request.state.internal`) calls then `await` the returned task internally and collect its result; external calls append the task ID and detach as before. The metadata task UUID is therefore registered under the child chat, so response-stream snapshots are exposed through the authenticated chat API while the child runs. The internal `results` and external `task_ids: []` response shapes are unchanged.
+- `backend/open_webui/tasks.py` `create_task` gates the coroutine body behind a registration event (unchanged by this update): it starts only after the Redis registration (`redis_save_task`) succeeds, so the body cannot run before the task is saved. If registration fails or is cancelled, the task is cancelled, the never-started coroutine is closed (no "never awaited" warning), local state is cleaned, and the original exception propagates. There is no "started" flag: the done callback unconditionally closes the coroutine, which is a no-op once it has finished and also covers a task cancelled before its first step.
+- `cleanup_task` now removes the local `tasks`, `response_streams`, and `item_tasks` entries first, then performs Redis cleanup inside a `try/except`; Redis errors are logged with `log.exception` rather than raised, so local state is always released. This prevents a failed registration from leaving a coordinator waiting on a caller decision (deadlock) or the built-in foreground reservation from being released twice.
 
 **Tool-to-Frontend Contract and Access Checks:**
 
-- Requires the companion `sobe-ai-tools/Tools/Sub Agent` tool v1.2.0 source with the native-viewer bridge; rebuild the frontend and update the tool together.
+- Requires the companion `sobe-ai-tools/Tools/Sub Agent` tool v1.2.0 source with the native-viewer bridge. The bridge is unchanged by this update, so the tool needs no behavior or version bump (documentation only). Deploy by rebuilding the Open WebUI frontend and backend together; the sidebar tab needs the frontend and live-child snapshots need the backend change.
 - Dashboard snapshots send `{type: 'subagent:chats', chats: [{chatId, title}]}`. The host acknowledges accepted catalogs with `{type: 'subagent:viewer-ready'}`; a plain row click then sends `{type: 'subagent:open-chat', chatId, title}`.
-- `FullHeightIframe.svelte` accepts callbacks only for messages from its exact iframe `contentWindow`. The viewer validates canonical UUIDs, bounded titles/catalogs, and fetched chat identity before rendering.
+- `FullHeightIframe.svelte` exposes a generic `onEmbedMessage(data, source)` callback, invoked only after the message's `source` exactly equals its iframe `contentWindow`. It contains no feature acknowledgement or sub-agent strings. `createSubAgentBridge` (in `subAgentViewer.ts`) validates the payload and parent-chat/user/read-only scope, then sends the `subagent:viewer-ready` readiness message to the supplied `source` via `source.postMessage`. The bridge message schema is unchanged. The viewer validates canonical UUIDs, bounded titles/catalogs, and fetched chat identity before rendering.
 - Fetched chats must belong to the signed-in user and have `meta.internal === true`, `meta.type === 'subagent'`, `meta.source === 'ai_team_delegate'`, and `meta.parent_chat_id` matching the invoking parent chat.
 - Credentials remain at the native authenticated chat API boundary; tokens and transcripts are not transferred through iframe messages.
 - No iframe **Allow Same Origin** setting is required. Without the companion frontend, rows retain normal `/c/<uuid>` new-tab links; modified clicks retain native link behavior.
 
 **Files Modified / Added:**
 
-- `src/lib/components/common/FullHeightIframe.svelte` — scoped embed callback and readiness acknowledgement.
-- `src/lib/components/chat/Messages/ResponseMessage.svelte` — response-scoped viewer integration, excluded from read-only previews.
-- `src/lib/components/chat/SubAgentChatViewer.svelte` — native multi-pane modal and refresh lifecycle.
-- `src/lib/components/chat/subAgentViewer.ts` — payload validation, catalog merging, and child-chat provenance checks.
-- `src/lib/components/chat/SubAgentChatViewer.test.ts` — controller/source-boundary, stale-fetch, and scroll regression checks.
-- `src/lib/components/chat/subAgentViewer.test.ts` — payload, ownership/provenance, and catalog checks.
+- `src/lib/components/common/FullHeightIframe.svelte` — narrow upstream edit: generic `onEmbedMessage(data, source)` hook called after exact source equality; the feature-specific readiness acknowledgement was removed from this file.
+- `src/lib/components/chat/Messages/ResponseMessage.svelte` — narrow upstream edit: builds the scoped bridge handler with `createSubAgentBridge` and passes it as `onEmbedMessage`; no longer mounts the viewer.
+- `src/lib/components/chat/ChatControls.svelte` — narrow upstream edit: the tab button is now the extension-owned `SubAgentTabButton` at both the desktop sidebar and mobile `Drawer` sites, plus the necessary local lifecycle/scope tracking, tab/open handling (precedence over artifacts/embeds/call overlay), and terminal-tab activation fix. These must stay in this file because they depend on its local tab state and `showControls` lifecycle.
+- `src/lib/ext/SubAgentTabButton.svelte` (new, extension-owned) — the Sub-agents tab button, replacing the duplicated tab markup in both `ChatControls` layouts.
+- `src/lib/components/chat/SubAgentChatViewer.svelte` — single compact read-only conversation, child selector, and refresh lifecycle (existing feature viewer; kept in place, not moved).
+- `src/lib/components/chat/subAgentViewer.ts` — scoped catalog store, `createSubAgentBridge`, payload validation, catalog merging, and child-chat provenance checks (existing feature helper; kept in place, not moved).
+- `src/lib/components/chat/SubAgentChatViewer.test.ts` and `src/lib/components/chat/subAgentViewer.test.ts` — controller, sidebar, scope/stale-callback, bridge, provenance, catalog, and compile checks (the compile check now includes `SubAgentTabButton.svelte`).
+- `backend/open_webui/main.py` — single task registration site; internal fan-out awaits the registered child task, external fan-out detaches and returns `task_ids`.
+- `backend/open_webui/tasks.py` — registration-gated `create_task` (unconditional coroutine close in the done callback) and `cleanup_task` that releases local state before Redis cleanup and logs Redis errors.
+
+Upstream-file edits are limited to what cannot live in a new file: the iframe hook, the `ResponseMessage` bridge hookup, the `ChatControls` invocations and local tab/lifecycle state, and the backend registration/cleanup fixes. Feature logic stays in the new or existing feature-owned files, and no speculative wrappers were added.
+- `backend/open_webui/utils/subagents.py` — the built-in delegate's narrow registration handler restores foreground/background capacity exactly once on registration failure or cancellation; cancellation is re-raised, while ordinary exceptions still return `Error: ...`. Successful body cleanup is unchanged.
+- `test/test_internal_response_stream_tracking.py` (new) — task registration, cancellation, cleanup, and reservation regression tests.
 
 **Validation:**
 
-- Eight focused frontend tests passed; all three touched Svelte components compile. The new viewer compiles with no warnings; existing iframe/response components retain their existing compiler warnings.
-- Companion tool validation: 49 tests passed and Wizard validation reported no issues.
-- Checkout-wide `svelte-check` remains blocked by widespread existing type errors; a newly reported mock-signature error in the viewer test was corrected. This is not a clean full-check or browser-validation claim.
+- 21 focused frontend tests passed, including client and SSR compilation of the 4 affected Svelte components (now including `SubAgentTabButton.svelte`).
+- 21 backend tests passed (`test/test_internal_response_stream_tracking.py`), including extracted built-in foreground/background registration cancellation and ordinary-failure cleanup, plus successful foreground body cleanup. R2 command: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 .venv/Scripts/python.exe -W error -m pytest -q -p pytest_asyncio.plugin -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function test/test_internal_response_stream_tracking.py`. Unrelated plugin autoload is disabled because installed OpenTelemetry emits a deprecation during import; the fake-Redis fixture omits Redis's type-only import rather than suppressing warnings.
+- Companion tool validation (prior results, unchanged by this update): 49 tests passed and Wizard validation reported 0 issues. The diff check passed.
+- Not performed: no real browser, server, Redis, or multi-worker run; no full frontend build (skipped because it needs network access for Pyodide); checkout-wide `svelte-check` skipped because of roughly 7,000 existing type errors. This is not a clean full-check or browser-validation claim.
 
 **Upstream Sync Checks:**
 
-Revalidate iframe source-scoping and callback wiring, `Messages` read-only/compact-preview behavior, response lifetime across embed replacement, the child metadata contract, and chat API stream overlays/socket event shapes after upstream merges.
+Revalidate iframe source-scoping and the generic `onEmbedMessage(data, source)` hook, the `ResponseMessage` bridge hookup, and the `ChatControls` `SubAgentTabButton` invocations; `Messages` read-only/compact-preview behavior; the `ChatControls` Sub-agents tab (desktop sidebar and mobile `Drawer`), including open precedence over artifacts/embeds/call overlay and the terminal-tab activation behavior; scope reset on parent/user/logout; the child metadata contract; chat API stream overlays and socket event shapes; and, in `main.py`/`tasks.py`, internal-task registration under the child chat, registration-gated start, cancel/failure coroutine closing, and local cleanup despite Redis errors, after upstream merges.
 
 ---
 
