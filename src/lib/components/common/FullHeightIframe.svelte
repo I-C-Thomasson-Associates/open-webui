@@ -31,6 +31,7 @@
 	export let allowFullscreen = true;
 
 	export let payload = null; // payload to send into the iframe on request
+	export let onEmbedMessage: ((data: unknown, source: Window) => boolean | void) | null = null;
 
 	let iframe: HTMLIFrameElement | null = null;
 	let iframeSrc: string | null = null;
@@ -158,6 +159,7 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 		if (!iframe || e.source !== iframe.contentWindow) return;
 
 		const data = e.data || {};
+		onEmbedMessage?.(data, e.source as Window);
 		if (data?.type === 'iframe:height' && typeof data.height === 'number') {
 			iframe.style.height = Math.max(0, data.height) + 'px';
 		}

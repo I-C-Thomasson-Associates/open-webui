@@ -1,5 +1,5 @@
 <script context="module" lang="ts">
-	let savedTab: 'controls' | 'files' | 'overview' = 'controls';
+	let savedTab: 'controls' | 'files' | 'overview' | 'subagents' = 'controls';
 </script>
 
 <script lang="ts">
@@ -14,7 +14,8 @@
 		settings,
 		showFileNavPath,
 		selectedTerminalId,
-		user
+		user,
+		chatId as activeChatId
 	} from '$lib/stores';
 
 	import Controls from './Controls/Controls.svelte';
@@ -27,6 +28,9 @@
 	import PyodideFileNav from './PyodideFileNav.svelte';
 	import Overview from './Overview.svelte';
 	import { isSavedChatId } from '$lib/utils/chatId';
+	import SubAgentChatViewer from './SubAgentChatViewer.svelte';
+	import SubAgentTabButton from '$lib/ext/SubAgentTabButton.svelte';
+	import { subAgentViewer, trackSubAgentScope } from './subAgentViewer';
 
 	const i18n = getContext('i18n');
 
@@ -55,6 +59,29 @@
 
 	// Tab state for Controls+Files panel
 	let activeTab = savedTab;
+	let scopeMounted = false;
+	let handledOpenRevision = 0;
+	let handledScopeRevision = -1;
+	let activatedTerminalId: string | null = null;
+	$: showSubAgentsTab =
+		scopeMounted &&
+		!!$user?.id &&
+		(!chatUser || chatUser.id === $user.id) &&
+		$subAgentViewer.parentId === (chatId ?? '') &&
+		$subAgentViewer.userId === $user?.id &&
+		$activeChatId === (chatId ?? '');
+	$: if (scopeMounted && handledScopeRevision !== $subAgentViewer.scopeRevision) {
+		handledScopeRevision = $subAgentViewer.scopeRevision;
+		handledOpenRevision = 0;
+	}
+	$: if (showSubAgentsTab && $subAgentViewer.openRevision > handledOpenRevision) {
+		handledOpenRevision = $subAgentViewer.openRevision;
+		activeTab = 'subagents';
+		showArtifacts.set(false);
+		showEmbeds.set(false);
+		showCallOverlay.set(false);
+		showControls.set(true);
+	}
 	// svelte-ignore reactive_declaration_module_script_dependency
 	$: {
 		savedTab = activeTab;
@@ -88,13 +115,15 @@
 	// Tab fallback: if active tab becomes hidden, switch to next available
 	$: if (!showOverviewTab && activeTab === 'overview') activeTab = 'controls';
 	$: if (!showFilesTab && activeTab === 'files') activeTab = 'controls';
+	$: if (!showSubAgentsTab && activeTab === 'subagents') activeTab = 'controls';
 	$: if (!showControlsTab && activeTab === 'controls') {
 		if (showFilesTab) activeTab = 'files';
 		else if (showOverviewTab) activeTab = 'overview';
+		else if (showSubAgentsTab) activeTab = 'subagents';
 	}
 
 	// Auto-close if there are no visible tabs
-	$: if (!showControlsTab && !showFilesTab && !showOverviewTab) {
+	$: if (!showControlsTab && !showFilesTab && !showOverviewTab && !showSubAgentsTab) {
 		showControls.set(false);
 	}
 
@@ -104,8 +133,14 @@
 		showControls.set(true);
 	}
 
-	// Keep Files selected when a terminal is active; opening the panel is handled by selection UI.
-	$: if ($selectedTerminalId && terminalFilesAvailable) {
+	// Switch on terminal activation, not on every permission/catalog update after a user changes tabs.
+	$: if (!terminalFilesAvailable || !$selectedTerminalId) activatedTerminalId = null;
+	$: if (
+		$selectedTerminalId &&
+		terminalFilesAvailable &&
+		activatedTerminalId !== $selectedTerminalId
+	) {
+		activatedTerminalId = $selectedTerminalId;
 		activeTab = 'files';
 	}
 
@@ -145,6 +180,8 @@
 	};
 
 	onMount(() => {
+		const stopScope = trackSubAgentScope(activeChatId, user);
+		scopeMounted = true;
 		const mediaQuery = window.matchMedia('(min-width: 1024px)');
 		mediaQuery.addEventListener('change', handleMediaQuery);
 		handleMediaQuery(mediaQuery);
@@ -166,6 +203,8 @@
 		document.addEventListener('mouseup', onMouseUp);
 
 		return () => {
+			scopeMounted = false;
+			stopScope();
 			isDestroyed = true;
 			mounted = false;
 			if (!largeScreen) {
@@ -257,6 +296,12 @@
 										{$i18n.t('Overview')}
 									</button>
 								{/if}
+								{#if showSubAgentsTab}
+									<SubAgentTabButton
+										active={activeTab === 'subagents'}
+										on:click={() => (activeTab = 'subagents')}
+									/>
+								{/if}
 							</div>
 							<button
 								class="p-1 rounded-lg text-gray-500 dark:text-gray-400"
@@ -283,7 +328,12 @@
 									? 'overflow-y-auto px-3 pt-1'
 									: ''}"
 						>
-							{#if activeTab === 'overview'}
+							{#if activeTab === 'subagents' && showSubAgentsTab}
+								<SubAgentChatViewer
+									parentChatId={chatId ?? ''}
+									visible={$showControls && !specialPanel}
+								/>
+							{:else if activeTab === 'overview'}
 								<Overview
 									{history}
 									{chatUser}
@@ -320,7 +370,8 @@
 			<div
 				class="w-full {specialPanel && !$showCallOverlay
 					? ' '
-					: 'bg-white dark:bg-gray-900'} z-40 pointer-events-auto {activeTab === 'files'
+					: 'bg-white dark:bg-gray-900'} z-40 pointer-events-auto {activeTab === 'files' ||
+				activeTab === 'subagents'
 					? ''
 					: 'overflow-y-auto'} scrollbar-hidden"
 				id="controls-container"
@@ -380,6 +431,12 @@
 										{$i18n.t('Overview')}
 									</button>
 								{/if}
+								{#if showSubAgentsTab}
+									<SubAgentTabButton
+										active={activeTab === 'subagents'}
+										on:click={() => (activeTab = 'subagents')}
+									/>
+								{/if}
 							</div>
 							<button
 								class="p-1 rounded-lg text-gray-500 dark:text-gray-400"
@@ -406,7 +463,12 @@
 									? 'overflow-y-auto px-3 pt-1'
 									: ''}"
 						>
-							{#if activeTab === 'overview'}
+							{#if activeTab === 'subagents' && showSubAgentsTab}
+								<SubAgentChatViewer
+									parentChatId={chatId ?? ''}
+									visible={$showControls && !specialPanel}
+								/>
+							{:else if activeTab === 'overview'}
 								<Overview
 									{history}
 									{chatUser}
