@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext, onDestroy, onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import fileSaver from 'file-saver';
 
 	import { config, settings } from '$lib/stores';
 	import { transcribeAudio, transcribeCaptureAudio } from '$lib/apis/audio';
@@ -17,9 +18,16 @@
 
 	export let chunkDurationMs = 5 * 60 * 1000;
 	export let onCancel = () => {};
-	export let onConfirm = (data: { file: File; text: string; errors: string[] }) => {};
+	type CaptureResult = { file: File; text: string; errors: string[] };
+	export let onConfirm: (data: CaptureResult) => boolean | Promise<boolean> = () => false;
 
-	type CaptureStatus = 'idle' | 'starting' | 'recording' | 'stopping' | 'transcribing';
+	type CaptureStatus =
+		| 'idle'
+		| 'starting'
+		| 'recording'
+		| 'stopping'
+		| 'transcribing'
+		| 'completed';
 
 	type SourceState = {
 		source: CaptureSource;
@@ -55,8 +63,13 @@
 	let stopping = false;
 	let cancelled = false;
 	let completed = false;
+	let destroyed = false;
+	let completedResult: CaptureResult | null = null;
+	let attaching = false;
+	let attachmentFailed = false;
 	let sourceEnded = false;
 	let wakeLock: any = null;
+	let captureRevision = 0;
 
 	const mimeTypes = [
 		'audio/webm; codecs=opus',
@@ -115,10 +128,15 @@
 						{ diarize }
 					);
 				} catch (error: any) {
-					if (error?.status === 404 || error?.status === 501) {
-						return await transcribeAudio(localStorage.token, file, $settings?.audio?.stt?.language, {
-							diarize
-						});
+					if (!cancelled && !destroyed && (error?.status === 404 || error?.status === 501)) {
+						return await transcribeAudio(
+							localStorage.token,
+							file,
+							$settings?.audio?.stt?.language,
+							{
+								diarize
+							}
+						);
 					}
 
 					throw error;
@@ -171,10 +189,42 @@
 		return `${error}`;
 	};
 
+	const releaseLock = async (lock: any) => {
+		try {
+			await lock?.release();
+		} catch (error) {
+			console.debug('Wake Lock release failed:', error);
+		}
+	};
+
 	const requestWakeLock = async () => {
+		if (!recordingActive || stopping || cancelled || destroyed || wakeLock) {
+			return;
+		}
+
+		const revision = captureRevision;
 		if ('wakeLock' in navigator) {
 			try {
-				wakeLock = await (navigator as any).wakeLock.request('screen');
+				const lock = await (navigator as any).wakeLock.request('screen');
+				if (
+					revision !== captureRevision ||
+					!recordingActive ||
+					stopping ||
+					cancelled ||
+					destroyed ||
+					wakeLock
+				) {
+					await releaseLock(lock);
+					return;
+				}
+				wakeLock = lock;
+				lock.addEventListener(
+					'release',
+					() => {
+						if (wakeLock === lock) wakeLock = null;
+					},
+					{ once: true }
+				);
 			} catch (error) {
 				console.debug('Wake Lock request failed:', error);
 			}
@@ -182,24 +232,14 @@
 	};
 
 	const releaseWakeLock = async () => {
-		if (!wakeLock) {
-			return;
-		}
-
-		try {
-			await wakeLock.release();
-		} catch (error) {
-			console.debug('Wake Lock release failed:', error);
-		}
-
+		const lock = wakeLock;
 		wakeLock = null;
+		await releaseLock(lock);
 	};
 
 	const cleanup = async () => {
 		clearChunkTimer();
 		stopDurationCounter();
-		await releaseWakeLock();
-
 		stopTracks(displayStream);
 		stopTracks(micStream);
 
@@ -207,6 +247,7 @@
 		micStream = null;
 		activeSources = [];
 		currentRecorders = [];
+		await releaseWakeLock();
 	};
 
 	const enqueueTranscription = (
@@ -361,6 +402,10 @@
 	};
 
 	const startCapture = async () => {
+		if (destroyed || cancelled || status !== 'idle') {
+			return;
+		}
+
 		if (
 			($config as any)?.audio?.stt?.engine === 'web' ||
 			($settings?.audio?.stt?.engine ?? '') === 'web'
@@ -370,6 +415,7 @@
 		}
 
 		status = 'starting';
+		captureRevision += 1;
 		cancelled = false;
 		completed = false;
 		stopping = false;
@@ -403,11 +449,18 @@
 			};
 
 			try {
-				displayStream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
+				const stream = await navigator.mediaDevices.getDisplayMedia(displayOptions);
+				if (cancelled || destroyed) {
+					stopTracks(stream);
+					return;
+				}
+				displayStream = stream;
 			} catch (error) {
 				displayError = error;
 				displayStream = null;
 			}
+
+			if (cancelled || destroyed) return;
 
 			if (displayStream && displayStream.getAudioTracks().length === 0) {
 				displayError = new Error(
@@ -418,17 +471,24 @@
 			}
 
 			try {
-				micStream = await navigator.mediaDevices.getUserMedia({
+				const stream = await navigator.mediaDevices.getUserMedia({
 					audio: {
 						echoCancellation: true,
 						noiseSuppression: true,
 						autoGainControl: false
 					}
 				});
+				if (cancelled || destroyed) {
+					stopTracks(stream);
+					return;
+				}
+				micStream = stream;
 			} catch (error) {
 				micError = error;
 				micStream = null;
 			}
+
+			if (cancelled || destroyed) return;
 
 			const hasDisplayAudio = hasLiveAudioTracks(displayStream);
 			const hasMicAudio = hasLiveAudioTracks(micStream);
@@ -476,8 +536,10 @@
 
 			startDurationCounter();
 			await requestWakeLock();
+			if (cancelled || destroyed || stopping || !recordingActive) return;
 			startRecorderChunk();
 		} catch (error) {
+			if (cancelled || destroyed) return;
 			console.error('Error starting meeting audio capture:', error);
 			toast.error(getErrorMessage(error));
 
@@ -505,17 +567,20 @@
 		stopDurationCounter();
 
 		await stoppingCurrentChunk;
+		if (cancelled || destroyed) return;
 		await stopCurrentChunk();
+		if (cancelled || destroyed) return;
 		status = 'transcribing';
 		await transcriptionChain;
 
-		if (cancelled) {
+		if (cancelled || destroyed) {
 			return;
 		}
 
 		const transcript = buildMeetingTranscript(transcriptSegments);
 
 		await cleanup();
+		if (cancelled || destroyed) return;
 
 		if (!transcript) {
 			status = 'idle';
@@ -533,7 +598,32 @@
 		});
 
 		completed = true;
-		onConfirm({ file, text: transcript, errors: transcriptionErrors });
+		completedResult = { file, text: transcript, errors: transcriptionErrors };
+		status = 'completed';
+		await attachTranscript();
+	};
+
+	const attachTranscript = async () => {
+		if (!completedResult || attaching || cancelled || destroyed) return;
+
+		attaching = true;
+		attachmentFailed = false;
+		try {
+			attachmentFailed = (await onConfirm(completedResult)) !== true;
+		} catch (error) {
+			console.error('Error attaching meeting transcript:', error);
+			attachmentFailed = true;
+		} finally {
+			attaching = false;
+		}
+
+		if (attachmentFailed && !cancelled && !destroyed) {
+			toast.error($i18n.t('Failed to attach transcript. Retry or download the transcript.'));
+		}
+	};
+
+	const downloadTranscript = () => {
+		if (completedResult) fileSaver.saveAs(completedResult.file, completedResult.file.name);
 	};
 
 	const cancelCapture = async () => {
@@ -547,7 +637,7 @@
 		await stoppingCurrentChunk;
 		await stopCurrentChunk();
 		await cleanup();
-		onCancel();
+		if (!destroyed) onCancel();
 	};
 
 	onMount(() => {
@@ -557,9 +647,8 @@
 	onDestroy(() => {
 		document.removeEventListener('visibilitychange', handleVisibilityChange);
 
-		if (!completed) {
-			cancelCapture();
-		}
+		destroyed = true;
+		cancelCapture();
 	});
 </script>
 
@@ -580,6 +669,10 @@
 					{$i18n.t('Requesting shared audio and microphone access...')}
 				{:else if status === 'recording'}
 					{$i18n.t('Recording separate audio sources and transcribing chunks in the background.')}
+				{:else if status === 'completed'}
+					{attachmentFailed
+						? $i18n.t('Failed to attach transcript. Retry or download the transcript.')
+						: $i18n.t('Transcript ready.')}
 				{:else}
 					{$i18n.t('Finalizing transcript...')}
 				{/if}
@@ -644,6 +737,22 @@
 				on:click={stopCapture}
 			>
 				{$i18n.t('Stop and attach transcript')}
+			</button>
+		{:else if completed && completedResult}
+			<button
+				type="button"
+				class="px-3 py-1.5 rounded-full bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200 hover:opacity-90 transition"
+				on:click={downloadTranscript}
+			>
+				{$i18n.t('Download')}
+			</button>
+			<button
+				type="button"
+				class="px-3 py-1.5 rounded-full bg-black text-white dark:bg-white dark:text-black hover:opacity-90 transition disabled:opacity-50"
+				on:click={attachTranscript}
+				disabled={attaching}
+			>
+				{attaching ? $i18n.t('Please wait...') : $i18n.t('Retry')}
 			</button>
 		{:else}
 			<button

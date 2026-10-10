@@ -6,6 +6,36 @@
 
 The `jp_dev` and `prod` branches are based on Open WebUI with custom modifications for ICT / Salas O'Brien deployment.
 
+### Upstream 0.12.0 integration — local validation
+
+**Local validation only; the historical Verified Branch Status below is unchanged.** This section describes the merge recorded in the commit that contains this document. Promotion to `jp_dev` is planned and authorized (fast-forward push only, no force) but is not claimed as pushed. `prod` is not promoted; deployment is not verified.
+
+- Branch `integrate-v0.12.0`. Merge base/start HEAD `af306dbdd703c94a77197ba6118b584676dd7bde`; upstream `v0.12.0` `f8ae8a6c328946dc62cd0712961a0632574581bf`; package version `0.12.0`. Before this commit, fresh-fetched `origin/jp_dev` equaled local `jp_dev` at `af306dbdd` with no divergence. The merge commit's own SHA is deliberately not recorded here.
+- Candidate details below are preserved as provenance of the pre-commit state: the index had zero unmerged entries and resolved files had zero conflict markers.
+- **Settled user decision (admin Models):** KEEP the fork's hide-unavailable-models behavior together with the fork's tag filtering (`src/lib/components/admin/Settings/Models.svelte`).
+- **Preservation audit:** all 27 items in this document were audited statically; targeted tests covered selected items only. Not all 27 were tested live or end to end.
+- **Repairs in the merge:**
+  - Terminal saved auth is applied across model, header, path, WebSocket and skill reads; duplicate IDs, freshness and inherited permissions are handled; a 10 s WebSocket watcher is present.
+  - Responses: trusted isolated consumer with per-model attribution; native structured output versus public normalized output; content blocks, attachments and final persisted links.
+  - CallPanel with sub-agents and the shared Select integration are retained.
+  - Capture: cancellation, late resources, and recoverable transcript retry/download.
+  - Workflow: `jp_dev` builds with `BUILD_CHANNEL` `dev`.
+  - Test fixtures: async and upstream closure behavior reconciled.
+  - OnBoarding: narrow video listener lifecycle fix (video/show cleanup on hide/destroy) with regression coverage (4 tests), made after an actual browser bug; the Get started step now passes.
+- **Latest local checks:**
+  - Backend: 281 tests passed earlier on Windows `.venv` Python 3.11.9; also run in WSL Conda env `open-webui` (Python 3.11.14): boot reached health ready (HTTP 200) and the API reported version `0.12.0`. The 7 authorized dependency pins were updated with no other package changes; preexisting protobuf conflicts are unchanged.
+  - Frontend: 133 tests across 7 files passed (including OnBoarding, 4 tests); full build passed on Node 22 with an 8 GB heap.
+  - Real-browser (Chrome 155, Cypress 13.17) run is **partial**: signup Get started, login and chat landing PASS, with no app 5xx, uncaught exceptions or console errors. The 4 remaining tests FAILED because the welcome-overlay harness used the wrong conditional. Settings, mobile, keyboard and provider features are therefore NOT VERIFIED; there is no full browser pass.
+  - Browser run used a temporary raw loopback relay (Windows to WSL) for port forwarding; it was removed, no processes were left running, and no firewall/system configuration changed.
+  - Full typecheck: `svelte-check` FAILED with 6096 errors and 189 warnings across 321 files; no clean typecheck claim.
+  - Dependency audit: 54 findings (2 low, 24 moderate, 26 high, 2 critical); no fix applied.
+  - Static validation did not cover all 27 items live. Scoped `git diff --check` is clean.
+- **Validation artifact caveat:** importing `backend/open_webui/config.py` clears the default `STATIC_DIR` before copying frontend assets. An earlier validator accidentally deleted tracked `backend/open_webui/static/BRANDING.md`, `README.md`, and `favicon-dark.png`; they were restored byte-for-byte from index blobs. Future validators must isolate `STATIC_DIR` before backend configuration imports.
+- **Not run:** PostgreSQL, Redis, provider calls, live services or deployment. Local isolated SQLite tests are not live-database validation.
+- **Preexisting static limitations, deliberately not fixed as unrelated to this upgrade:** baseline review R4 showed these existed at `af306dbdd`: modal save failure recovery; Select inside Modal focus trap (browser behavior not verified); dotenv-only `VAULT_HOST` initialized too early (KeyVault dotenv ordering).
+
+---
+
 ### Verified Branch Status
 
 **Historical snapshot, not current status.** Verified against the repository on August 26, 2026:
@@ -914,16 +944,18 @@ Focused validation ran all 12 Responses streaming tests successfully, with 27 fo
 
 The terminal client can upload files through a bounded streaming endpoint, avoiding the need to buffer an entire file in memory before it is sent to Open WebUI.
 
-- **Endpoint:** `POST /api/v1/files/upload-stream`
+- **Endpoint:** `POST /api/v1/terminals/{server_id}/files/upload-stream`. The router also accepts the chat-scoped form `POST /api/v1/terminals/{server_id}/chats/{chat_id}/files/upload-stream`. (An earlier version of this section wrongly documented `/api/v1/files/upload-stream`; no such native route exists.)
+- **Transport:** the body is a raw byte stream, not multipart form data. The terminal extension proxy (`ext/terminal_upload_proxy.py`) forwards the raw bytes to the terminal server; `curl -F` is not valid for it.
 - **Controls:**
-  - `OPEN_WEBUI_TERMINAL_UPLOAD_MAX_BYTES` limits the accepted upload size.
-  - `OPEN_WEBUI_TERMINAL_UPLOAD_TIMEOUT_SECONDS` limits the time allowed for an upload.
-- **Behavior:** Requests that exceed either limit are rejected; successful uploads follow the normal file-processing path.
+  - `OPEN_WEBUI_TERMINAL_UPLOAD_MAX_BYTES` limits the accepted upload size (default 4 GiB).
+  - `OPEN_WEBUI_TERMINAL_UPLOAD_TIMEOUT_SECONDS` limits the total upload time (default 3600 s).
+- **Behavior:** Requests that exceed either limit are rejected. This writes into the terminal workspace; it is distinct from the normal platform file upload (`POST /api/v1/files/`), which stores files in Open WebUI and runs file processing. The normal platform `/files/` route is confirmed in `src/lib/apis/files/index.ts` (`POST`).
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/files/upload-stream" \
+curl -X POST "http://localhost:8080/api/v1/terminals/<server_id>/files/upload-stream?directory=<dir>&filename=<name>" \
   -H "Authorization: Bearer <token>" \
-  -F "file=@/path/to/file"
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @/path/to/file
 ```
 
 - **Commit:** [`8879a39a9`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/8879a39a9)

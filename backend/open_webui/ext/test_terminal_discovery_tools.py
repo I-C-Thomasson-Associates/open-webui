@@ -101,6 +101,7 @@ def _load(monkeypatch):
         'logging': SimpleNamespace(getLogger=lambda _: SimpleNamespace()), 'Config': config, 'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),
         'has_connection_access': AsyncMock(return_value=True), 'Request': object, 'UserModel': object, 'AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA': 10,
         'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': None, 'REDIS_KEY_PREFIX': 'test', 'TERMINAL_CONTEXT_HEADER': 'X-Terminal-Context-Id',
+        'ENABLE_TOOL_SERVERS': True,
         'bearer_auth_header': lambda token: {'Authorization': f'Bearer {token}'} if token else {},
         'clean_openai_tool_schema': lambda value: value, 'execute_tool_server': AsyncMock(return_value=({}, {})),
         'get_async_tool_function_and_apply_extra_params': AsyncMock(side_effect=lambda fn, _: fn),
@@ -115,8 +116,17 @@ def _load(monkeypatch):
     terminal_names = {'is_terminal_orchestrator', 'get_terminal_server_url', 'terminal_context_config', 'terminal_context_available', 'terminal_context_id'}
     terminal_nodes = [copy.deepcopy(node) for node in terminal_tree.body if isinstance(node, ast.Assign) or isinstance(node, ast.FunctionDef) and node.name in terminal_names]
     exec(compile(ast.fix_missing_locations(ast.Module(body=chat_nodes + terminal_nodes, type_ignores=[])), '<terminal-routing>', 'exec'), globals_)
+    # Execute the real authorization helper with legitimate saved-chat owners;
+    # no model/database imports or live stores are used by this AST harness.
+    auth_tree = ast.parse((Path(__file__).parents[1] / 'ext' / 'terminal_context_authorization.py').read_text(encoding='utf-8'))
+    auth_nodes = [copy.deepcopy(node) for node in auth_tree.body if isinstance(node, ast.AsyncFunctionDef)]
+    chats = SimpleNamespace(get_chat_by_id=AsyncMock(side_effect=lambda chat_id: SimpleNamespace(
+        id=chat_id, user_id={'chat': 'user-a', 'saved': 'u'}.get(chat_id, 'owner'), meta={}
+    )))
+    globals_.update(Chats=chats, ENABLE_ADMIN_CHAT_ACCESS=False, is_internal_chat=lambda meta: False)
+    exec(compile(ast.fix_missing_locations(ast.Module(body=auth_nodes, type_ignores=[])), '<terminal-authorization>', 'exec'), globals_)
     globals_['_terminal_discovery_cache'] = lambda request: cache
-    return SimpleNamespace(g=globals_, cache=cache, config=config, fetch=fake_cache.safe_fetch_openapi, gateway=gateway)
+    return SimpleNamespace(g=globals_, cache=cache, config=config, fetch=fake_cache.safe_fetch_openapi, gateway=gateway, chats=chats)
 
 
 def _connection(id='terminal-a', **extra):
@@ -538,3 +548,124 @@ async def test_cached_static_prompt_is_fingerprint_bound_and_usable_after_live_f
     third, _ = await subject.g['_discover_terminal_server'](request, changed)
     assert third['system_prompt'] == 'new prompt'
     assert subject.fetch.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_disabled_feature_returns_upstream_shapes_without_config_or_discovery(monkeypatch):
+    subject = _load(monkeypatch)
+    subject.g['ENABLE_TOOL_SERVERS'] = False
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None, TERMINAL_SERVERS=[{'id': 'stale'}])))
+    assert await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {}) == {}
+    assert await subject.g['get_terminal_servers'](request) == []
+    assert await subject.g['set_terminal_servers'](request) == []
+    assert request.app.state.TERMINAL_SERVERS == []
+    subject.config.get.assert_not_awaited()
+    subject.fetch.assert_not_awaited()
+    subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cwd_enabled', [True, False])
+async def test_upstream_config_knobs_and_inherited_access_apply_to_fresh_calls(monkeypatch, cwd_enabled):
+    subject = _load(monkeypatch)
+    connection = _connection(config={'working_directory_context': cwd_enabled, 'user_shell_tools': 'always'})
+    subject.config.get.return_value = [connection]
+    subject.fetch.return_value = Result(_openapi())
+    subject.g['Groups'].get_groups_by_member_id.return_value = [SimpleNamespace(id='parent-group')]
+    subject.g['get_terminal_cwd'].return_value = '/workspace'
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={})
+    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {})
+    assert tools['run_command']['user_shell_tools'] == 'always'
+    assert ('/workspace' in tools['run_command']['spec'].get('description', '')) is cwd_enabled
+    assert subject.g['get_terminal_cwd'].await_count == int(cwd_enabled)
+    await tools['run_command']['callable']()
+    for call in subject.g['Groups'].get_groups_by_member_id.await_args_list:
+        assert call.kwargs == {'include_inherited': True}
+    for call in subject.g['has_connection_access'].await_args_list:
+        assert call.args[2] == {'parent-group'}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('change', ['feature', 'working_directory_context', 'user_shell_tools'])
+async def test_existing_callables_fail_closed_when_feature_or_config_knobs_change(monkeypatch, change):
+    subject = _load(monkeypatch)
+    connection = _connection(config={})
+    subject.config.get.return_value = [connection]
+    subject.fetch.return_value = Result(_openapi())
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={})
+    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {})
+    if change == 'feature':
+        subject.g['ENABLE_TOOL_SERVERS'] = False
+    else:
+        changed = copy.deepcopy(connection)
+        changed['config'][change] = False if change == 'working_directory_context' else 'always'
+        subject.config.get.return_value = [changed]
+    for name, args in [('run_command', ()), ('persist_file_to_chat', ('/x',)), ('transfer_file_to_terminal', ('f', '/x'))]:
+        with pytest.raises(RuntimeError):
+            await tools[name]['callable'](*args)
+    subject.g['execute_tool_server'].assert_not_awaited()
+    subject.g['persist_terminal_file_to_platform'].assert_not_awaited()
+    subject.g['transfer_platform_file_to_terminal'].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('meta', [{'shared': True}, {'folder_id': 'writable-folder'}])
+@pytest.mark.parametrize('context', ['default', 'chat_id'])
+async def test_model_tools_deny_foreign_shared_or_folder_writer_before_discovery(monkeypatch, meta, context):
+    subject = _load(monkeypatch)
+    subject.config.get.return_value = [_connection(config={'contexts': {'chat': {'context_id': context}}})]
+    subject.chats.get_chat_by_id.side_effect = None
+    subject.chats.get_chat_by_id.return_value = SimpleNamespace(id='foreign', user_id='owner', meta=meta)
+    with pytest.raises(RuntimeError, match='Access denied to terminal chat context'):
+        await subject.g['get_terminal_tools'](SimpleNamespace(), 'terminal-a', SimpleNamespace(id='writer', role='user'), {'__metadata__': {'chat_id': 'foreign'}})
+    assert not subject.cache.calls
+    subject.fetch.assert_not_awaited()
+    subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
+    subject.g['get_terminal_cwd'].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('revocation', ['deleted', 'owner-changed', 'store-error'])
+async def test_all_model_operations_reauthorize_saved_owner_before_gateway(monkeypatch, revocation):
+    subject = _load(monkeypatch)
+    subject.config.get.return_value = [_connection()]
+    subject.fetch.return_value = Result(_openapi())
+    metadata = {'chat_id': 'saved'}
+    tools, _ = await subject.g['get_terminal_tools'](SimpleNamespace(cookies={}), 'terminal-a', SimpleNamespace(id='u', role='user'), {'__metadata__': metadata})
+    metadata['chat_id'] = 'temporary:redirect'
+    subject.chats.get_chat_by_id.side_effect = RuntimeError('private store detail') if revocation == 'store-error' else None
+    subject.chats.get_chat_by_id.return_value = None if revocation == 'deleted' else SimpleNamespace(user_id='new-owner', meta={})
+    subject.gateway.build_terminal_tool_gateway_seed_headers.reset_mock()
+    for name, args in [('run_command', ()), ('persist_file_to_chat', ('/x',)), ('transfer_file_to_terminal', ('f', '/x'))]:
+        with pytest.raises(RuntimeError):
+            await tools[name]['callable'](*args)
+    assert subject.chats.get_chat_by_id.await_args.args == ('saved',)
+    subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
+    subject.g['execute_tool_server'].assert_not_awaited()
+    subject.g['persist_terminal_file_to_platform'].assert_not_awaited()
+    subject.g['transfer_platform_file_to_terminal'].assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('chat_id', ['', 'temporary:x', 'local:x', 'channel:x'])
+async def test_model_default_context_preserves_non_saved_tracking(monkeypatch, chat_id):
+    subject = _load(monkeypatch)
+    subject.config.get.return_value = [_connection(config={})]
+    subject.fetch.return_value = Result(_openapi())
+    tools, _ = await subject.g['get_terminal_tools'](SimpleNamespace(cookies={}), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': chat_id}})
+    await tools['run_command']['callable']()
+    headers = subject.g['execute_tool_server'].await_args.kwargs['headers']
+    assert headers.get('X-Session-Id', '') == chat_id
+    assert 'X-Terminal-Context-Id' not in headers
+    subject.chats.get_chat_by_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_model_automation_keeps_automation_context_without_chat_lookup(monkeypatch):
+    subject = _load(monkeypatch)
+    subject.config.get.return_value = [_connection(config={'contexts': {'automation': {'context_id': 'automation_id'}}})]
+    subject.fetch.return_value = Result(_openapi())
+    tools, _ = await subject.g['get_terminal_tools'](SimpleNamespace(cookies={}), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'automation_id': 'job', 'chat_id': 'saved'}})
+    await tools['run_command']['callable']()
+    assert subject.g['execute_tool_server'].await_args.kwargs['headers']['X-Terminal-Context-Id'] == 'automation:job'
+    subject.chats.get_chat_by_id.assert_not_awaited()
