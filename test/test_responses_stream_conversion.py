@@ -2,9 +2,14 @@ import json
 
 import pytest
 
-from open_webui.routers.openai import responses_stream_chunks_handler
-from open_webui.utils.anthropic import openai_stream_to_anthropic_stream
-from open_webui.utils.session_pool import stream_wrapper
+# Extract only the exercised production functions: importing the router loads
+# configuration, database models, and credential hydration during collection.
+from test_streaming_tool_merge import stream_functions
+
+_router, _pool, _anthropic = stream_functions()
+responses_stream_chunks_handler = _router.responses_stream_chunks_handler
+openai_stream_to_anthropic_stream = _anthropic.openai_stream_to_anthropic_stream
+stream_wrapper = _pool.stream_wrapper
 
 
 class FragmentedStream:
@@ -235,6 +240,36 @@ async def test_converted_stream_drives_anthropic_text_block_lifecycle():
 
 
 @pytest.mark.asyncio
+async def test_converted_reasoning_and_tool_stream_drives_anthropic_blocks():
+    events = [
+        {'type': 'response.reasoning_summary_text.delta', 'delta': 'Think'},
+        {'type': 'response.output_item.added', 'output_index': 1, 'item': {
+            'type': 'function_call', 'id': 'fc1', 'call_id': 'call1', 'name': 'weather',
+        }},
+        {'type': 'response.function_call_arguments.delta', 'item_id': 'fc1', 'delta': '{"city":"Paris"}'},
+        {'type': 'response.completed', 'response': {}},
+    ]
+    stream = responses_stream_chunks_handler(FragmentedStream([b''.join(sse_event(event) for event in events)]))
+    output = b''.join([chunk async for chunk in openai_stream_to_anthropic_stream(stream)]).decode()
+    assert '"type": "thinking_delta", "thinking": "Think"' in output
+    assert '"type": "tool_use", "id": "call1", "name": "weather"' in output
+    assert '"type": "input_json_delta"' in output
+    assert '"stop_reason": "tool_use"' in output
+    assert output.count('event: message_stop') == 1
+
+
+@pytest.mark.asyncio
+async def test_eof_without_terminal_and_usage_cost_remain_normalized():
+    output, payloads = await collect_conversion([sse_event({'type': 'response.output_text.delta', 'delta': 'Hi'})])
+    assert payloads[-1]['choices'][0]['finish_reason'] == 'stop'
+    assert b''.join(output).count(b'data: [DONE]') == 1
+    _, payloads = await collect_conversion([sse_event({'type': 'response.completed', 'response': {
+        'usage': {'input_tokens': 0, 'output_tokens': 0, 'cost': 0.25},
+    }})])
+    assert payloads[-1]['usage'] == {'prompt_tokens': 0, 'completion_tokens': 0, 'total_tokens': 0, 'cost': 0.25}
+
+
+@pytest.mark.asyncio
 async def test_failed_response_emits_error_and_terminates_once():
     events = [
         {'type': 'response.failed', 'response': {'error': {'message': 'upstream failed', 'code': 'server_error'}}},
@@ -276,6 +311,21 @@ async def test_session_pool_stream_wrapper_uses_responses_handler_and_closes_res
     assert b'response.output_text.delta' not in b''.join(output)
     assert response.close_calls == 1
     assert response.closed
+
+
+@pytest.mark.asyncio
+async def test_session_pool_stream_wrapper_closes_response_on_handler_failure():
+    response = FakeResponse([])
+
+    async def failing_handler(content):
+        yield b'first'
+        raise RuntimeError('upstream disconnected')
+
+    stream = stream_wrapper(response, content_handler=failing_handler)
+    assert await anext(stream) == b'first'
+    with pytest.raises(RuntimeError, match='upstream disconnected'):
+        await anext(stream)
+    assert response.close_calls == 1
 
 
 @pytest.mark.asyncio

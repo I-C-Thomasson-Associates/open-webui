@@ -6,6 +6,7 @@ Routes:
 """
 
 import asyncio
+import copy
 import logging
 import posixpath
 from urllib.parse import unquote
@@ -14,10 +15,11 @@ import aiohttp
 from fastapi import APIRouter, Depends, Request, Response, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from open_webui.config import TERMINAL_PROXY_HEADERS
-from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
+from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, ENABLE_TOOL_SERVERS
 from open_webui.ext.terminal_tool_gateway import build_terminal_tool_gateway_seed_headers
 from open_webui.ext.terminal_upload_proxy import proxy_terminal_upload
 from open_webui.ext.terminal_context_authorization import resolve_terminal_chat_context
+from open_webui.ext.terminal_discovery_cache import terminal_fingerprint
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
 from open_webui.models.groups import Groups
@@ -90,8 +92,11 @@ def _sanitize_proxy_path(path: str) -> str | None:
 @router.get('/')
 async def list_terminal_servers(request: Request, user=Depends(get_verified_user)):
     """Return terminal servers the authenticated user has access to."""
+    if not ENABLE_TOOL_SERVERS:
+        return []
+
     connections = await Config.get('terminal_server.connections', []) or []
-    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
 
     return [
         {
@@ -110,6 +115,8 @@ PROXY_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
 
 
 @router.api_route('/{server_id}/{path:path}', methods=PROXY_METHODS)
+# Register the chat route before the catch-all.
+@router.api_route('/{server_id}/chats/{chat_id}/{path:path}', methods=PROXY_METHODS)
 async def proxy_terminal(
     server_id: str,
     path: str,
@@ -117,8 +124,12 @@ async def proxy_terminal(
     user=Depends(get_verified_user),
 ):
     """Proxy a request to the admin terminal server identified by *server_id*."""
+    if not ENABLE_TOOL_SERVERS:
+        return JSONResponse({'error': 'Tool servers are disabled'}, status_code=403)
+
     connections = await Config.get('terminal_server.connections', []) or []
-    connection = next((c for c in connections if c.get('id') == server_id), None)
+    matches = [c for c in connections if isinstance(c, dict) and c.get('id') == server_id]
+    connection = matches[0] if len(matches) == 1 else None
 
     if connection is None:
         return JSONResponse({'error': f"Terminal server '{server_id}' not found"}, status_code=404)
@@ -126,7 +137,7 @@ async def proxy_terminal(
     if not connection.get('enabled', True):
         return JSONResponse({'error': 'Terminal server disabled'}, status_code=403)
 
-    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
     if not await has_connection_access(user, connection, user_group_ids):
         return JSONResponse({'error': 'Access denied'}, status_code=403)
 
@@ -153,14 +164,14 @@ async def proxy_terminal(
         target_url += f'?{request.query_params}'
 
     headers = {'X-User-Id': user.id}
-    # Preserve temporary/local/channel session IDs for cwd tracking, but only
-    # an authorized saved chat may select a chat-scoped runtime context.
+    # The chat route takes precedence over the legacy header. Authorize the
+    # effective context before forwarding it or seeding gateway credentials.
+    # Temporary/local/channel IDs remain usable only for cwd tracking.
     session_id, authorized_saved_chat = await resolve_terminal_chat_context(
-        user, request.headers.get('x-session-id', '')
+        user, request.path_params.get('chat_id') or request.headers.get('x-session-id', '')
     )
     if session_id is None:
         return JSONResponse({'error': 'An accessible saved chat is required for this terminal'}, status_code=403)
-
     if session_id:
         headers['X-Session-Id'] = session_id
         if not terminal_context_available(connection, 'chat'):
@@ -310,6 +321,10 @@ async def _resolve_authenticated_connection(ws: WebSocket, server_id: str):
 
 async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
     """Resolve current access for both the handshake and an open terminal session."""
+    if not ENABLE_TOOL_SERVERS:
+        await ws.close(code=4003, reason='Tool servers are disabled')
+        return None
+
     try:
         user = await get_verified_user_by_token(token, getattr(ws.app.state, 'redis', None))
         if user is None:
@@ -321,7 +336,8 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
 
     # Resolve terminal server
     connections = await Config.get('terminal_server.connections', []) or []
-    connection = next((c for c in connections if c.get('id') == server_id), None)
+    matches = [c for c in connections if isinstance(c, dict) and c.get('id') == server_id]
+    connection = matches[0] if len(matches) == 1 else None
 
     if connection is None:
         await ws.close(code=4004, reason='Terminal server not found')
@@ -331,7 +347,8 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
         await ws.close(code=4003, reason='Terminal server disabled')
         return None
 
-    if not await has_connection_access(user, connection):
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
+    if not await has_connection_access(user, connection, user_group_ids):
         await ws.close(code=4003, reason='Access denied')
         return None
 
@@ -339,6 +356,33 @@ async def _resolve_terminal_access(ws: WebSocket, server_id: str, token: str):
         await ws.close(code=4003, reason='Terminal server is not available in chats')
         return None
     return user, connection
+
+
+async def _watch_terminal_access(ws, server_id, token, chat_id, opened_identity):
+    """Reauthorize the pinned chat and runtime, ending the proxy on any failure."""
+    try:
+        while True:
+            # Poll current state so revocation also works across workers.
+            await asyncio.sleep(10)
+            result = await _resolve_terminal_access(ws, server_id, token)
+            if result is None:
+                return
+            user, connection = result
+            current_chat_id, authorized_saved_chat = await resolve_terminal_chat_context(user, chat_id)
+            if current_chat_id is None or (chat_id and not authorized_saved_chat):
+                await ws.close(code=4003, reason='Terminal chat access revoked')
+                return
+            base_url = get_terminal_server_url(connection)
+            context_id = terminal_context_id(connection, {'chat_id': current_chat_id}, 'chat')
+            identity = (user.id, terminal_fingerprint(connection, base_url, base_url), context_id)
+            if not identity[1] or identity != opened_identity:
+                await ws.close(code=4003, reason='Terminal configuration changed; reconnect')
+                return
+    except Exception:
+        # Exception details may contain connection credentials. Fail closed
+        # even if the access/configuration stores are temporarily unavailable.
+        log.warning('Terminal access recheck failed')
+        await ws.close(code=4003, reason='Terminal access recheck failed')
 
 
 @router.websocket('/{server_id}/api/terminals/{session_id}')
@@ -359,6 +403,7 @@ async def ws_terminal(
     if result is None:
         return
     user, connection, chat_id, token = result
+    connection = copy.deepcopy(connection)
 
     base_url = get_terminal_server_url(connection)
     if not base_url:
@@ -378,6 +423,10 @@ async def ws_terminal(
         return
     if context_id:
         upstream_headers[TERMINAL_CONTEXT_HEADER] = context_id
+    opened_identity = (user.id, terminal_fingerprint(connection, base_url, base_url), context_id)
+    if not opened_identity[1]:
+        await ws.close(code=4003, reason='Invalid terminal configuration')
+        return
 
     import urllib.parse
 
@@ -450,23 +499,13 @@ async def ws_terminal(
                 except Exception:
                     pass
 
-            async def _watch_access():
-                try:
-                    while True:
-                        # Poll current state so revocation also works across workers.
-                        await asyncio.sleep(10)
-                        if await _resolve_terminal_access(ws, server_id, token) is None:
-                            return
-                except Exception:
-                    log.exception('Terminal access recheck failed')
-
             # End the proxy as soon as any task finishes (e.g. a
             # graceful upstream CLOSE) and cancel the rest, which would
             # otherwise hang on a blocked ws.receive() until the browser leaves.
             tasks = [
                 asyncio.create_task(_client_to_upstream()),
                 asyncio.create_task(_upstream_to_client()),
-                asyncio.create_task(_watch_access()),
+                asyncio.create_task(_watch_terminal_access(ws, server_id, token, chat_id, opened_identity)),
             ]
             try:
                 await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)

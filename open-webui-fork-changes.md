@@ -6,6 +6,36 @@
 
 The `jp_dev` and `prod` branches are based on Open WebUI with custom modifications for ICT / Salas O'Brien deployment.
 
+### Upstream 0.12.0 integration — local validation
+
+**Local validation only; the historical Verified Branch Status below is unchanged.** This section describes the merge recorded in the commit that contains this document. Parent-verified current fact: `93f6e5e89` was fast-forward pushed to `jp_dev` and the remote was verified; `prod` is unchanged and deployment is not verified.
+
+- Branch `integrate-v0.12.0`. Merge base/start HEAD `af306dbdd703c94a77197ba6118b584676dd7bde`; upstream `v0.12.0` `f8ae8a6c328946dc62cd0712961a0632574581bf`; package version `0.12.0`. Before this commit, fresh-fetched `origin/jp_dev` equaled local `jp_dev` at `af306dbdd` with no divergence. The merge commit's own SHA is deliberately not recorded here.
+- Candidate details below are preserved as provenance of the pre-commit state: the index had zero unmerged entries and resolved files had zero conflict markers.
+- **Settled user decision (admin Models):** KEEP the fork's hide-unavailable-models behavior together with the fork's tag filtering (`src/lib/components/admin/Settings/Models.svelte`).
+- **Preservation audit:** all 27 items (as of that merge; item 28 below was added afterwards and is not automatically covered) were audited statically; targeted tests covered selected items only. Not all 27 were tested live or end to end.
+- **Repairs in the merge:**
+  - Terminal saved auth is applied across model, header, path, WebSocket and skill reads; duplicate IDs, freshness and inherited permissions are handled; a 10 s WebSocket watcher is present.
+  - Responses: trusted isolated consumer with per-model attribution; native structured output versus public normalized output; content blocks, attachments and final persisted links.
+  - CallPanel with sub-agents and the shared Select integration are retained.
+  - Capture: cancellation, late resources, and recoverable transcript retry/download.
+  - Workflow: `jp_dev` builds with `BUILD_CHANNEL` `dev`.
+  - Test fixtures: async and upstream closure behavior reconciled.
+  - OnBoarding: narrow video listener lifecycle fix (video/show cleanup on hide/destroy) with regression coverage (4 tests), made after an actual browser bug; the Get started step now passes.
+- **Latest local checks:**
+  - Backend: 281 tests passed earlier on Windows `.venv` Python 3.11.9; also run in WSL Conda env `open-webui` (Python 3.11.14): boot reached health ready (HTTP 200) and the API reported version `0.12.0`. The 7 authorized dependency pins were updated with no other package changes; preexisting protobuf conflicts are unchanged.
+  - Frontend: 133 tests across 7 files passed (including OnBoarding, 4 tests); full build passed on Node 22 with an 8 GB heap.
+  - Real-browser (Chrome 155, Cypress 13.17) run is **partial**: signup Get started, login and chat landing PASS, with no app 5xx, uncaught exceptions or console errors. The 4 remaining tests FAILED because the welcome-overlay harness used the wrong conditional. Settings, mobile, keyboard and provider features are therefore NOT VERIFIED; there is no full browser pass.
+  - Browser run used a temporary raw loopback relay (Windows to WSL) for port forwarding; it was removed, no processes were left running, and no firewall/system configuration changed.
+  - Full typecheck: `svelte-check` FAILED with 6096 errors and 189 warnings across 321 files; no clean typecheck claim.
+  - Dependency audit: 54 findings (2 low, 24 moderate, 26 high, 2 critical); no fix applied.
+  - Static validation did not cover all 27 items live. Scoped `git diff --check` is clean.
+- **Validation artifact caveat:** importing `backend/open_webui/config.py` clears the default `STATIC_DIR` before copying frontend assets. An earlier validator accidentally deleted tracked `backend/open_webui/static/BRANDING.md`, `README.md`, and `favicon-dark.png`; they were restored byte-for-byte from index blobs. Future validators must isolate `STATIC_DIR` before backend configuration imports.
+- **Not run:** PostgreSQL, Redis, provider calls, live services or deployment. Local isolated SQLite tests are not live-database validation.
+- **Preexisting static limitations, deliberately not fixed as unrelated to this upgrade:** baseline review R4 showed these existed at `af306dbdd`: modal save failure recovery; Select inside Modal focus trap (browser behavior not verified); dotenv-only `VAULT_HOST` initialized too early (KeyVault dotenv ordering).
+
+---
+
 ### Verified Branch Status
 
 **Historical snapshot, not current status.** Verified against the repository on August 26, 2026:
@@ -914,16 +944,18 @@ Focused validation ran all 12 Responses streaming tests successfully, with 27 fo
 
 The terminal client can upload files through a bounded streaming endpoint, avoiding the need to buffer an entire file in memory before it is sent to Open WebUI.
 
-- **Endpoint:** `POST /api/v1/files/upload-stream`
+- **Endpoint:** `POST /api/v1/terminals/{server_id}/files/upload-stream`. The router also accepts the chat-scoped form `POST /api/v1/terminals/{server_id}/chats/{chat_id}/files/upload-stream`. (An earlier version of this section wrongly documented `/api/v1/files/upload-stream`; no such native route exists.)
+- **Transport:** the body is a raw byte stream, not multipart form data. The terminal extension proxy (`ext/terminal_upload_proxy.py`) forwards the raw bytes to the terminal server; `curl -F` is not valid for it.
 - **Controls:**
-  - `OPEN_WEBUI_TERMINAL_UPLOAD_MAX_BYTES` limits the accepted upload size.
-  - `OPEN_WEBUI_TERMINAL_UPLOAD_TIMEOUT_SECONDS` limits the time allowed for an upload.
-- **Behavior:** Requests that exceed either limit are rejected; successful uploads follow the normal file-processing path.
+  - `OPEN_WEBUI_TERMINAL_UPLOAD_MAX_BYTES` limits the accepted upload size (default 4 GiB).
+  - `OPEN_WEBUI_TERMINAL_UPLOAD_TIMEOUT_SECONDS` limits the total upload time (default 3600 s).
+- **Behavior:** Requests that exceed either limit are rejected. This writes into the terminal workspace; it is distinct from the normal platform file upload (`POST /api/v1/files/`), which stores files in Open WebUI and runs file processing. The normal platform `/files/` route is confirmed in `src/lib/apis/files/index.ts` (`POST`).
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/files/upload-stream" \
+curl -X POST "http://localhost:8080/api/v1/terminals/<server_id>/files/upload-stream?directory=<dir>&filename=<name>" \
   -H "Authorization: Bearer <token>" \
-  -F "file=@/path/to/file"
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @/path/to/file
 ```
 
 - **Commit:** [`8879a39a9`](https://github.com/I-C-Thomasson-Associates/open-webui/commit/8879a39a9)
@@ -1097,6 +1129,37 @@ Revalidate the `subagent_chats_router` registration in `main.py` (exactly once),
 **Upstream Sync Checks:**
 
 After upstream merges, revalidate that `Select.svelte` still delegates to `select-keyboard.ts` with the same `open`/portal lifecycle, that the upstream `Drawer` still has no competing Escape handling that runs before the select's capture handler, and that upstream has not added its own keyboard handling to `Select.svelte`.
+
+---
+
+### 28. Azure OpenAI Realtime and OpenRouter Turn-Based Voice Providers
+
+**Status:** Uncommitted local changes; local validation only. **Not deployed, and no live provider pass was run** against OpenAI, Azure OpenAI or OpenRouter. The item 28 audit does not imply that all 28 items were validated; the 27-item preservation audit predates this item.
+
+**What Changed:**
+
+- New extension-owned `src/lib/ext/RealtimeProviderSettings.svelte` replaces the whole inline realtime credentials/model/voice/transcription block in `src/lib/components/admin/Settings/Audio.svelte`, bound to the existing `realtime` object. It adds a provider select (`openai`, `azure`, `openrouter`) stored as `ENGINE`, reusing the existing credential fields (`OPENAI_API_BASE_URL`, `OPENAI_API_KEY`, `MODEL`, `VOICE`, `TRANSCRIPTION_MODEL`) and the existing admin audio config (admin `get_audio_config`); no new public config. A backend factory registers the `ENGINE` config (env `AUDIO_REALTIME_ENGINE`) through extension-owned modules with narrow hooks in core files.
+- A missing or unknown `ENGINE` displays and saves as `openai`, preserving old responses. Rendering and loading never reset saved values; only an explicit user change of the provider clears `OPENAI_API_KEY` (always, to prevent cross-provider key leakage) and sets base URL, model, voice and transcription model to that provider's defaults.
+- Call mode is `Standard` or `Realtime / turn-based`; the stored boolean is unchanged.
+- **Azure:** GA Azure OpenAI Realtime with an API key (not Microsoft Entra, not the preview API). Base URL placeholder `https://resource.openai.azure.com/openai/v1`; the model field is the deployment name and must be a supported GA realtime model. Example defaults: `gpt-realtime`, voice `alloy`, transcription `whisper-1` (where available).
+- **OpenRouter (turn-based):** base `https://openrouter.ai/api/v1`; examples `openai/gpt-4o-audio-preview` (audio output model), voice `alloy`, `google/gemini-2.5-flash` (input audio chat model). Examples are not enforced and do not claim availability. Flow is speech-to-text, then the selected chat model, then spoken audio; latency is higher, the full response is buffered and must be WAV (24 kHz mono PCM16), playback is not a native stream, there are no avatar gestures and no exact native barge-in. Voice calls still use authenticated chat delegation and tool approval is unchanged. The Realtime prompt template is ignored because every request uses the selected chat model.
+
+**Files Modified / Added:**
+
+- `src/lib/ext/RealtimeProviderSettings.svelte` (new), `src/lib/components/admin/Settings/Audio.svelte` (narrow integration), `src/lib/ext/RealtimeProviderSettings.test.ts` (new).
+- `backend/open_webui/ext/realtime_provider_config.py`, `backend/open_webui/ext/realtime_providers.py`, `backend/open_webui/ext/realtime_openrouter.py` (new); `backend/open_webui/ext/test_realtime_providers.py`, `backend/open_webui/ext/test_realtime_openrouter.py` (new tests).
+- Narrow hooks: `backend/open_webui/config.py`, `backend/open_webui/routers/audio/__init__.py`, `backend/open_webui/routers/audio/realtime.py`.
+
+**Validation:**
+
+- **Backend:** combined final run of 51 backend tests passed (Windows `.venv`, Python 3.11.9, isolated `STATIC_DIR`/`DATA_DIR`; no SQL database or live service).
+- **Frontend:** 140 Vitest tests passed across 8 files, including the 7 provider-setting tests, using Node 22.23.3. This supersedes the earlier 7-test run on Node 24 only.
+- **Build:** production Vite build passed on Node 22 with an 8 GB heap; no `fetch-pyodide` step was run. Two Svelte components compiled successfully.
+- **Static checks:** Ruff passed on the 3 production extension files; `git diff --check` passed.
+- **Independent review:** 2 edge cases (mute/clear terminal gate, and Unicode JSON long-result repair) were repaired and tested; the follow-up review had no findings.
+- **Limits enforced by the backend:** max 128 turns and max 128 responses (separate counts); up to 100000 decoded answer characters accepted (serialization bound 1200256 bytes), and any answer over 8000 characters is replaced by a notice in the read chat, with no spoken-truncation claim; WAV must be 24 kHz mono PCM16, max 8 MiB, in the provider format with no resampling.
+- **Not run:** mounted-DOM or browser tests, authenticated WebSocket tests, and live Azure/OpenAI/OpenRouter provider calls. Full `svelte-check` was not repeated; the known preexisting 6096-error count is a historical caveat, not a new count.
+- Status is unchanged: uncommitted local changes, not deployed, and not provider-verified, using the existing architecture paths.
 
 ---
 
