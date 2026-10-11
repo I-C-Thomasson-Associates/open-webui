@@ -53,6 +53,7 @@ from open_webui.env import (
 )
 from open_webui.events import EVENTS, publish_event
 from open_webui.models.config import Config
+from open_webui.ext.realtime_provider_config import RealtimeEngine
 from open_webui.routers.audio import realtime
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
@@ -101,6 +102,7 @@ TTS_CONFIG_KEYS = {
 
 REALTIME_CONFIG_KEYS = {
     'ENABLED': 'audio.realtime.enabled',
+    'ENGINE': 'audio.realtime.engine',
     'OPENAI_API_BASE_URL': 'audio.realtime.openai.api_base_url',
     'OPENAI_API_KEY': 'audio.realtime.openai.api_key',
     'MODEL': 'audio.realtime.model',
@@ -293,6 +295,7 @@ class STTConfigForm(BaseModel):
 
 class RealtimeConfigForm(BaseModel):
     ENABLED: bool = False
+    ENGINE: RealtimeEngine = 'openai'
     OPENAI_API_BASE_URL: str = 'https://api.openai.com/v1'
     OPENAI_API_KEY: str = ''
     MODEL: str = Field(default='gpt-realtime-2.1-mini', min_length=1, max_length=200)

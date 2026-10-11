@@ -4,11 +4,11 @@ import asyncio
 import base64
 import contextlib
 import logging
-from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiohttp
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL, DEFAULT_REALTIME_CALL_PROMPT_TEMPLATE
+from open_webui.ext.realtime_providers import connect_upstream
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL, BYPASS_MODEL_ACCESS_CONTROL
 from open_webui.models.chats import Chats
 from open_webui.models.config import Config
@@ -343,6 +343,7 @@ async def realtime_call(ws: WebSocket):
             raise ValueError('Authentication expired or invalid')
         config = await Config.get_many(
             'audio.realtime.enabled',
+            'audio.realtime.engine',
             'audio.realtime.openai.api_base_url',
             'audio.realtime.openai.api_key',
             'audio.realtime.model',
@@ -383,33 +384,18 @@ async def realtime_call(ws: WebSocket):
         voice_model = config.get('audio.realtime.model')
         voice = override.voice or config.get('audio.realtime.voice')
         key = config.get('audio.realtime.openai.api_key')
-        url = urlsplit(config.get('audio.realtime.openai.api_base_url') or '')
-        if (
-            url.scheme not in {'http', 'https'}
-            or not url.netloc
-            or url.username
-            or url.password
-            or url.query
-            or url.fragment
-        ):
-            raise ValueError('Invalid Realtime provider URL')
+        engine = config.get('audio.realtime.engine') or 'openai'
         if not key or not voice_model or not voice or not config.get('audio.realtime.transcription_model'):
             raise ValueError('Configure the Realtime API key, model, voice, and transcription model')
-        ws_url = urlunsplit(
-            (
-                'wss' if url.scheme == 'https' else 'ws',
-                url.netloc,
-                url.path.rstrip('/') + '/realtime',
-                urlencode({'model': voice_model}),
-                '',
-            )
-        )
         session = await get_session()
         async with asyncio.timeout(30):
             async with asyncio.timeout(15):
-                upstream = await session.ws_connect(
-                    ws_url,
-                    headers={'Authorization': f'Bearer {key}'},
+                upstream = await connect_upstream(
+                    engine,
+                    session,
+                    config.get('audio.realtime.openai.api_base_url') or '',
+                    key,
+                    voice_model,
                     ssl=AIOHTTP_CLIENT_SESSION_SSL,
                     heartbeat=20,
                     max_msg_size=MAX_EVENT_BYTES,

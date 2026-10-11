@@ -26,6 +26,7 @@
 	import AdminSettingField from './AdminSettingField.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
+	import RealtimeProviderSettings, { normalizeEngine } from '$lib/ext/RealtimeProviderSettings.svelte';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
 
@@ -33,6 +34,7 @@
 
 	let realtime = {
 		ENABLED: false,
+		ENGINE: 'openai',
 		OPENAI_API_BASE_URL: 'https://api.openai.com/v1',
 		OPENAI_API_KEY: '',
 		MODEL: 'gpt-realtime-2.1-mini',
@@ -230,6 +232,7 @@
 			realtime = {
 				...realtime,
 				...res.realtime,
+				ENGINE: normalizeEngine(res.realtime?.ENGINE),
 				REALTIME_CALL_PROMPT_TEMPLATE: res.realtime?.REALTIME_CALL_PROMPT_TEMPLATE ?? ''
 			};
 			STT_OPENAI_API_BASE_URL = res.stt.OPENAI_API_BASE_URL;
@@ -279,44 +282,11 @@
 			<AdminSettingRow label={$i18n.t('Call mode')}>
 				<SettingsSelect bind:value={realtime.ENABLED} ariaLabel={$i18n.t('Call mode')}>
 					<option value={false}>{$i18n.t('Standard')}</option>
-					<option value={true}>{$i18n.t('Realtime')}</option>
+					<option value={true}>{$i18n.t('Realtime / turn-based')}</option>
 				</SettingsSelect>
 			</AdminSettingRow>
 			{#if realtime.ENABLED}
-				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-					<AdminSettingField label={$i18n.t('OpenAI API Base URL')}>
-						<input class={inputClass} bind:value={realtime.OPENAI_API_BASE_URL} />
-					</AdminSettingField>
-					<AdminSettingField label={$i18n.t('API Key')}>
-						<SensitiveInput
-							variant="settings"
-							placeholder={$i18n.t('API Key')}
-							bind:value={realtime.OPENAI_API_KEY}
-						/>
-					</AdminSettingField>
-				</div>
-				<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-					<AdminSettingField label={$i18n.t('Voice Model')}>
-						<input
-							class={inputClass}
-							bind:value={realtime.MODEL}
-							placeholder="gpt-realtime-2.1-mini"
-						/>
-					</AdminSettingField>
-					<AdminSettingField label={$i18n.t('Voice')}>
-						<input class={inputClass} bind:value={realtime.VOICE} placeholder="marin" />
-					</AdminSettingField>
-				</div>
-				<AdminSettingField label={$i18n.t('Input Transcription Model')}>
-					<input class={inputClass} bind:value={realtime.TRANSCRIPTION_MODEL} />
-				</AdminSettingField>
-				<AdminSettingField label={$i18n.t('Prompt Template')}>
-					<Textarea
-						className={textareaClass}
-						bind:value={realtime.REALTIME_CALL_PROMPT_TEMPLATE}
-						placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
-					/>
-				</AdminSettingField>
+				<RealtimeProviderSettings bind:realtime {inputClass} {textareaClass} />
 			{/if}
 		</AdminSettingSection>
 

@@ -1649,6 +1649,8 @@ AUDIO_TTS_VOICE = os.getenv('AUDIO_TTS_VOICE', 'alloy')
 
 REALTIME_TTS_PROMPT_TEMPLATE = os.getenv('REALTIME_TTS_PROMPT_TEMPLATE')
 
+from open_webui.ext.realtime_provider_config import REALTIME_CONFIG_DEFAULTS  # noqa: E402
+
 AUDIO_REALTIME_ENABLED = os.getenv('AUDIO_REALTIME_ENABLED', 'False').lower() == 'true'
 AUDIO_REALTIME_OPENAI_API_BASE_URL = os.getenv('AUDIO_REALTIME_OPENAI_API_BASE_URL', 'https://api.openai.com/v1')
 AUDIO_REALTIME_OPENAI_API_KEY = os.getenv('AUDIO_REALTIME_OPENAI_API_KEY', '')
@@ -3298,7 +3300,7 @@ ENABLE_PERSISTENT_CONFIG = os.getenv('ENABLE_PERSISTENT_CONFIG', 'True').lower()
 ENABLE_OAUTH_PERSISTENT_CONFIG = os.getenv('ENABLE_OAUTH_PERSISTENT_CONFIG', 'False').lower() == 'true'
 
 Config.configure(
-    defaults=DEFAULT_CONFIG,
+    defaults={**DEFAULT_CONFIG, **REALTIME_CONFIG_DEFAULTS},
     enable_persistent=ENABLE_PERSISTENT_CONFIG,
     enable_oauth_persistent=ENABLE_OAUTH_PERSISTENT_CONFIG,
 )

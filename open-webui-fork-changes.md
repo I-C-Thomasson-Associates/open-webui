@@ -8,12 +8,12 @@ The `jp_dev` and `prod` branches are based on Open WebUI with custom modificatio
 
 ### Upstream 0.12.0 integration — local validation
 
-**Local validation only; the historical Verified Branch Status below is unchanged.** This section describes the merge recorded in the commit that contains this document. Promotion to `jp_dev` is planned and authorized (fast-forward push only, no force) but is not claimed as pushed. `prod` is not promoted; deployment is not verified.
+**Local validation only; the historical Verified Branch Status below is unchanged.** This section describes the merge recorded in the commit that contains this document. Parent-verified current fact: `93f6e5e89` was fast-forward pushed to `jp_dev` and the remote was verified; `prod` is unchanged and deployment is not verified.
 
 - Branch `integrate-v0.12.0`. Merge base/start HEAD `af306dbdd703c94a77197ba6118b584676dd7bde`; upstream `v0.12.0` `f8ae8a6c328946dc62cd0712961a0632574581bf`; package version `0.12.0`. Before this commit, fresh-fetched `origin/jp_dev` equaled local `jp_dev` at `af306dbdd` with no divergence. The merge commit's own SHA is deliberately not recorded here.
 - Candidate details below are preserved as provenance of the pre-commit state: the index had zero unmerged entries and resolved files had zero conflict markers.
 - **Settled user decision (admin Models):** KEEP the fork's hide-unavailable-models behavior together with the fork's tag filtering (`src/lib/components/admin/Settings/Models.svelte`).
-- **Preservation audit:** all 27 items in this document were audited statically; targeted tests covered selected items only. Not all 27 were tested live or end to end.
+- **Preservation audit:** all 27 items (as of that merge; item 28 below was added afterwards and is not automatically covered) were audited statically; targeted tests covered selected items only. Not all 27 were tested live or end to end.
 - **Repairs in the merge:**
   - Terminal saved auth is applied across model, header, path, WebSocket and skill reads; duplicate IDs, freshness and inherited permissions are handled; a 10 s WebSocket watcher is present.
   - Responses: trusted isolated consumer with per-model attribution; native structured output versus public normalized output; content blocks, attachments and final persisted links.
@@ -1129,6 +1129,37 @@ Revalidate the `subagent_chats_router` registration in `main.py` (exactly once),
 **Upstream Sync Checks:**
 
 After upstream merges, revalidate that `Select.svelte` still delegates to `select-keyboard.ts` with the same `open`/portal lifecycle, that the upstream `Drawer` still has no competing Escape handling that runs before the select's capture handler, and that upstream has not added its own keyboard handling to `Select.svelte`.
+
+---
+
+### 28. Azure OpenAI Realtime and OpenRouter Turn-Based Voice Providers
+
+**Status:** Uncommitted local changes; local validation only. **Not deployed, and no live provider pass was run** against OpenAI, Azure OpenAI or OpenRouter. The item 28 audit does not imply that all 28 items were validated; the 27-item preservation audit predates this item.
+
+**What Changed:**
+
+- New extension-owned `src/lib/ext/RealtimeProviderSettings.svelte` replaces the whole inline realtime credentials/model/voice/transcription block in `src/lib/components/admin/Settings/Audio.svelte`, bound to the existing `realtime` object. It adds a provider select (`openai`, `azure`, `openrouter`) stored as `ENGINE`, reusing the existing credential fields (`OPENAI_API_BASE_URL`, `OPENAI_API_KEY`, `MODEL`, `VOICE`, `TRANSCRIPTION_MODEL`) and the existing admin audio config (admin `get_audio_config`); no new public config. A backend factory registers the `ENGINE` config (env `AUDIO_REALTIME_ENGINE`) through extension-owned modules with narrow hooks in core files.
+- A missing or unknown `ENGINE` displays and saves as `openai`, preserving old responses. Rendering and loading never reset saved values; only an explicit user change of the provider clears `OPENAI_API_KEY` (always, to prevent cross-provider key leakage) and sets base URL, model, voice and transcription model to that provider's defaults.
+- Call mode is `Standard` or `Realtime / turn-based`; the stored boolean is unchanged.
+- **Azure:** GA Azure OpenAI Realtime with an API key (not Microsoft Entra, not the preview API). Base URL placeholder `https://resource.openai.azure.com/openai/v1`; the model field is the deployment name and must be a supported GA realtime model. Example defaults: `gpt-realtime`, voice `alloy`, transcription `whisper-1` (where available).
+- **OpenRouter (turn-based):** base `https://openrouter.ai/api/v1`; examples `openai/gpt-4o-audio-preview` (audio output model), voice `alloy`, `google/gemini-2.5-flash` (input audio chat model). Examples are not enforced and do not claim availability. Flow is speech-to-text, then the selected chat model, then spoken audio; latency is higher, the full response is buffered and must be WAV (24 kHz mono PCM16), playback is not a native stream, there are no avatar gestures and no exact native barge-in. Voice calls still use authenticated chat delegation and tool approval is unchanged. The Realtime prompt template is ignored because every request uses the selected chat model.
+
+**Files Modified / Added:**
+
+- `src/lib/ext/RealtimeProviderSettings.svelte` (new), `src/lib/components/admin/Settings/Audio.svelte` (narrow integration), `src/lib/ext/RealtimeProviderSettings.test.ts` (new).
+- `backend/open_webui/ext/realtime_provider_config.py`, `backend/open_webui/ext/realtime_providers.py`, `backend/open_webui/ext/realtime_openrouter.py` (new); `backend/open_webui/ext/test_realtime_providers.py`, `backend/open_webui/ext/test_realtime_openrouter.py` (new tests).
+- Narrow hooks: `backend/open_webui/config.py`, `backend/open_webui/routers/audio/__init__.py`, `backend/open_webui/routers/audio/realtime.py`.
+
+**Validation:**
+
+- **Backend:** combined final run of 51 backend tests passed (Windows `.venv`, Python 3.11.9, isolated `STATIC_DIR`/`DATA_DIR`; no SQL database or live service).
+- **Frontend:** 140 Vitest tests passed across 8 files, including the 7 provider-setting tests, using Node 22.23.3. This supersedes the earlier 7-test run on Node 24 only.
+- **Build:** production Vite build passed on Node 22 with an 8 GB heap; no `fetch-pyodide` step was run. Two Svelte components compiled successfully.
+- **Static checks:** Ruff passed on the 3 production extension files; `git diff --check` passed.
+- **Independent review:** 2 edge cases (mute/clear terminal gate, and Unicode JSON long-result repair) were repaired and tested; the follow-up review had no findings.
+- **Limits enforced by the backend:** max 128 turns and max 128 responses (separate counts); up to 100000 decoded answer characters accepted (serialization bound 1200256 bytes), and any answer over 8000 characters is replaced by a notice in the read chat, with no spoken-truncation claim; WAV must be 24 kHz mono PCM16, max 8 MiB, in the provider format with no resampling.
+- **Not run:** mounted-DOM or browser tests, authenticated WebSocket tests, and live Azure/OpenAI/OpenRouter provider calls. Full `svelte-check` was not repeated; the known preexisting 6096-error count is a historical caveat, not a new count.
+- Status is unchanged: uncommitted local changes, not deployed, and not provider-verified, using the existing architecture paths.
 
 ---
 
