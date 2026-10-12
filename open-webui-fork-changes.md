@@ -1163,6 +1163,18 @@ After upstream merges, revalidate that `Select.svelte` still delegates to `selec
 
 ---
 
+### 29. Terminal Schema Cold-Start Budget
+
+**Status:** Local fix; not deployed or live-validated.
+
+- Policy-backed terminal OpenAPI discovery gets a finite minimum 60-second budget; larger valid configured budgets are preserved. Direct terminals and generic tool servers retain their configured discovery timeout.
+- The policy lives in `backend/open_webui/ext/terminal_discovery_cache.py`. The existing discovery hook in `backend/open_webui/utils/tools.py` uses the same budget for schema fetching, optional-prompt deadline, and coordinated cache discovery.
+- Existing fingerprinted per-terminal caching, single-flight coordination, backoff, saved authentication, and configuration/access checks are unchanged. No aggregate-cache retry or runtime/orchestrator change was added.
+- Validation: 90 focused discovery-cache/tools tests passed in an isolated import-safe layout with system Python 3.13.14; `git diff --check` passed. This is not a full-backend, live Redis, or cold-node acceptance test.
+- Risk: an unavailable policy schema can now delay a chat for roughly 60 seconds before existing failure handling applies. Cold-node provisioning longer than that remains outside this budget.
+
+---
+
 ## Deployment Notes
 
 ### Required Configuration

@@ -1431,7 +1431,7 @@ def _apply_terminal_display_name(data: dict, connection: dict) -> dict:
 
 async def _discover_terminal_server(request: Request, connection: dict) -> tuple[dict | None, str | None]:
     """Discover one terminal without falling back to another connection."""
-    from open_webui.ext.terminal_discovery_cache import DiscoveryResult, safe_fetch_openapi
+    from open_webui.ext.terminal_discovery_cache import DiscoveryResult, safe_fetch_openapi, terminal_discovery_timeout
 
     from open_webui.ext.terminal_discovery_cache import terminal_fingerprint
 
@@ -1447,12 +1447,13 @@ async def _discover_terminal_server(request: Request, connection: dict) -> tuple
         return None, 'invalid_connection'
     if not expected_fingerprint:
         return None, 'invalid_connection'
-    deadline = asyncio.get_running_loop().time() + AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA
+    discovery_timeout = terminal_discovery_timeout(snapshot, AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA)
+    deadline = asyncio.get_running_loop().time() + discovery_timeout
 
     async def discover():
         headers = bearer_auth_header(snapshot.get('key', '')) if snapshot.get('auth_type', 'bearer') == 'bearer' else {}
         result = await safe_fetch_openapi(
-            spec_url, headers, timeout=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA, ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
+            spec_url, headers, timeout=discovery_timeout, ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
         )
         document = result.data
         if not isinstance(document, dict) or not isinstance(document.get('paths'), dict):
@@ -1500,7 +1501,7 @@ async def _discover_terminal_server(request: Request, connection: dict) -> tuple
             return False
 
     result = await _terminal_discovery_cache(request).get_or_discover(
-        snapshot, base_url, spec_url, discover, validate=validate, timeout=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA
+        snapshot, base_url, spec_url, discover, validate=validate, timeout=discovery_timeout
     )
     # Also validate cache hits: Config/Redis are not an atomic store.
     try:

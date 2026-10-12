@@ -427,3 +427,29 @@ async def test_safe_fetch_timeout_yaml_and_scalar_categories():
     assert (await subject.safe_fetch_openapi('https://x', {}, timeout=.01, ssl=False, fetcher=hang)).category == 'timeout'
     async def yaml_document(url, headers): return 'openapi: 3.0\npaths: {}'
     assert (await subject.safe_fetch_openapi('https://x', {}, timeout=1, ssl=False, fetcher=yaml_document)).data['paths'] == {}
+
+
+def test_policy_timeout_floor_preserves_larger_and_direct_bounds():
+    subject = _module()
+    assert subject.terminal_discovery_timeout({'policy_id': 'p'}, 10) == 60
+    assert subject.terminal_discovery_timeout({'policy_id': 'p'}, 120) == 120
+    assert subject.terminal_discovery_timeout({'policy_id': 'p'}, 'bad') == 60
+    assert subject.terminal_discovery_timeout({'policy_id': ''}, 10) == 10
+    assert subject.terminal_discovery_timeout({}, 7) == 7
+
+
+@pytest.mark.asyncio
+async def test_delayed_policy_schema_is_accepted_beyond_short_timeout_but_still_bounded(monkeypatch):
+    subject = _module(); cache, _ = _cache(subject)
+    monkeypatch.setattr(subject, 'POLICY_DISCOVERY_TIMEOUT_SECONDS', .3)
+    monkeypatch.setattr(subject, 'OWNER_GRACE_SECONDS', .01)
+    async def slow(delay, terminal_id='one'):
+        await asyncio.sleep(delay); return subject.DiscoveryResult(_data(terminal_id))
+    policy_timeout = subject.terminal_discovery_timeout(_connection(), .05)
+    assert policy_timeout == .3
+    assert (await cache.get_or_discover(_connection(), 'https://base', 'https://spec', lambda: slow(.1), timeout=policy_timeout)).data
+    direct = _connection('d', policy_id=None)
+    assert subject.terminal_discovery_timeout(direct, .05) == .05
+    assert (await cache.get_or_discover(direct, 'https://base', 'https://spec', lambda: slow(.1, 'd'), timeout=.05)).category == 'timeout'
+    hang = _connection('h')
+    assert (await cache.get_or_discover(hang, 'https://base', 'https://spec', lambda: slow(5), timeout=policy_timeout)).category == 'timeout'

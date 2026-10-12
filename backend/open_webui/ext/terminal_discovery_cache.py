@@ -31,6 +31,8 @@ OWNER_GRACE_SECONDS = 0.25
 CLEANUP_SECONDS = 0.05
 WAIT_MARGIN_SECONDS = 0.05
 REDIS_OPERATION_SECONDS = 0.5
+# Policy connections cold-start a per-policy orchestrator runtime; its schema can take >10s.
+POLICY_DISCOVERY_TIMEOUT_SECONDS = 60.0
 log = logging.getLogger(__name__)
 
 PUBLISH_SCRIPT = """if redis.call('GET', KEYS[2]) == ARGV[1] then
@@ -455,6 +457,14 @@ class TerminalDiscoveryCache:
         category = result.category if isinstance(result, DiscoveryResult) and isinstance(result.category, str) else 'discovery_error'
         self._log(terminal_id, category)
         return DiscoveryResult(None, category, delay)
+
+
+def terminal_discovery_timeout(connection: dict, configured: object) -> float:
+    """Finite discovery budget: policy connections get a cold-start floor, never below the configured bound."""
+    timeout = TerminalDiscoveryCache._timeout(configured)
+    if isinstance(connection, dict) and connection.get('policy_id'):
+        return max(timeout, POLICY_DISCOVERY_TIMEOUT_SECONDS)
+    return timeout
 
 
 async def safe_fetch_openapi(url: str, headers: dict | None, *, timeout: float, ssl, fetcher=None) -> DiscoveryResult:

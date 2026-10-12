@@ -77,6 +77,7 @@ def _load(monkeypatch):
     config = SimpleNamespace(get=AsyncMock(return_value=[]))
     fingerprint_globals = {'hashlib': hashlib, 'json': json}
     fingerprint_nodes = [copy.deepcopy(node) for node in cache_tree.body if isinstance(node, ast.FunctionDef) and node.name in {'_digest', 'terminal_fingerprint'}]
+    timeout_nodes = [copy.deepcopy(node) for node in cache_tree.body if isinstance(node, ast.FunctionDef) and node.name == 'terminal_discovery_timeout']
     exec(compile(ast.fix_missing_locations(ast.Module(body=fingerprint_nodes, type_ignores=[])), '<terminal-fingerprint>', 'exec'), fingerprint_globals)
     fingerprint = fingerprint_globals['terminal_fingerprint']
     cache = Cache()
@@ -85,6 +86,9 @@ def _load(monkeypatch):
     fake_cache.DiscoveryResult = Result
     fake_cache.safe_fetch_openapi = AsyncMock()
     fake_cache.terminal_fingerprint = fingerprint
+    timeout_globals = {'POLICY_DISCOVERY_TIMEOUT_SECONDS': 60.0, 'TerminalDiscoveryCache': SimpleNamespace(_timeout=lambda v: float(v))}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=timeout_nodes, type_ignores=[])), '<terminal-timeout>', 'exec'), timeout_globals)
+    fake_cache.terminal_discovery_timeout = timeout_globals['terminal_discovery_timeout']
     fake_cache.TerminalDiscoveryCache = lambda **kwargs: cache
     package = types.ModuleType('open_webui')
     package.__path__ = []
@@ -151,6 +155,32 @@ async def test_discovery_uses_actual_converter_document_and_static_credentials(m
     assert [spec['name'] for spec in server['specs']] == ['run_command']
     assert subject.fetch.await_args.args[1] == {'Authorization': 'Bearer discovery-secret'}
     assert subject.cache.calls[0][2] == 'https://spec.example/openapi.json'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('extra, expected', [({}, 60.0), ({'policy_id': None}, 10)])
+async def test_policy_cold_start_gets_one_finite_budget_direct_keeps_configured(monkeypatch, extra, expected):
+    subject = _load(monkeypatch)
+    connection = _connection(**extra)
+    if not extra:
+        subject.g['AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA'] = 10
+    subject.config.get.return_value = [connection]
+    subject.fetch.return_value = Result(_openapi())
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+    await subject.g['_discover_terminal_server'](request, connection)
+    assert subject.cache.calls[0][3]['timeout'] == expected
+    assert subject.fetch.await_args.kwargs['timeout'] == expected
+
+
+@pytest.mark.asyncio
+async def test_configured_policy_timeout_above_floor_is_preserved(monkeypatch):
+    subject = _load(monkeypatch)
+    subject.g['AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA'] = 120
+    connection = _connection()
+    subject.config.get.return_value = [connection]
+    subject.fetch.return_value = Result(_openapi())
+    await subject.g['_discover_terminal_server'](SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None))), connection)
+    assert subject.cache.calls[0][3]['timeout'] == 120
 
 
 @pytest.mark.asyncio
