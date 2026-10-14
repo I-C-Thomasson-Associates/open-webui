@@ -8,9 +8,10 @@
 		getAudioConfig,
 		updateAudioConfig,
 		getModels as _getModels,
-		getVoices as _getVoices
+		getVoices as _getVoices,
+		type RealtimeConfig
 	} from '$lib/apis/audio';
-	import { config, settings } from '$lib/stores';
+	import { config } from '$lib/stores';
 
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
@@ -26,22 +27,30 @@
 	import AdminSettingField from './AdminSettingField.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
-	import RealtimeProviderSettings, { normalizeEngine } from '$lib/ext/RealtimeProviderSettings.svelte';
+	import RealtimeProviderSettings, { providerFor } from '$lib/ext/RealtimeProviderSettings.svelte';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
 
 	export let saveHandler: () => void;
 
-	let realtime = {
+	// Keep dynamic realtime labels and the previous URL label in the translation catalogs.
+	// $i18n.t('settings.audio.realtime.azureUrl');
+	// $i18n.t('settings.audio.realtime.deployment');
+	// $i18n.t('Voice Model');
+	// $i18n.t('OpenAI API Base URL');
+	let realtime: RealtimeConfig & { REALTIME_CALL_PROMPT_TEMPLATE: string } = {
 		ENABLED: false,
-		ENGINE: 'openai',
+		PROVIDER: 'openai',
+		AUTH_TYPE: 'api_key',
 		OPENAI_API_BASE_URL: 'https://api.openai.com/v1',
 		OPENAI_API_KEY: '',
 		MODEL: 'gpt-realtime-2.1-mini',
 		VOICE: 'marin',
 		TRANSCRIPTION_MODEL: 'gpt-transcribe',
+		INPUT_PARAMS: null,
 		REALTIME_CALL_PROMPT_TEMPLATE: ''
 	};
+	let REALTIME_INPUT_PARAMS = '';
 
 	// Audio
 	let TTS_OPENAI_API_BASE_URL = '';
@@ -145,10 +154,24 @@
 
 	const updateConfigHandler = async () => {
 		let openaiParams = {};
+		let realtimeInputParams: Record<string, unknown> | null = null;
 		try {
 			openaiParams = TTS_OPENAI_PARAMS ? JSON.parse(TTS_OPENAI_PARAMS) : {};
 			TTS_OPENAI_PARAMS = JSON.stringify(openaiParams, null, 2);
-		} catch (e) {
+			if (REALTIME_INPUT_PARAMS.trim()) {
+				realtimeInputParams = JSON.parse(REALTIME_INPUT_PARAMS);
+				if (
+					!realtimeInputParams ||
+					typeof realtimeInputParams !== 'object' ||
+					Array.isArray(realtimeInputParams)
+				) {
+					throw new Error('Input parameters must be a JSON object');
+				}
+			}
+			REALTIME_INPUT_PARAMS = realtimeInputParams
+				? JSON.stringify(realtimeInputParams, null, 2)
+				: '';
+		} catch {
 			toast.error($i18n.t('Invalid JSON format for Parameters'));
 			return;
 		}
@@ -156,7 +179,8 @@
 		const res = await updateAudioConfig(localStorage.token, {
 			realtime: {
 				...realtime,
-				REALTIME_CALL_PROMPT_TEMPLATE: realtime.REALTIME_CALL_PROMPT_TEMPLATE.trim() || null
+				INPUT_PARAMS: realtimeInputParams,
+				REALTIME_CALL_PROMPT_TEMPLATE: (realtime.REALTIME_CALL_PROMPT_TEMPLATE ?? '').trim() || null
 			},
 			tts: {
 				OPENAI_API_BASE_URL: TTS_OPENAI_API_BASE_URL,
@@ -232,9 +256,12 @@
 			realtime = {
 				...realtime,
 				...res.realtime,
-				ENGINE: normalizeEngine(res.realtime?.ENGINE),
+				PROVIDER: providerFor(res.realtime ?? {}),
 				REALTIME_CALL_PROMPT_TEMPLATE: res.realtime?.REALTIME_CALL_PROMPT_TEMPLATE ?? ''
 			};
+			REALTIME_INPUT_PARAMS = res.realtime?.INPUT_PARAMS
+				? JSON.stringify(res.realtime.INPUT_PARAMS, null, 2)
+				: '';
 			STT_OPENAI_API_BASE_URL = res.stt.OPENAI_API_BASE_URL;
 			STT_OPENAI_API_KEY = res.stt.OPENAI_API_KEY;
 			STT_OPENAI_API_REQUEST_FORMAT = res.stt.OPENAI_API_REQUEST_FORMAT || 'multipart';
@@ -287,6 +314,16 @@
 			</AdminSettingRow>
 			{#if realtime.ENABLED}
 				<RealtimeProviderSettings bind:realtime {inputClass} {textareaClass} />
+				<AdminSettingField
+					label={$i18n.t('settings.audio.realtime.inputParams')}
+					description={$i18n.t('settings.audio.realtime.inputParamsHelp')}
+				>
+					<Textarea
+						className={textareaClass}
+						bind:value={REALTIME_INPUT_PARAMS}
+						placeholder={$i18n.t('Enter additional parameters in JSON format')}
+					/>
+				</AdminSettingField>
 			{/if}
 		</AdminSettingSection>
 

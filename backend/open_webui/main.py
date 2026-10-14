@@ -152,6 +152,7 @@ from open_webui.models.models import Models, normalize_model_tags
 from open_webui.models.groups import Groups, resolve_group_default_models
 from open_webui.models.users import Users
 from open_webui.routers import (
+    apps,
     analytics,
     audio,
     auths,
@@ -418,6 +419,9 @@ async def lifespan(app: FastAPI):
     await install_tool_and_function_dependencies()
 
     app.state.redis = get_redis_client(async_mode=True)
+    from open_webui.socket.apps import connections as app_connections
+
+    await app_connections.start(app.state.redis)
 
     if app.state.redis is not None:
         app.state.redis_task_command_listener = asyncio.create_task(redis_task_command_listener(app))
@@ -510,6 +514,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await publish_event(app, EVENTS.SYSTEM_SHUTDOWN_STARTED, source='system')
+    await app_connections.close()
 
     # Shutdown: clean up shared resources
     from open_webui.utils.session_pool import close_session
@@ -900,6 +905,7 @@ app.include_router(mfa.router, prefix='/api/v1/auths/mfa', tags=['auths'])
 app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 
 
+app.include_router(apps.router, prefix='/api/v1/apps', tags=['apps'])
 app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])
 app.include_router(chats.router, prefix='/api/v1/chats', tags=['chats'])
 app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
@@ -1165,6 +1171,7 @@ async def chat_completion(
         await get_all_models(request, user=user)
 
     model_id = form_data.get('model', None)
+    request.state.model_id = model_id
     model_item = form_data.pop('model_item', {})
     tasks = form_data.pop('background_tasks', None)
 
@@ -1836,7 +1843,7 @@ async def chat_completion(
 
     # Fan out: one task per model
     if metadata.get('session_id') and metadata.get('chat_id'):
-        task_ids = []
+        chat_tasks = {}
         subagent_results = []
         is_internal = getattr(request.state, 'internal', False) is True
         chat_id = metadata['chat_id']
@@ -1898,7 +1905,7 @@ async def chat_completion(
                 subagent_results.append(await task)
                 continue
 
-            task_ids.append(task_id)
+            chat_tasks[task_id] = task
 
         if is_internal:
             return {
@@ -1909,7 +1916,7 @@ async def chat_completion(
             }
 
         # Emit chat:active=true
-        if task_ids:
+        if chat_tasks:
             event_emitter = await get_event_emitter(
                 {**metadata, 'message_id': message_ids[0]['message_id']},
                 update_db=False,
@@ -1918,9 +1925,13 @@ async def chat_completion(
                 folder_id = metadata.get('folder_id') or await Chats.get_chat_folder_id(chat_id, user.id)
                 await event_emitter({'type': 'chat:active', 'data': {'active': True, 'folder_id': folder_id}})
 
+        # Automation chat runs must finish before their caller records success.
+        if metadata.get('automation_id') and is_saved_chat_id(chat_id):
+            await asyncio.gather(*chat_tasks.values())
+
         return {
             'status': True,
-            'task_ids': task_ids,
+            'task_ids': list(chat_tasks),
             'chat_id': chat_id,
         }
     else:
@@ -2078,6 +2089,7 @@ async def generate_messages(
     Anthropic's x-api-key header (via middleware translation).
     """
     requested_model = form_data.get('model', '')
+    request.state.model_id = requested_model
     input_tokens = None
     try:
         input_tokens = await openai.count_anthropic_tokens(request, form_data, user)
@@ -2355,6 +2367,7 @@ async def get_app_config(request: Request):
         'folders.enable',
         'folders.max_file_count',
         'channels.enable',
+        'apps.enable',
         'calendar.enable',
         'automations.enable',
         'notes.enable',
@@ -2450,6 +2463,7 @@ async def get_app_config(request: Request):
                     'enable_folders': config.get('folders.enable'),
                     'folder_max_file_count': config.get('folders.max_file_count'),
                     'enable_channels': config.get('channels.enable'),
+                    'enable_apps': config.get('apps.enable'),
                     'enable_calendar': config.get('calendar.enable'),
                     'enable_automations': config.get('automations.enable'),
                     'enable_notes': config.get('notes.enable'),

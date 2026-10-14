@@ -12,7 +12,7 @@ import uuid
 import wave
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import aiofiles
@@ -52,8 +52,12 @@ from open_webui.env import (
     USE_SLIM,
 )
 from open_webui.events import EVENTS, publish_event
+from open_webui.ext.realtime_provider_config import (
+    RealtimeProvider,
+    migrate_legacy_fields,
+    safe_provider_updates,
+)
 from open_webui.models.config import Config
-from open_webui.ext.realtime_provider_config import RealtimeEngine
 from open_webui.routers.audio import realtime
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
@@ -61,7 +65,7 @@ from open_webui.utils.headers import include_user_info_headers
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import strict_match_mime_type
 from open_webui.utils.session_pool import get_session
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # pydub needs stdlib audioop (gone in 3.13); keep requires-python capped < 3.13
 if not USE_SLIM:
@@ -102,12 +106,14 @@ TTS_CONFIG_KEYS = {
 
 REALTIME_CONFIG_KEYS = {
     'ENABLED': 'audio.realtime.enabled',
-    'ENGINE': 'audio.realtime.engine',
+    'PROVIDER': 'audio.realtime.provider',
+    'AUTH_TYPE': 'audio.realtime.auth_type',
     'OPENAI_API_BASE_URL': 'audio.realtime.openai.api_base_url',
     'OPENAI_API_KEY': 'audio.realtime.openai.api_key',
     'MODEL': 'audio.realtime.model',
     'VOICE': 'audio.realtime.voice',
     'TRANSCRIPTION_MODEL': 'audio.realtime.transcription_model',
+    'INPUT_PARAMS': 'audio.realtime.input_params',
     'REALTIME_CALL_PROMPT_TEMPLATE': 'audio.realtime.prompt_template',
 }
 
@@ -295,13 +301,21 @@ class STTConfigForm(BaseModel):
 
 class RealtimeConfigForm(BaseModel):
     ENABLED: bool = False
-    ENGINE: RealtimeEngine = 'openai'
+    PROVIDER: RealtimeProvider = 'openai'
+    AUTH_TYPE: Literal['api_key', 'microsoft_entra_id'] = 'api_key'
+
     OPENAI_API_BASE_URL: str = 'https://api.openai.com/v1'
     OPENAI_API_KEY: str = ''
     MODEL: str = Field(default='gpt-realtime-2.1-mini', min_length=1, max_length=200)
     VOICE: str = Field(default='marin', min_length=1, max_length=200)
     TRANSCRIPTION_MODEL: str = Field(default='gpt-transcribe', min_length=1, max_length=200)
+    INPUT_PARAMS: Optional[dict] = None
     REALTIME_CALL_PROMPT_TEMPLATE: Optional[str] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def migrate_engine(cls, data):
+        return migrate_legacy_fields(data) if isinstance(data, dict) else data
 
 
 class AudioConfigUpdateForm(BaseModel):
@@ -327,13 +341,16 @@ async def update_audio_config(request: Request, form_data: AudioConfigUpdateForm
             raise HTTPException(400, 'Local Whisper is unavailable in slim. Select an external speech-to-text engine.')
         if form_data.tts.ENGINE == 'transformers' and current.get('audio.tts.engine') != 'transformers':
             raise HTTPException(400, 'Local TTS is unavailable in slim. Select an external text-to-speech engine.')
+    realtime_updates = {}
+    if form_data.realtime:
+        current_realtime = await get_config_values(REALTIME_CONFIG_KEYS)
+        realtime_updates = config_updates(
+            safe_provider_updates(form_data.realtime.model_dump(exclude_unset=True), current_realtime),
+            REALTIME_CONFIG_KEYS,
+        )
     await Config.upsert(
         {
-            **(
-                config_updates(form_data.realtime.model_dump(exclude_unset=True), REALTIME_CONFIG_KEYS)
-                if form_data.realtime
-                else {}
-            ),
+            **realtime_updates,
             **config_updates(form_data.tts.model_dump(exclude_unset=True), TTS_CONFIG_KEYS),
             **config_updates(form_data.stt.model_dump(exclude_unset=True), STT_CONFIG_KEYS),
         }
