@@ -43,6 +43,7 @@ from open_webui.utils.json_codec import JSONCodec
 async def seed_registered_defaults():
     await Config.rename_prefix('rag.web', 'web')
     await Config.repair_config_rows()
+    await migrate_legacy_provider(Config)
     await Config.seed_defaults(DEFAULT_CONFIG)
 
 
@@ -1650,13 +1651,15 @@ AUDIO_TTS_VOICE = os.getenv('AUDIO_TTS_VOICE', 'alloy')
 
 REALTIME_TTS_PROMPT_TEMPLATE = os.getenv('REALTIME_TTS_PROMPT_TEMPLATE')
 
-from open_webui.ext.realtime_provider_config import REALTIME_CONFIG_DEFAULTS  # noqa: E402
+from open_webui.ext.realtime_provider_config import migrate_legacy_provider, provider_from_env  # noqa: E402
 
 AUDIO_REALTIME_ENABLED = os.getenv('AUDIO_REALTIME_ENABLED', 'False').lower() == 'true'
-AUDIO_REALTIME_PROVIDER = os.getenv('AUDIO_REALTIME_PROVIDER', 'openai')
+AUDIO_REALTIME_PROVIDER = provider_from_env()
 AUDIO_REALTIME_AUTH_TYPE = os.getenv('AUDIO_REALTIME_AUTH_TYPE', 'api_key')
 AUDIO_REALTIME_OPENAI_API_BASE_URL = os.getenv('AUDIO_REALTIME_OPENAI_API_BASE_URL', 'https://api.openai.com/v1')
-AUDIO_REALTIME_OPENAI_API_KEY = os.getenv('AUDIO_REALTIME_OPENAI_API_KEY', '')
+from open_webui.secrets import get_secret  # noqa: E402
+
+AUDIO_REALTIME_OPENAI_API_KEY = get_secret('AUDIO_REALTIME_OPENAI_API_KEY', '')
 AUDIO_REALTIME_MODEL = os.getenv('AUDIO_REALTIME_MODEL', 'gpt-realtime-2.1-mini')
 AUDIO_REALTIME_VOICE = os.getenv('AUDIO_REALTIME_VOICE', 'marin')
 AUDIO_REALTIME_TRANSCRIPTION_MODEL = os.getenv('AUDIO_REALTIME_TRANSCRIPTION_MODEL', 'gpt-transcribe')
@@ -3319,7 +3322,7 @@ ENABLE_PERSISTENT_CONFIG = os.getenv('ENABLE_PERSISTENT_CONFIG', 'True').lower()
 ENABLE_OAUTH_PERSISTENT_CONFIG = os.getenv('ENABLE_OAUTH_PERSISTENT_CONFIG', 'False').lower() == 'true'
 
 Config.configure(
-    defaults={**DEFAULT_CONFIG, **REALTIME_CONFIG_DEFAULTS},
+    defaults=DEFAULT_CONFIG,
     enable_persistent=ENABLE_PERSISTENT_CONFIG,
     enable_oauth_persistent=ENABLE_OAUTH_PERSISTENT_CONFIG,
 )

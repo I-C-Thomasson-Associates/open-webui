@@ -225,7 +225,9 @@ async def get_terminal_agents_md(request, user, metadata: dict, extra_params: di
             if not isinstance(home, str) or not (posixpath.isabs(home) or ntpath.isabs(home)):
                 return None
             path = quote(posixpath.join(home, 'AGENTS.md'), safe='')
-            data = await get_terminal_json(request, user, metadata, f'/files/read?path={path}', extra_params)
+            data = await get_terminal_json(
+                request, user, metadata, f'/files/read?path={path}&max_bytes={MAX_AGENTS_MD_BYTES}', extra_params
+            )
 
         content = data.get('content') if isinstance(data, dict) else None
         if not isinstance(content, str) or not content.strip():

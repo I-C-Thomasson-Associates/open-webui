@@ -1,6 +1,10 @@
 """Import-safe terminal read resolution and chat authorization tests (AST-loaded)."""
 
 import ast
+import asyncio
+import logging
+import ntpath
+import posixpath
 import sys
 import types
 from pathlib import Path
@@ -294,3 +298,22 @@ async def test_automation_keeps_existing_context_semantics(monkeypatch, context_
         'automation:automation-1' if context_id == 'automation_id' else None
     )
     assert build.await_args.kwargs['metadata'] == metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('content,expected', [('instructions', '# AGENTS.md\n\ninstructions'), ('x' * 32769, None)])
+async def test_agents_read_requests_runtime_byte_bound_and_checks_response(content, expected):
+    tree = ast.parse(SRC.read_text(encoding='utf-8'))
+    node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'get_terminal_agents_md')
+    fetch = AsyncMock(side_effect=[{'home': '/home/user'}, {'content': content}])
+    scope = {
+        'asyncio': asyncio, 'ntpath': ntpath, 'posixpath': posixpath, 'quote': quote,
+        'get_terminal_json': fetch, 'MAX_AGENTS_MD_BYTES': 32768,
+        'log': logging.getLogger(__name__),
+    }
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(SRC), 'exec'), scope)
+    metadata, extra = {'terminal_id': 't', 'chat_id': 'saved'}, {'__event_call__': object()}
+    assert await scope['get_terminal_agents_md'](None, User(), metadata, extra) == expected
+    assert fetch.await_args.args[3] == '/files/read?path=%2Fhome%2Fuser%2FAGENTS.md&max_bytes=32768'
+    assert fetch.await_args.args[2] is metadata
+    assert fetch.await_args.args[4] is extra

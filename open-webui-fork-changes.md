@@ -6,6 +6,113 @@
 
 The `jp_dev` and `prod` branches are based on Open WebUI with custom modifications for ICT / Salas O'Brien deployment.
 
+### Upstream 0.12.2 integration — completed focused local validation
+
+**Pre-publication validation snapshot; not deployed.** The user authorized OWUI candidate publication and fast-forward/push to `origin/jp_dev` after frontend/backend build gates pass. This document records the tested local state before that publication, not a claim that it happened. `integrate-v0.12.2` contains a full upstream merge plus reconciliation and regression tests. Historical snapshots below are unchanged.
+
+- Original fork base / unchanged `jp_dev`: `09f9573a4fc3f2a041b3f2eb0bf65f3bd3f6ebf9`.
+- Prior merged upstream / local `v0.12.0`: `f8ae8a6c328946dc62cd0712961a0632574581bf`. Official upstream currently advertises `v0.12.0` at `15818d88fd7bde1b73de33590f50d15d21e8d7c1`; this preexisting tag difference was recorded, not corrected.
+- Official `v0.12.2` tag object and commit: `6a18585ff4c2e5f6805f682222cfbc46dc669ef8`, verified from `https://github.com/open-webui/open-webui.git`. Lightweight tag; commit signature verification could not complete because the signing public key is unavailable. No cryptographic authenticity claim.
+- Local `main` was explicitly fast-forwarded to the target; no fork edits were made there.
+- Candidate merge HEAD: `d4c8f5987ea1e6cb9eadeedfb88fb38b8b75dd70`; committed tree `cd6eca4b67cb19f67911a829a40f24ff65f9d435`. This merge was committed outside the agent's recorded actions between phases. Both the original fork base and target are its parents. **The committed tree is not the tested working tree:** reconciliation/tests listed below remain uncommitted.
+- Zero unmerged paths; scoped conflict-marker checks and `git diff --check` passed.
+- Azure Realtime now uses upstream `PROVIDER` / `AUTH_TYPE`, API-key or Microsoft Entra ID auth, input parameters, and native lifecycle. Fork Azure transport was removed. OpenRouter turn-based voice remains extension-owned. Legacy `ENGINE` persisted/environment/admin values translate without overriding explicit `PROVIDER`; partial provider switches cannot silently retain the previous key. Key Vault, Azure Speech capture, Foundry pricing, and remaining non-Realtime attribution hooks are retained.
+- Admin Models availability/tag behavior is unchanged from the original fork base; upstream save/toggle fixes are retained. No fresh behavior choice was inferred from a historical preference.
+- Reviewer finding repaired: final usage drops stale `litellm_model_id` after an unattributed continuation, without mutating cumulative usage. Follow-up independent review found no further actionable findings within scope.
+
+#### Work ledger
+
+| Packet | Owner / production and test scope | Dependencies / acceptance | Status |
+|---|---|---|---|
+| Voice | Voice builder: config, audio routers, realtime extensions, provider settings and paired tests; parent: audio API type | Native Azure parity, OpenRouter preserved, legacy migration/key boundaries; independent review | Implemented; focused tests passed; no live provider/WS pass |
+| Core | Core builder: main/OpenAI/middleware, task/deferred-tool regressions; parent: streaming fixture and final attribution repair | Upstream approval/dispatch and automation behavior, structured/native/public SSE contracts; independent review and follow-up | Implemented; focused tests passed |
+| Preservation | Read-only explorer: all numbered items and automerged callers | Dynamic item count, source comparison against both bases | 29 items reconciled; only mapped tests executed |
+| Terminals audit | Read-only explorer and parent validator: orchestrator/runtime `dev` | Source contracts plus existing mock tests | Source audited; scoped repairs below validated; live image provenance remains unverified |
+| Runtime bound | Runtime builder: `open_terminal/main.py`, `tests/test_bounded_file_read.py`, README; parent: OWUI AGENTS caller/tests and extra duplicate/swap regressions | User-approved local edits after fresh fast-forward pulls; independent source review; Linux no-follow tests | Implemented and focused Linux tests passed; rebuild required |
+| Image references | Parent: orchestrator workflow lowercase image name, manifest, README, `test_image_source_contract.py` | Align actual workflow owner/package/dev tags without inventing digests; independent source review | Local examples repaired and tests passed; verified digest selection/publication/deployment not performed |
+| Harness | Parent: user-owned `code-reviewer.md` / `repo-explorer.md` outside this repo | User explicitly authorized read-only Git permission additions only | Added rev-parse/show-ref/ls-files; deny/edit/execution safeguards retained |
+
+#### Preservation matrix (29 dynamically counted items)
+
+Paths are abbreviated to their documented locations in the numbered sections below. “Passed” means mapped focused tests, **not** full-feature or live verification.
+
+| ID | Feature / affected paths | Risk | Disposition | Test evidence |
+|---:|---|---|---|---|
+| 1 | Tool-server errors: AddToolServerModal, Integrations, APIs | Medium | Kept | Not run |
+| 2 | Key Vault/OAuth hydration: secrets, config_env_hydrator, config | High | Kept | Not run |
+| 3 | Secret bootstrap: init, secrets, env | High | Kept | Not run |
+| 4 | Structured tool content: middleware, Messages renderers | High | Adapted | Passed: streaming/native boundary regressions |
+| 5 | Upload error detail: files router/API, MessageInput | Low | Adapted | Not run |
+| 6 | Memory import/export: Personalization, memory ext, memories router | High | Kept | Passed: backend import tests; UI/vector-provider checks not run |
+| 7 | Terminal persistence/transfer: terminal_persist_tool, terminal callers | High | Kept | Not run for file persistence end to end |
+| 8 | Capture: audio_capture_router, transcription, MeetingAudioCapture | High | Kept | Passed: 45 frontend lifecycle tests; provider not run |
+| 9 | Complete DB URL hydration: env, secrets, hydrator | High | Kept | Not run |
+| 10 | Callback proxy: middleware/security/config hooks | Critical | Kept | Passed: focused header/security tests; live OAuth not run |
+| 11 | Terminal gateway: terminal_tool_gateway and seed hooks | Critical | Kept | Passed: Linux focused schema suite after approved isolated dependency setup; live gateway not run |
+| 12 | Analytics/cost: salasobrien router/cost/API | High | Kept | Attribution regressions passed; full analytics not run |
+| 13 | Usage limits/tab: usage router/limits/UI | High | Kept | Not run: Redis/UI |
+| 14 | Attachments: tool_result_files, middleware, renderers | High | Kept | Passed: mocked streaming attachment tests |
+| 15 | Image normalization: image ext/router/config | Medium–high | Kept | Not run |
+| 16 | Azure/Foundry requests: OpenAI router | High | Adapted | SSE/attribution passed; live Azure requests not run |
+| 17 | Workspace/user permissions: upstream schema/grants/UI | Critical | Dropped upstream-covered | Source audited; full permission checks not run |
+| 18 | Skills/dialect compatibility: skills router/models, tools | High | Adapted | Source audited; live PostgreSQL not run |
+| 19 | Dialect/access grants: upstream chat/grant models | High | Dropped upstream-covered | Source audited; live PostgreSQL not run |
+| 20 | Dependencies: Python/Node manifests | Medium | Adapted | Approved Node lockfile sync passed without manifest changes; isolated Linux tests and production build passed |
+| 21 | Docker workflow: docker.yaml | High | Kept | Source audited; publication/deployment not run |
+| 22 | Responses normalization: OpenAI/session_pool | High | Kept | Passed: conversion/consumer regressions |
+| 23 | Stream uploads: terminal_upload_proxy/router/API | Critical | Kept | Passed: OWUI/orchestrator/runtime focused mocks |
+| 24 | Admin memory rebuild: memory_admin_router/main | High | Kept | Passed: isolated mocked tests |
+| 25 | Terminal context auth: authorization ext/router | Critical | Kept | Passed: owner/admin HTTP/WS mock regressions |
+| 26 | Sub-agent viewer: viewer/bridge/iframe/router/task hooks | Critical | Kept | Passed: 48 frontend tests plus backend catalog/task tests |
+| 27 | Select keyboard: Select and select-keyboard ext | Medium | Kept | Passed: 29 helper/compiler tests; native browser not run |
+| 28 | Voice: audio routers/realtime ext/provider settings | High | Adapted; Azure transport dropped upstream-covered | Passed: backend contracts and 9 frontend tests; live providers not run |
+| 29 | Schema cold start: discovery_cache/tools | Medium | Kept | Passed: focused cache/discovery tests; cold node/Redis not run |
+
+#### Cross-repository gate — source and focused mocks only
+
+- Per fresh user instruction, **before further sibling investigation or edits**, both `dev` branches were fetched and pulled from `origin` with `--ff-only --no-tags`. Both were clean and already up to date: orchestrator `9e656f2cc0b171ab2668ab89cb2fd9c3e41b37da`; runtime `039e2d71968a60a720f6a59b2d0f286ff93d7add`. User-approved local repairs now make both trees dirty; HEADs are unchanged. No sibling commit, push or deployment.
+- Orchestrator local repairs: lowercase workflow package name, manifest/README references aligned to `ghcr.io/i-c-thomasson-associates/open-webui-terminals:dev` and runtime `ghcr.io/i-c-thomasson-associates/open-terminal-internal:dev`; contract tests added. These are mutable **dev examples**, not verified deployment pins. Existing policy overrides/runtimes still need deliberate source/digest review.
+- Runtime local repair: `/files/read` optional `max_bytes` (1..1 MiB) uses bounded descriptor-relative no-follow UTF-8 reads before allocation and never falls back to document/image/unbounded reads. Existing no-bound file-read behavior remains unchanged. Literal `max_bytes=null` remains invalid rather than being stripped by query cleanup. OWUI now requests 32768 bytes for home/AGENTS.md and retains its own postresponse guard.
+- Runtime provenance comparison: `main`/`origin/main` and freshly fetched official `https://github.com/open-webui/open-terminal` main are `613c0431d06f62ded09e32afc7bc3173f1a0ca94`; original shared merge base with `dev` is `2982fe94aea1300109ad1bfa4644df86ec49af4e`. `dev` is the current fork integration source, **not a full merge of official main**. This scoped compatibility repair does not claim upstream runtime parity or change runtime `main`.
+- Approved disposable WSL runtime environment has real installed metadata `open-terminal 0.11.34`, `FastMCP 4.1.0`, pytest 9.1.1. Package metadata was checked before app import; source tests prepend the checked-out runtime. Existing Conda/Windows environments were not mutated. Synthetic HOME/config/state/logs/API key and disabled multiuser/notebooks/system prompt/terminal isolate imports. FastMCP verifier unit doubles do not establish real HTTP/stdio transport compatibility.
+
+| Caller / path / schema / headers | OWUI delta | Target / implementation evidence | Status / test evidence | Residual failure mode |
+|---|---|---|---|---|
+| Policy HTTP `/p/{policy}`; bearer + X-User-Id/Session-Id/Terminal-Context-Id | Fork auth/context hooks retained | Orchestrator `_proxy_http`, policy routes, RuntimeIdentity | Compatible for bearer configs; policy/identity mocks passed | Non-bearer discovery cannot authenticate to configured orchestrator |
+| WebSocket first-message JWT; upstream query/user/context headers | Fork saved-context auth retained | Orchestrator `_proxy_websocket`, auth helpers | Compatible source; OWUI context mocks passed; sibling WS suite not run | No authenticated live WS pass |
+| Bearer-only OpenAPI; no user header; policy >=60 s | Fork discovery floor/cache retained | Orchestrator anonymous `__system__` runtime | Compatible; OWUI discovery mocks passed | Cold provisioning may exceed budget; optional prompt uses distinct `system` identity, preexisting |
+| GET/HEAD `/execute`, exact status; process list/status schema | Upstream terminal UI fixes retained | Orchestrator passive lookup; runtime process APIs | Compatible source; passive mocks passed | No live reaper/job-protection proof |
+| Raw `/files/upload-stream`; 4 GiB bounds, atomic write; legacy multipart | Fork streaming hooks retained | Orchestrator streaming counter; runtime UserFS atomic writer/request limit | Compatible defaults; three-repo focused mocks passed | Overrides may drift; source only |
+| `/files/cwd` home/cwd + X-Session-Id; home/AGENTS.md | Caller now requests max_bytes=32768 | Runtime existing safe_read helper enforces hard pre-allocation bound and no-follow; optional normal-read path preserved | Required-for-feature repair implemented; Linux bound/auth/growth/swap/duplicate tests passed | Old images can ignore the bound; coordinated OWUI/runtime rebuild and verified pins required; bounded reads fail closed on unsupported hosts |
+| `/skills`, hidden `/skills/read?name`; bounded manifest/resource ownership | Current upstream paths retained | Runtime safe_read, `.agents/skills` + legacy `skills`, optional alias query | Compatible source; Linux no-follow + no-query/different-query/invalid/missing/empty regressions passed in selected 97-test run with no skips | Stale deployed images remain unverified; no live transport pass |
+| OpenAPI grep_search/glob_search / compare | Current upstream callers retained | Runtime named operations and compare | Compatible source; focused Linux skills/compare tests passed | No generic fallback for stale image missing operations |
+| Optional X-OpenWebUI-Tool-Gateway-* | Fork seed retained | Orchestrator forwards; runtime gateway consumes | Optional/source-compatible; OWUI gateway schema tests now passed on Linux | No optional gateway live pass |
+| Image source pins | No new caller mismatch | Local dev examples now match actual sibling lowercase package/dev workflows; existing policies explicitly noted | Preexisting reference mismatch locally repaired; contract tests passed; **live image source remains unknown** | Rebuild both approved sources, verify revision labels, choose actual digest pins and review policy overrides before deployment; no invented digest |
+
+#### Checks actually run and remaining gates
+
+- Windows `.venv` Python 3.11.9: `pytest -q -p pytest_asyncio.plugin -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function --ignore=backend/open_webui/ext/test_terminal_tool_gateway_schema.py test backend/open_webui/ext` in unique synthetic DATA/STATIC/SQLite directories, dotenv/Vault/providers/Redis/OTEL disabled: **362 passed, 8 warnings**. Fresh synthetic migrations completed. The initial path-isolation harness failed, was corrected to native Windows temp paths; no tracked static files changed. Gateway schema collection failed separately on missing `re2` and was explicitly excluded, not bypassed or stubbed.
+- Node 22.23.3, temporary SSR-configured Vitest harness with production build constants: **142 passed across 8 files**. Initial harness omitted APP_VERSION and failed two suites; corrected harness passed. No mounted-DOM/browser claim.
+- Orchestrator existing venv: passive_execute, http_proxy_streaming, runtime_identity, policy_api: **32 passed**, in temp cwd with no ambient dotenv/live Redis or containers.
+- Runtime existing venv: skills_and_compare, streaming_upload, upload_request_limit: **19 passed, 11 skipped, 2 warnings**, synthetic API key/HOME/config/state/logs, no key-file, multiuser/notebooks/system prompt/terminal disabled. Windows skipped descriptor-relative no-follow coverage.
+- Production Vite build on Node 22 with 8 GiB heap, network-fetch step omitted: **FAILED**, unresolved new upstream dependency `@codemirror/merge`. Existing ignored build outputs were preserved; the explicit temp outDir reached no completed artifact. No build SHA/output success claim.
+- Fresh full `svelte-check`: **FAILED: 5947 errors and 189 warnings in 322 files**. Prior documented 6096-error result belongs to the earlier 0.12.0 integration, not the current fork base; no exact current-base delta or clean typecheck claim.
+- Independent VOICE/CORE review completed; attribution repair follow-up found no actionable findings within reviewed scope.
+- **Latest approved validation supersedes earlier blocked runs above:** Node 22 `npm ci --ignore-scripts --no-audit --no-fund` passed; `package.json` and lockfile were unchanged. No audit/network security pass claimed.
+- Disposable WSL OWUI test overlay (inherits existing Conda dependencies but installs pytest-asyncio/google-re2 only in the disposable overlay), isolated synthetic config/data/static/SQLite with providers/Vault/Redis/OTEL disabled: `pytest -q -p pytest_asyncio.plugin -p no:cacheprovider -o asyncio_default_fixture_loop_scope=function test backend/open_webui/ext` — **366 passed, 12 warnings**, no exclusions. Fresh synthetic migrations completed. Log: `/home/john/.cache/pi-validation/owui-test-nj67eczm/pytest.log`.
+- After lockfile sync: all 8 frontend files **142 passed** again on Node 22.23.3. Orchestrator passive/streaming/identity/policy plus image contract tests **34 passed**. Runtime Linux bounded_file_read, skills_and_compare, streaming_upload, upload_request_limit, mcp_auth: **97 passed, 0 skipped, 2 warnings**. MCP auth tests include doubles and a real base-class check, not a live SDK transport pass.
+- Final production Vite build **PASSED**, Node 22/8 GiB heap, explicit `APP_BUILD_HASH=cbc88aef5f9293efa8a40aabec55471a4ede038a` and `APP_BUILD_CHANNEL=dev`, package version 0.12.2. This hash is a temporary-index **source tree** containing the tested production/tests but excluding the later report update, not a published commit. Adapter-static wrote to ignored `build/` (an earlier temp outDir flag was ignored). `build/index.html` SHA-256: `00b3738627c5931e4df21d62ea74612825c4df5ba43b697cff5e141d79a42367`. Log: Windows Temp `tmp.njTKHzjBci/build.log`. No Pyodide network-fetch step or Docker image build was run.
+- Post-sync full typecheck remains **FAILED: 5940 errors, 189 warnings in 319 files** (latest log: Windows Temp `tmp.XBh3Ttdi9V/typecheck.log`). This replaces the pre-sync 5947 count above; no clean typecheck or exact original-fork-base delta claim.
+- Independent runtime-bound/image source review found no actionable findings. Duplicate-bound and ancestor-swap-after-open regressions were added and passed; review does not establish time/concurrency limits or live deployment behavior.
+- **Current publication approval/gates:** the user accepted frontend/backend build success as the gate for OWUI `jp_dev` publication, with the previously reported typecheck/live-validation/sibling-image limits. No production or sibling publication was requested. Fresh-fetched `origin/jp_dev` still equals the original fork base. Final Node 22 production build and 142 frontend tests passed again after restoring the lockfile install; manifests are unchanged. Latest logs: Windows Temp `tmp.ByTbIzNQYt/build.log` and `frontend.log`.
+- **Actual Ubuntu backend gate:** Conda `open-webui`, executable `/home/john/miniconda3/envs/open-webui/bin/python`, Python **3.11.14**. All backend source files compiled; native app import/startup and fresh synthetic SQLite migrations succeeded. In-process requests to `/health`, `/ready`, `/health/db`, `/api/version` all returned **200**, version **0.12.2**, no Redis/providers/live credentials. Log: Windows Temp `tmp.3elCftsHua/backend-boot.log`. CORS wildcard and missing ffmpeg warnings are present; audio-provider/media behavior is not validated.
+- **Wheel packaging gate:** disposable test overlay installed hatchling/build, leaving the existing Conda env unchanged. `HATCH_BUILD_NO_HOOKS=true python -m build --wheel --no-isolation` passed using already-validated `build/`; wheel includes `open_webui/main.py`, frontend index, and version 0.12.2 metadata. Artifact `/home/john/.cache/pi-validation/owui-wheel-vv9dzgho/open_webui-0.12.2-py3-none-any.whl`, SHA-256 `5f931417722700d396b6abd6071fa24f9626750d9682930e4544d1b900f0d892`.
+- **Packaging limitation, not hidden:** an earlier wrong hook-disable flag allowed the upstream custom hook to execute `npm install --force` and then hit Ubuntu Node **12.22.9**, failing on optional-chaining syntax during Pyodide preparation. No tracked manifests changed. This incidental install reported 54 dependency findings (3 low, 24 moderate, 25 high, 2 critical); no audit fix applied. The validated Node 22 lockfile install, frontend tests, and production build were rerun successfully afterwards. The default wheel hook itself is not a passing build claim; it requires supported Node and still performs dependency mutation/network fetches.
+- **Remaining deployment gates:** full typecheck is not clean; mounted browser/provider checks and live image/source verification are unrun. Sibling fixes are local, uncommitted, and must be separately published and rebuilt before their runtime safety contract is relied on. Optional prompt `system` versus schema `__system__` identity is preexisting and unchanged.
+- **Not run:** dependency/security audit, mounted browser/signup/audio/provider checks, real FastMCP HTTP/stdio transport, live PostgreSQL/Redis/Key Vault/providers/containers/cloud, image rebuild/publication, deployment, or promotion. Schema changes require backups and coordinated updates, not rolling deployment. No publication/deployment authorization is inferred from dependency/local-edit approval.
+
+---
+
 ### Upstream 0.12.0 integration — local validation
 
 **Local validation only; the historical Verified Branch Status below is unchanged.** This section describes the merge recorded in the commit that contains this document. Parent-verified current fact: `93f6e5e89` was fast-forward pushed to `jp_dev` and the remote was verified; `prod` is unchanged and deployment is not verified.
@@ -1134,7 +1241,9 @@ After upstream merges, revalidate that `Select.svelte` still delegates to `selec
 
 ### 28. Azure OpenAI Realtime and OpenRouter Turn-Based Voice Providers
 
-**Status:** Uncommitted local changes; local validation only. **Not deployed, and no live provider pass was run** against OpenAI, Azure OpenAI or OpenRouter. The item 28 audit does not imply that all 28 items were validated; the 27-item preservation audit predates this item.
+**v0.12.2 candidate adaptation:** Azure Realtime transport/auth is now upstream-owned (`PROVIDER`, `AUTH_TYPE`, Microsoft Entra ID, input parameters); only OpenRouter transport remains fork-owned. Legacy `ENGINE` values migrate into the native provider schema without overriding explicit new settings. Provider UI/auth fields and partial-update key isolation are reconciled with upstream. Current checks and limits are in the v0.12.2 section above. The original implementation and validation notes below are historical, not the current transport contract.
+
+**Original implementation status:** Uncommitted local changes; local validation only. **Not deployed, and no live provider pass was run** against OpenAI, Azure OpenAI or OpenRouter. The item 28 audit does not imply that all 28 items were validated; the 27-item preservation audit predates this item.
 
 **What Changed:**
 

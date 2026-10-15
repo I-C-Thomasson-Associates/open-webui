@@ -50,6 +50,7 @@ def load_fanout(tracking, process_chat):
     wrapper.body[0].body = [fanout]
     chats = SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=AsyncMock())
     namespace = {
+        'asyncio': asyncio,
         'copy': copy,
         'Chats': chats,
         'is_saved_chat_id': is_saved_chat_id,
@@ -262,6 +263,61 @@ async def test_external_fanout_returns_registered_task_without_awaiting_body(tra
         await asyncio.gather(*active, return_exceptions=True)
         await drain_callbacks()
     assert tracking.tasks == tracking.item_tasks == tracking.response_streams == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('saved_chat', [False, True])
+@pytest.mark.parametrize('body_fails', [False, True])
+async def test_automation_waits_only_for_saved_chat_tasks(tracking, saved_chat, body_fails):
+    started, finish = asyncio.Event(), asyncio.Event()
+    failure = RuntimeError('automation failed')
+
+    async def process(*args):
+        started.set()
+        await finish.wait()
+        if body_fails:
+            raise failure
+        return 'finished'
+
+    fanout, _, _ = load_fanout(tracking, process)
+    chat_id = str(uuid4()) if saved_chat else f'temporary:{uuid4()}'
+    request = SimpleNamespace(
+        state=SimpleNamespace(internal=False), app=SimpleNamespace(state=SimpleNamespace(redis=None, MODELS={}))
+    )
+    caller = asyncio.create_task(fanout(
+        request, {}, None,
+        {'session_id': 'automation', 'chat_context': {}, 'chat_id': chat_id,
+         'folder_id': 'folder', 'automation_id': 'automation'},
+        {}, None, [{'model_id': 'model', 'message_id': 'message'}],
+    ))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        await asyncio.sleep(0)
+        assert caller.done() is not saved_chat
+        task_id, = await tracking.list_task_ids_by_item_id(None, chat_id)
+        body = tracking.tasks[task_id]
+        finish.set()
+        if saved_chat and body_fails:
+            with pytest.raises(RuntimeError) as error:
+                await caller
+            assert error.value is failure
+        else:
+            response = await caller
+            assert response == {'status': True, 'task_ids': [task_id], 'chat_id': chat_id}
+        if body_fails:
+            with pytest.raises(RuntimeError):
+                await body
+        else:
+            assert await body == 'finished'
+        await drain_callbacks()
+        assert tracking.tasks == tracking.item_tasks == tracking.response_streams == {}
+    finally:
+        caller.cancel()
+        active = list(tracking.tasks.values())
+        for task in active:
+            task.cancel()
+        await asyncio.gather(caller, *active, return_exceptions=True)
+        await drain_callbacks()
 
 
 @pytest.mark.asyncio

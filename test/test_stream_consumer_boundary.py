@@ -196,13 +196,17 @@ async def test_concurrent_models_finalize_with_isolated_attribution(continuation
         local = ctx['request']
         assert local is payload_requests[forms.index(ctx['form_data'])]
         assert local.state.metadata is ctx['metadata']
+        usage = helper._merge_litellm_model_id(local, {'total_tokens': 3})
+        initial_usage = dict(usage)
         if ctx['form_data']['model'] == 'a':
+            assert usage['litellm_model_id'] == 'deployment-a'
             await helper.generate_chat_completion_for_response(
                 local, {**ctx['form_data'], 'continuation': True}, actor,
                 event_emitter=ctx['event_emitter'], bypass_system_prompt=True)
-        scope = {'request': local, 'usage': {'total_tokens': 3}, **vars(helper)}
+        scope = {'request': local, 'usage': usage, **vars(helper)}
         exec(final_code, scope)
         finalized[ctx['metadata']['message_id']] = scope['usage']
+        assert usage == initial_usage  # Reconciliation must not mutate accumulated input.
 
     scope = {'Request': Request, 'asyncio': asyncio, 'log': logging.getLogger(__name__),
              'Response': Response, 'HTTPException': HTTPException, 'process_chat_payload': payload,

@@ -53,7 +53,8 @@ def test_router_normalizes_only_streams_without_structured_consumer(marker, norm
 
 def tool_helper(function=None):
     updated = AsyncMock(return_value=function or AsyncMock(return_value='ok'))
-    helper = load_functions('utils/middleware.py', ['execute_tool_call'], {'get_updated_tool_function': updated, 'is_saved_chat_id': lambda value: value == 'saved'})
+    resolver = load_functions('utils/tool_search.py', ['resolve_tool_call'], {'CALL_TOOL_NAME': 'call_tool', 'SEARCH_TOOL_NAME': 'search_tools'})
+    helper = load_functions('utils/middleware.py', ['execute_tool_call'], {**vars(resolver), 'get_updated_tool_function': updated, 'is_saved_chat_id': lambda value: value == 'saved'})
     tool = {'callable': function, 'type': 'builtin', 'spec': {'parameters': {'properties': {'x': {}}}}}
     return helper.execute_tool_call, updated, {'tools': {'test': tool}, 'chat_id': 'saved'}
 

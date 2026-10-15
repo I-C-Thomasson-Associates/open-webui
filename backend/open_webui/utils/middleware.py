@@ -3895,6 +3895,8 @@ def build_response_object(response, response_data):
 def _merge_litellm_model_id(request, usage):
     model_id = getattr(request.state, 'litellm_model_id', None)
     if not model_id:
+        if usage and 'litellm_model_id' in usage:
+            return {key: value for key, value in usage.items() if key != 'litellm_model_id'}
         return usage
     return {**(usage or {}), 'litellm_model_id': model_id}
 

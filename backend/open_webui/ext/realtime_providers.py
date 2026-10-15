@@ -1,6 +1,6 @@
 """Authorized upstream connection factory for realtime voice providers."""
 
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 _OPENAI_HOST = 'api.openai.com'
 _OPENROUTER_HOST = 'openrouter.ai'
@@ -32,30 +32,19 @@ def validate_base_url(engine: str, base_url: str):
         raise ValueError('OpenRouter engine cannot use the OpenAI endpoint')
     if engine in {'openai', 'azure'} and _host_is(host, _OPENROUTER_HOST):
         raise ValueError(f'{engine} engine cannot use the OpenRouter endpoint')
-    if engine == 'azure':
-        if url.scheme != 'https' or _host_is(host, _OPENAI_HOST):
-            raise ValueError('Azure Realtime requires an https Azure endpoint')
-        if not url.path.rstrip('/').endswith('/openai/v1'):
-            raise ValueError('Azure Realtime base URL must end with /openai/v1')
     return url
 
 
-async def connect_upstream(engine, session, base_url, key, model, *, ssl, heartbeat, max_msg_size):
-    if engine not in {'openai', 'azure', 'openrouter'}:
-        raise ValueError('Unsupported Realtime engine')
-    url = validate_base_url(engine, base_url)
-    if engine == 'openrouter':
-        from open_webui.ext.realtime_openrouter import OpenRouterRealtimeAdapter
+def connect_openrouter(config, session, *, ssl):
+    """Only the turn-based extension; native providers stay in upstream's router."""
+    if config.get('audio.realtime.auth_type', 'api_key') != 'api_key':
+        raise ValueError('OpenRouter requires API key authentication')
+    base_url = config.get('audio.realtime.openai.api_base_url') or ''
+    validate_base_url('openrouter', base_url)
+    key = config.get('audio.realtime.openai.api_key')
+    model = config.get('audio.realtime.model')
+    if not key or not model:
+        raise ValueError('Configure the Realtime API key and model')
+    from open_webui.ext.realtime_openrouter import OpenRouterRealtimeAdapter
 
-        return OpenRouterRealtimeAdapter(session=session, base_url=base_url, key=key, model=model, ssl=ssl)
-    ws_url = urlunsplit(
-        (
-            'wss' if url.scheme == 'https' else 'ws',
-            url.netloc,
-            url.path.rstrip('/') + '/realtime',
-            urlencode({'model': model}),
-            '',
-        )
-    )
-    headers = {'api-key': key} if engine == 'azure' else {'Authorization': f'Bearer {key}'}
-    return await session.ws_connect(ws_url, headers=headers, ssl=ssl, heartbeat=heartbeat, max_msg_size=max_msg_size)
+    return OpenRouterRealtimeAdapter(session=session, base_url=base_url, key=key, model=model, ssl=ssl)

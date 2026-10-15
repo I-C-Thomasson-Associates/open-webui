@@ -4,6 +4,8 @@
 	export type RealtimeSettings = {
 		ENABLED?: boolean;
 		ENGINE?: string;
+		PROVIDER?: RealtimeEngine;
+		AUTH_TYPE?: 'api_key' | 'microsoft_entra_id';
 		OPENAI_API_BASE_URL: string;
 		OPENAI_API_KEY: string;
 		MODEL: string;
@@ -37,14 +39,19 @@
 	export const normalizeEngine = (engine: unknown): RealtimeEngine =>
 		engine === 'azure' || engine === 'openrouter' ? engine : 'openai';
 
+	export const providerFor = (settings: { PROVIDER?: unknown; ENGINE?: unknown }): RealtimeEngine =>
+		normalizeEngine(settings.PROVIDER !== undefined ? settings.PROVIDER : settings.ENGINE);
+
 	// Called only for an explicit user selection. Always clears the API key so a key for
 	// one provider is never sent to another; other fields take the selected defaults.
 	export const applyEngine = (settings: RealtimeSettings, engine: unknown): RealtimeSettings => {
 		const key = normalizeEngine(engine);
 		const preset = REALTIME_PRESETS[key];
+		const { ENGINE: _legacy, ...current } = settings;
 		return {
-			...settings,
-			ENGINE: key,
+			...current,
+			PROVIDER: key,
+			AUTH_TYPE: 'api_key',
 			OPENAI_API_BASE_URL: preset.base,
 			OPENAI_API_KEY: '',
 			MODEL: preset.model,
@@ -71,10 +78,10 @@
 	export let textareaClass = '';
 
 	// Display only; the stored value is not touched on render.
-	$: engine = normalizeEngine(realtime.ENGINE);
+	$: engine = providerFor(realtime);
 	$: preset = REALTIME_PRESETS[engine];
 
-	let selected = normalizeEngine(realtime.ENGINE);
+	$: selected = engine;
 
 	const onEngineChange = () => {
 		realtime = applyEngine(realtime, selected);
@@ -113,9 +120,7 @@
 
 {#if engine === 'azure'}
 	<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
-		{$i18n.t(
-			'Uses the GA Azure OpenAI Realtime API with an API key (no Microsoft Entra or preview API). The model field is your deployment name, which must be a supported GA realtime model. Defaults are examples only.'
-		)}
+		{$i18n.t('settings.audio.realtime.azureUrlHelp')}
 	</p>
 {:else if engine === 'openrouter'}
 	<p class="text-[0.6875rem] text-gray-400 dark:text-gray-600">
@@ -125,7 +130,20 @@
 	</p>
 {/if}
 
-<div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+{#if engine === 'azure'}
+	<AdminSettingField
+		label={$i18n.t('Authentication')}
+		description={realtime.AUTH_TYPE === 'microsoft_entra_id' ? $i18n.t('settings.audio.realtime.entraHelp') : ''}
+		forId="realtime-auth-type"
+	>
+		<SettingsSelect id="realtime-auth-type" bind:value={realtime.AUTH_TYPE} ariaLabel={$i18n.t('Authentication')}>
+			<option value="api_key">{$i18n.t('API Key')}</option>
+			<option value="microsoft_entra_id">{$i18n.t('settings.audio.realtime.entra')}</option>
+		</SettingsSelect>
+	</AdminSettingField>
+{/if}
+
+<div class="grid grid-cols-1 gap-2" class:sm:grid-cols-2={realtime.AUTH_TYPE !== 'microsoft_entra_id'}>
 	<AdminSettingField label={baseLabel} forId="realtime-base-url">
 		<input
 			id="realtime-base-url"
@@ -134,6 +152,7 @@
 			placeholder={engine === 'azure' ? 'https://resource.openai.azure.com/openai/v1' : preset.base}
 		/>
 	</AdminSettingField>
+	{#if realtime.AUTH_TYPE !== 'microsoft_entra_id'}
 	<AdminSettingField label={$i18n.t('API Key')}>
 		<SensitiveInput
 			variant="settings"
@@ -141,9 +160,10 @@
 			bind:value={realtime.OPENAI_API_KEY}
 		/>
 	</AdminSettingField>
+	{/if}
 </div>
 <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-	<AdminSettingField label={modelLabel} forId="realtime-model">
+	<AdminSettingField label={modelLabel} description={engine === 'azure' ? $i18n.t('settings.audio.realtime.deploymentHelp') : ''} forId="realtime-model">
 		<input
 			id="realtime-model"
 			class={inputClass}
