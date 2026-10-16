@@ -11,19 +11,19 @@ Ordinary targeted local checks in the isolated synthetic runtime are covered by 
 - No new dependencies or testing runtime are required to validate this skill: do static reads, check relative links and frontmatter, and count items dynamically.
 
 ## Environments
-- Backend: WSL Ubuntu, Conda env `open-webui`, historically Python 3.11. Verify the executable (e.g. `/home/john/miniconda3/envs/open-webui/bin/python`); don't assume the active one. From Git Bash on Windows use `MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu --exec <path> ...`.
-- Node: check the requested package `engines.node`. A previous Node 22 portable copy under Temp may be gone; verify, and use its absolute executable path. If PATH defaults to Node 24 and that fails the engine range, don't install without approval; report.
+- Backend: use the backend environment recorded in project memory/fork docs (historically a Linux or WSL Conda env named `open-webui`, Python 3.11). Resolve and record the actual interpreter path; don't assume the active one or a path from a previous machine/user. If you invoke WSL from Git Bash on Windows, set `MSYS_NO_PATHCONV=1` so paths are not rewritten.
+- Node: check the requested package `engines.node`. If the default `node` on PATH is outside that range, look for an already-available supported Node (e.g. a version manager or portable copy left by a previous run in the temp directory), verify it, and use its absolute path. Don't install one without approval; report.
 - `npm ci --ignore-scripts` may need cached downloads or auth, and may change packages; do not auto-change manifests or lockfiles.
 - The Vite outDir/flags may be ignored by the adapter; builds may write ignored repo `build/`. Report it and preserve existing owned outputs; do not claim Vite output is universally ignored. Don't alter manifests during validation.
 
 ## Backend isolation (every process, before import)
-Set: `PYTHON_DOTENV_DISABLED=1`, `ENABLE_CONFIG_ENV_HYDRATION=false`, empty `VAULT_HOST`, unique Temp `DATA_DIR` and `STATIC_DIR`, synthetic secret key, SQLite `DATABASE_URL`, `OFFLINE_MODE=true`; disable providers, Redis and OTEL. Config clears the default STATIC_DIR (destructive to tracked files), so never import with the default. Migrate the synthetic DB. No provider credentials, Vault, Redis, live or production DB.
+Set: `PYTHON_DOTENV_DISABLED=1`, `ENABLE_CONFIG_ENV_HYDRATION=false`, empty `VAULT_HOST`, unique temp-directory `DATA_DIR` and `STATIC_DIR`, synthetic secret key, SQLite `DATABASE_URL`, `OFFLINE_MODE=true`; disable providers, Redis and OTEL. Config clears the default STATIC_DIR (destructive to tracked files), so never import with the default. Migrate the synthetic DB. No provider credentials, Vault, Redis, live or production DB.
 
 ## Browser checks
 Use synthetic DB accounts for relevant features: repro, signup/login/onboarding, audio, dev/admin, mobile keyboard. Mocked/offline provider interactions are ordinary local validation; actual provider calls require explicit approval and scoped credentials. If a conditional welcome dialog was already dismissed, that is a harness failure, not a pass. Separate harness failures from app failures; capture console errors and app 5xx.
 
 ## Processes
-Clean up only processes and ports you started. No system firewall changes without approval. Loopback tests are fine. WSL port forwarding can be intermittent: use an owned temporary loopback relay and clean it up. Don't bypass interpreter restrictions. Keep logs in Temp; no `rm -rf` without approval.
+Clean up only processes and ports you started. No system firewall changes without approval. Loopback tests are fine. WSL port forwarding can be intermittent: use an owned temporary loopback relay and clean it up. Don't bypass interpreter restrictions. Keep logs in the system temp directory; no `rm -rf` without approval.
 
 ## Cross-repo compatibility (terminals)
 Passing OWUI tests do not show the terminal orchestrator and runtime are compatible. Run this after OWUI reconciliation and before ready/promotion. Locate siblings via `../open-webui-terminals` and `../open-terminal-internal`, check each directory's role, and record HEAD, branch and `git status` once per repo. Read their guidance and protect existing changes. Stay read-only unless the user explicitly authorizes sibling edits.
@@ -35,7 +35,7 @@ Run only focused existing mock/unit tests in each repo; do not use Docker, Kuber
 ## Runtime repo preflight (open-terminal)
 For each selected Python package, before tests:
 - `importlib.metadata.version('open-terminal')` metadata is mandatory; check without app init. Optional: the FastMCP module and supported version. If absent, report a collection failure, NOT a pass. Don't fake production metadata or stub the real integration to bypass.
-- The WSL Conda `open-webui` env is the OWUI preference; the runtime may not be installed there, and a Windows venv does not imply it works on Linux. Installing an editable package into the EXISTING Conda env is not allowed without approval. If the user declined a disposable setup, capture it for that turn only (not a permanent refusal); ask one focused question if needed, otherwise leave blocked pending user decision.
+- The OWUI backend environment is not necessarily the runtime's: the runtime may not be installed there, and a Windows venv does not imply it works on Linux. Installing an editable package into the EXISTING Conda env is not allowed without approval. If the user declined a disposable setup, capture it for that turn only (not a permanent refusal); ask one focused question if needed, otherwise leave blocked pending user decision.
 - Linux descriptor/relative NOFOLLOW tests skip on Windows: report as not validated.
 - A stub MCP verifier proves logic and wiring, not the real HTTP/stdio SDK API; an optional callable TokenVerifier is not real validation.
 - Isolate: temp `HOME`, `USERPROFILE`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `OPEN_TERMINAL_LOG_DIR`; force a synthetic `OPEN_TERMINAL_API_KEY` and REMOVE `OPEN_TERMINAL_API_KEY_FILE` (unset, not empty; they are mutually exclusive). Read no ambient credential/config files; conftest is not safe until preflight passes. Disable multiuser, notebook info and system prompt before import. No real exec/PTY/cloud services. Pytest fixtures must restore global env and must not pass by using the ambient `main.API_KEY`.
