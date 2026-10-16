@@ -151,6 +151,7 @@ function upload(overrides: any = {}) {
 		files: [],
 		onUpdate: vi.fn(),
 		chatId: '',
+		terminalContext: null,
 		localStorage: { token: 'test' },
 		console: { ...console, log: vi.fn(), warn: vi.fn() },
 		uploadFile: vi.fn().mockResolvedValue({ id: 'uploaded-id', meta: {} }),

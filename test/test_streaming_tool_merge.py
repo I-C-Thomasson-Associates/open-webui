@@ -175,7 +175,7 @@ def test_done_finish_reason_reasoning_and_litellm_attribution():
 
 
 def test_native_responses_retains_reasoning_details_call_ids_and_stateful_id():
-    helpers = load_functions('utils/middleware.py', ['handle_responses_streaming_event', 'deep_merge'])
+    helpers = load_functions('utils/response.py', ['handle_responses_streaming_event', 'deep_merge'])
     output = []
     items = [{'type': 'reasoning', 'id': 'r1', 'encrypted_content': 'opaque', 'summary': []}, {'type': 'function_call', 'id': 'fc1', 'call_id': 'call1', 'name': 'test', 'arguments': ''}]
     for index, item in enumerate(items):

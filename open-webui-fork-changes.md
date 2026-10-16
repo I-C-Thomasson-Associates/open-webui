@@ -6,6 +6,19 @@
 
 The `jp_dev` and `prod` branches are based on Open WebUI with custom modifications for ICT / Salas O'Brien deployment.
 
+### Upstream 0.12.3 integration — local validation (pre-publication)
+
+**Pre-publication snapshot; not committed, published or deployed.** Historical sections below are unchanged.
+
+- Original fork base / `jp_dev` = `origin/jp_dev`: `c7ebc8a4bcfc979cbe0922f9bb9db088bf05d67d`. Prior upstream / merge base `v0.12.2`: `6a18585ff4c2e5f6805f682222cfbc46dc669ef8`.
+- Official `v0.12.3` (lightweight tag) = `91ea4e3421d1d8069f13d4a463fcb5986d94ea60`, verified via `git ls-remote https://github.com/open-webui/open-webui`; equals local `main`/`origin/main`. No signature verification; no cryptographic authenticity claim.
+- Candidate `integrate-v0.12.3`: `git merge --no-commit --no-ff v0.12.3` merged cleanly with zero conflicts (90 upstream non-merge commits). In all 12 files changed on both sides, the fork's own diff lines are identical before and after the merge.
+- Reconciliation: `BUILD_CHANNEL` was put back to upstream's mapping, so `jp_dev` images show `(build · <hash>)` instead of `(dev · <hash>)`; the user chose this. Three fork-owned test harnesses were adapted to the upstream changes: Responses helpers moved to `utils/response.py`; `save_response_stream` dropped `content` and moved to a per-task Redis key; MessageInput gained `terminalContext`. No production fork code changed.
+- All 29 numbered items: kept, with no further adaptation needed. Items 4/14/22/26 (streaming, attachments, Responses, sub-agent tasks) are covered by the passing backend tests. Item 21 is adapted (channel mapping). The rest were source-audited only.
+- Checks: WSL Conda 3.11.14 disposable overlay (existing, no installs), isolated synthetic env: `test backend/open_webui/ext` **366 passed**. compileall passed. Synthetic boot `/health`, `/ready`, `/health/db`, `/api/version` all 200, version 0.12.3; harness teardown hung after the checks (automation scheduler/aiosqlite close noise). Node 22.23.3 Vitest **142 passed / 8 files**. Production Vite build **passed** (`APP_BUILD_CHANNEL=unknown`, `build/index.html` SHA-256 `2728a633cf9392f07f4fc182d917983e1472e14d32a26ca41385eed1f54ea229`; Pyodide fetch and `crypto:verify` prebuild not run). The encryption artifact check passed against Git blob content in a temp archive. Upstream `artifact.mjs` fails on Windows checkouts (it uses URL pathname and CRLF autocrlf content); this is an upstream issue that does not affect Linux/Docker builds. svelte-check: **5718 errors, 188 warnings, 317 files** (not clean; previous recorded candidate count was 5940; no exact base delta).
+- Cross-repo: orchestrator `38d755527fd02e8a7b00e09a38e0978968589ea5` and runtime `99636ec64cfe27070f1eaf27b76ea94355471582`, both clean on `dev` = `origin/dev`, read-only. Upstream added no new terminal API, header or route contract (only a download `AbortSignal`, filesystem attachment `terminal_id`/`session_id`, per-chat preview base URL through the existing OWUI `/chats/{chat_id}` proxy route, and async OWUI-side skill limits). Orchestrator focused mocks **47 passed** (passive_execute, http_proxy_streaming, runtime_identity, policy_api, image_source_contract, websocket_proxy). Runtime Windows venv (`open-terminal` 0.11.34; FastMCP absent, so MCP auth was not run): bounded_file_read, skills_and_compare, streaming_upload, upload_request_limit **46 passed, 38 skipped** (Linux no-follow coverage not validated on Windows). No sibling rebuild is required by this upgrade.
+- Not run: browser/provider/live checks, PostgreSQL/Redis, dependency audit, Docker image build, deployment.
+
 ### Upstream 0.12.2 integration — completed focused local validation
 
 **Pre-publication validation snapshot; not deployed.** The user authorized OWUI candidate publication and fast-forward/push to `origin/jp_dev` after frontend/backend build gates pass. This document records the tested local state before that publication, not a claim that it happened. `integrate-v0.12.2` contains a full upstream merge plus reconciliation and regression tests. Historical snapshots below are unchanged.
@@ -948,7 +961,7 @@ There is no current `.github/workflows/docker-build.yaml`.
 - Applies eligibility to build, merge, and publishing behavior.
 - Uses workflow concurrency cancellation by Git ref.
 - Publishes to GitHub Container Registry.
-
+- `BUILD_CHANNEL` uses upstream's mapping (as of the 0.12.3 integration): only upstream `dev` is `dev`; `main`/`v*` tags are `main`; `jp_dev` builds are `unknown` and display `(build · <hash>)` without the upstream update check. The 0.12.0 integration had mapped `jp_dev` to `dev`; the user chose upstream behavior during the 0.12.3 integration. Fork tags beginning with `v` still build as `main`, which enables upstream's update check.
 **Verified Commits:**
 
 - `5c559a5bb` — workflow update

@@ -10,10 +10,26 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from redis.exceptions import RedisError
 
 from open_webui.utils.chat_id import is_saved_chat_id
 
 BACKEND = Path(__file__).parents[1] / 'backend' / 'open_webui'
+
+
+def load_helpers(relative_path, names):
+    # Pure upstream helpers, compiled without their module imports.
+    path = BACKEND / relative_path
+    tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    assert {node.name for node in nodes} == set(names)
+    scope = {'uuid4': uuid4, 'JSONCodec': json}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), scope)
+    return {name: scope[name] for name in names}
+
+
+def message_output(text):
+    return [{'type': 'message', 'id': 'item', 'status': 'in_progress', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': text}]}]
 
 
 @pytest.fixture
@@ -28,11 +44,16 @@ def tracking():
         or not (node.module.startswith('open_webui.') or node.module == 'redis.asyncio')
     ]
     module = ModuleType('stream_tracking_test')
+    module.__dict__.update(load_helpers('utils/misc.py', ['get_output_text']))
+    module.__dict__.update(
+        load_helpers('utils/response.py', ['get_response_delta_key', 'deep_merge', 'handle_responses_streaming_event'])
+    )
     module.__dict__.update(
         REDIS_KEY_PREFIX='test',
         REDIS_TASK_TTL=60,
         REDIS_RESPONSE_STREAM_TTL=0,
         Redis=object,
+        RedisError=RedisError,
         JSONCodec=json,
         dumps_bytes=lambda value: json.dumps(value).encode(),
     )
@@ -102,6 +123,9 @@ class MemoryRedis:
                         redis.sets.setdefault(key, set()).add(rest[0])
                     elif name == 'srem':
                         redis.sets.get(key, set()).discard(rest[0])
+                    elif name == 'get':
+                        results.append(redis.values.get(key))
+                        continue
                     elif name == 'exists':
                         results.append(key in redis.values)
                         continue
@@ -120,6 +144,9 @@ class MemoryRedis:
 
     async def hmget(self, key, fields):
         return [self.hashes.get(key, {}).get(field) for field in fields]
+
+    async def set(self, key, value, ex=None):
+        self.values[key] = value
 
     async def hset(self, key, field, value):
         self.hashes.setdefault(key, {})[field] = value
@@ -143,7 +170,7 @@ async def test_internal_stream_is_child_scoped_and_completion_preserves_outer_ta
         observed.update(metadata)
         try:
             await tracking.save_response_stream(
-                redis, metadata['task_id'], metadata['chat_id'], metadata['message_id'], 'partial', []
+                redis, metadata['task_id'], metadata['chat_id'], metadata['message_id'], message_output('partial')
             )
             started.set()
             await finish.wait()
@@ -176,7 +203,7 @@ async def test_internal_stream_is_child_scoped_and_completion_preserves_outer_ta
         assert inner_id != outer_id
         assert set(await tracking.list_task_ids_by_item_id(redis, 'child')) == {outer_id, inner_id}
         assert await tracking.get_response_streams_by_chat_id(redis, 'child') == [
-            {'chat_id': 'child', 'message_id': 'message', 'content': 'partial', 'output': []}
+            {'chat_id': 'child', 'message_id': 'message', 'content': 'partial', 'output': message_output('partial')}
         ]
         assert await tracking.get_response_streams_by_chat_id(redis, 'unrelated-child') == []
         assert not task.done()
@@ -327,7 +354,7 @@ async def test_outer_or_child_stop_cancels_internal_process(tracking, cancel_by_
 
     async def process(request, form_data, user, metadata, model, tasks):
         try:
-            await tracking.save_response_stream(None, metadata['task_id'], 'child', 'message', 'partial', [])
+            await tracking.save_response_stream(None, metadata['task_id'], 'child', 'message', message_output('partial'))
             started.set()
             await asyncio.Event().wait()
         except asyncio.CancelledError:
