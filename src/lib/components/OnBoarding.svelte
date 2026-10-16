@@ -1,35 +1,50 @@
 <script>
-	import { getContext } from 'svelte';
+	import { getContext, onDestroy } from 'svelte';
 	const i18n = getContext('i18n');
 
 	export let show = true;
 	export let getStartedHandler = () => {};
 
 	let videoElement;
-	let playOnInteractionRegistered = false;
+	let removePlayOnInteraction = null;
+
+	function clearPlayOnInteraction() {
+		removePlayOnInteraction?.();
+		removePlayOnInteraction = null;
+	}
 
 	function playBackgroundVideo() {
-		if (!videoElement) {
+		const video = videoElement;
+		if (!show || !video) {
 			return;
 		}
 
-		videoElement.play().catch(() => {
-			if (playOnInteractionRegistered) {
+		video.play().catch(() => {
+			if (!show || video !== videoElement || removePlayOnInteraction) {
 				return;
 			}
 
-			playOnInteractionRegistered = true;
-
 			const playOnInteraction = () => {
-				videoElement.play().catch(() => {});
-				document.removeEventListener('click', playOnInteraction);
-				document.removeEventListener('touchstart', playOnInteraction);
-				playOnInteractionRegistered = false;
+				const canPlay = show && video === videoElement;
+				clearPlayOnInteraction();
+				if (canPlay) {
+					video.play().catch(() => {});
+				}
 			};
 
 			document.addEventListener('click', playOnInteraction);
 			document.addEventListener('touchstart', playOnInteraction);
+			removePlayOnInteraction = () => {
+				document.removeEventListener('click', playOnInteraction);
+				document.removeEventListener('touchstart', playOnInteraction);
+			};
 		});
+	}
+
+	onDestroy(clearPlayOnInteraction);
+
+	$: if (!show || !videoElement) {
+		clearPlayOnInteraction();
 	}
 
 	$: if (show && videoElement) {

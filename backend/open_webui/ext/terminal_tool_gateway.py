@@ -32,7 +32,7 @@ from open_webui.models.groups import Groups
 from open_webui.models.users import UserModel, Users
 from open_webui.utils.access_control import has_connection_access
 from open_webui.utils.headers import get_custom_headers, include_user_info_headers
-from open_webui.utils.tools import get_tool_servers
+from open_webui.utils.tools import get_tool_servers, resolve_schema
 
 log = logging.getLogger(__name__)
 
@@ -412,6 +412,45 @@ async def _read_bounded_request_body(request: Request) -> bytes:
             raise HTTPException(status_code=413, detail='Terminal gateway request body too large')
         chunks.append(chunk)
     return b''.join(chunks)
+
+
+@router.get('/schema')
+async def describe_terminal_tool_gateway_endpoint(request: Request, server_id: str, path: str, method: str):
+    """Describe one accessible operation without exposing the full tool-server schema."""
+    user, _ = await _validated_user_from_gateway_token(request)
+    server_data, connection = await _resolve_tool_server(request, server_id, user)
+    gateway = _gateway_config(connection)
+    method = method.upper()
+    if not _is_gateway_request_allowed(gateway, method, path) or _sanitize_proxy_path(path) is None:
+        raise HTTPException(status_code=403, detail='Terminal gateway access is not allowed for this tool server route')
+
+    spec = server_data.get('openapi') or {}
+    path_item = (spec.get('paths') or {}).get(path)
+    operation = path_item.get(method.lower()) if isinstance(path_item, dict) else None
+    if not isinstance(operation, dict):
+        raise HTTPException(status_code=404, detail='OpenAPI operation not found')
+
+    components = spec.get('components') or {}
+    body = operation.get('requestBody') or {}
+    if '$ref' in body:
+        body = resolve_schema(body, components)
+    media = (body.get('content') or {}).get('application/json') or {}
+    parameters = (path_item.get('parameters') or []) + (operation.get('parameters') or [])
+    responses = operation.get('responses') or {}
+    success = responses.get('200') or responses.get('201') or {}
+    response_media = (success.get('content') or {}).get('application/json') or {}
+    return {
+        'server_id': server_id,
+        'path': path,
+        'method': method,
+        'summary': operation.get('summary') or '',
+        'description': operation.get('description') or '',
+        'operation_id': operation.get('operationId') or '',
+        'parameters': [resolve_schema(param, components) for param in parameters],
+        'request_body_required': body.get('required', False),
+        'request_body_schema': resolve_schema(media.get('schema'), components),
+        'response_schema': resolve_schema(response_media.get('schema'), components),
+    }
 
 
 @router.api_route('/{server_id}/{path:path}', methods=PROXY_METHODS)

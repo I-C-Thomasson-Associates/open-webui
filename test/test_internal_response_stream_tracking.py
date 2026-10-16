@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import copy
 import json
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -9,8 +10,26 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from redis.exceptions import RedisError
+
+from open_webui.utils.chat_id import is_saved_chat_id
 
 BACKEND = Path(__file__).parents[1] / 'backend' / 'open_webui'
+
+
+def load_helpers(relative_path, names):
+    # Pure upstream helpers, compiled without their module imports.
+    path = BACKEND / relative_path
+    tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    assert {node.name for node in nodes} == set(names)
+    scope = {'uuid4': uuid4, 'JSONCodec': json}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), scope)
+    return {name: scope[name] for name in names}
+
+
+def message_output(text):
+    return [{'type': 'message', 'id': 'item', 'status': 'in_progress', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': text}]}]
 
 
 @pytest.fixture
@@ -25,11 +44,16 @@ def tracking():
         or not (node.module.startswith('open_webui.') or node.module == 'redis.asyncio')
     ]
     module = ModuleType('stream_tracking_test')
+    module.__dict__.update(load_helpers('utils/misc.py', ['get_output_text']))
+    module.__dict__.update(
+        load_helpers('utils/response.py', ['get_response_delta_key', 'deep_merge', 'handle_responses_streaming_event'])
+    )
     module.__dict__.update(
         REDIS_KEY_PREFIX='test',
         REDIS_TASK_TTL=60,
         REDIS_RESPONSE_STREAM_TTL=0,
         Redis=object,
+        RedisError=RedisError,
         JSONCodec=json,
         dumps_bytes=lambda value: json.dumps(value).encode(),
     )
@@ -43,9 +67,14 @@ def load_fanout(tracking, process_chat):
     chat = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'chat_completion')
     fanout = chat.body[-1]
     assert isinstance(fanout, ast.If) and "metadata.get('session_id')" in ast.unparse(fanout.test)
-    wrapper = ast.parse('async def fanout(request, form_data, user, metadata, model, tasks, message_ids): pass')
+    wrapper = ast.parse('async def fanout(request, form_data, user, metadata, model, tasks, message_ids, model_id=None, fallback_model=None): pass')
     wrapper.body[0].body = [fanout]
+    chats = SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=AsyncMock())
     namespace = {
+        'asyncio': asyncio,
+        'copy': copy,
+        'Chats': chats,
+        'is_saved_chat_id': is_saved_chat_id,
         'create_task': tracking.create_task,
         'process_chat': process_chat,
         'uuid4': uuid4,
@@ -53,7 +82,7 @@ def load_fanout(tracking, process_chat):
         'get_event_emitter': AsyncMock(),
     }
     exec(compile(ast.fix_missing_locations(wrapper), str(path), 'exec'), namespace)
-    return namespace['fanout'], namespace['get_event_emitter']
+    return namespace['fanout'], namespace['get_event_emitter'], chats
 
 
 class MemoryRedis:
@@ -94,6 +123,9 @@ class MemoryRedis:
                         redis.sets.setdefault(key, set()).add(rest[0])
                     elif name == 'srem':
                         redis.sets.get(key, set()).discard(rest[0])
+                    elif name == 'get':
+                        results.append(redis.values.get(key))
+                        continue
                     elif name == 'exists':
                         results.append(key in redis.values)
                         continue
@@ -112,6 +144,9 @@ class MemoryRedis:
 
     async def hmget(self, key, fields):
         return [self.hashes.get(key, {}).get(field) for field in fields]
+
+    async def set(self, key, value, ex=None):
+        self.values[key] = value
 
     async def hset(self, key, field, value):
         self.hashes.setdefault(key, {})[field] = value
@@ -135,7 +170,7 @@ async def test_internal_stream_is_child_scoped_and_completion_preserves_outer_ta
         observed.update(metadata)
         try:
             await tracking.save_response_stream(
-                redis, metadata['task_id'], metadata['chat_id'], metadata['message_id'], 'partial', []
+                redis, metadata['task_id'], metadata['chat_id'], metadata['message_id'], message_output('partial')
             )
             started.set()
             await finish.wait()
@@ -143,7 +178,7 @@ async def test_internal_stream_is_child_scoped_and_completion_preserves_outer_ta
         finally:
             await tracking.cleanup_task(redis, metadata['task_id'], metadata['chat_id'])
 
-    fanout, emitter = load_fanout(tracking, process)
+    fanout, emitter, _ = load_fanout(tracking, process)
     request = SimpleNamespace(
         state=SimpleNamespace(internal=True), app=SimpleNamespace(state=SimpleNamespace(redis=redis, MODELS={}))
     )
@@ -153,7 +188,7 @@ async def test_internal_stream_is_child_scoped_and_completion_preserves_outer_ta
             request,
             {},
             None,
-            {'session_id': 'session', 'chat_id': 'child'},
+            {'session_id': 'session', 'chat_context': {}, 'chat_id': 'child'},
             {},
             None,
             [{'model_id': 'model', 'message_id': 'message'}],
@@ -168,7 +203,7 @@ async def test_internal_stream_is_child_scoped_and_completion_preserves_outer_ta
         assert inner_id != outer_id
         assert set(await tracking.list_task_ids_by_item_id(redis, 'child')) == {outer_id, inner_id}
         assert await tracking.get_response_streams_by_chat_id(redis, 'child') == [
-            {'chat_id': 'child', 'message_id': 'message', 'content': 'partial', 'output': []}
+            {'chat_id': 'child', 'message_id': 'message', 'content': 'partial', 'output': message_output('partial')}
         ]
         assert await tracking.get_response_streams_by_chat_id(redis, 'unrelated-child') == []
         assert not task.done()
@@ -189,6 +224,32 @@ async def test_internal_stream_is_child_scoped_and_completion_preserves_outer_ta
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('fallback', [None, {'id': 'fallback'}])
+async def test_fanout_replaces_only_requested_model_with_fallback(tracking, fallback):
+    seen = {}
+
+    async def process(request, form_data, user, metadata, model, tasks):
+        seen.update(model=form_data['model'], task_id=metadata['task_id'], context=metadata['chat_context'])
+        return 'ok'
+
+    fanout, _, chats = load_fanout(tracking, process)
+    request = SimpleNamespace(
+        state=SimpleNamespace(internal=True), app=SimpleNamespace(state=SimpleNamespace(redis=None, MODELS={}))
+    )
+    context = {'k': 'v'}
+    await fanout(
+        request, {}, None,
+        {'session_id': 'session', 'chat_context': context, 'chat_id': str(uuid4())},
+        {}, None, [{'model_id': 'requested', 'message_id': 'message'}],
+        model_id='requested', fallback_model=fallback,
+    )
+    assert seen['model'] == (fallback['id'] if fallback else 'requested')
+    assert seen['context'] == context and seen['context'] is not context
+    chats.upsert_message_to_chat_by_id_and_message_id.assert_awaited_once()
+    assert chats.upsert_message_to_chat_by_id_and_message_id.await_args.args[2] == {'meta': {'task_id': seen['task_id']}}
+
+
+@pytest.mark.asyncio
 async def test_external_fanout_returns_registered_task_without_awaiting_body(tracking):
     started = asyncio.Event()
 
@@ -196,7 +257,7 @@ async def test_external_fanout_returns_registered_task_without_awaiting_body(tra
         started.set()
         await asyncio.Event().wait()
 
-    fanout, emitter = load_fanout(tracking, process)
+    fanout, emitter, _ = load_fanout(tracking, process)
     request = SimpleNamespace(
         state=SimpleNamespace(internal=False), app=SimpleNamespace(state=SimpleNamespace(redis=None, MODELS={}))
     )
@@ -206,7 +267,7 @@ async def test_external_fanout_returns_registered_task_without_awaiting_body(tra
                 request,
                 {},
                 None,
-                {'session_id': 'session', 'chat_id': 'external', 'folder_id': 'folder'},
+                {'session_id': 'session', 'chat_context': {}, 'chat_id': 'external', 'folder_id': 'folder'},
                 {},
                 None,
                 [{'model_id': 'model', 'message_id': 'message'}],
@@ -232,13 +293,68 @@ async def test_external_fanout_returns_registered_task_without_awaiting_body(tra
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('saved_chat', [False, True])
+@pytest.mark.parametrize('body_fails', [False, True])
+async def test_automation_waits_only_for_saved_chat_tasks(tracking, saved_chat, body_fails):
+    started, finish = asyncio.Event(), asyncio.Event()
+    failure = RuntimeError('automation failed')
+
+    async def process(*args):
+        started.set()
+        await finish.wait()
+        if body_fails:
+            raise failure
+        return 'finished'
+
+    fanout, _, _ = load_fanout(tracking, process)
+    chat_id = str(uuid4()) if saved_chat else f'temporary:{uuid4()}'
+    request = SimpleNamespace(
+        state=SimpleNamespace(internal=False), app=SimpleNamespace(state=SimpleNamespace(redis=None, MODELS={}))
+    )
+    caller = asyncio.create_task(fanout(
+        request, {}, None,
+        {'session_id': 'automation', 'chat_context': {}, 'chat_id': chat_id,
+         'folder_id': 'folder', 'automation_id': 'automation'},
+        {}, None, [{'model_id': 'model', 'message_id': 'message'}],
+    ))
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        await asyncio.sleep(0)
+        assert caller.done() is not saved_chat
+        task_id, = await tracking.list_task_ids_by_item_id(None, chat_id)
+        body = tracking.tasks[task_id]
+        finish.set()
+        if saved_chat and body_fails:
+            with pytest.raises(RuntimeError) as error:
+                await caller
+            assert error.value is failure
+        else:
+            response = await caller
+            assert response == {'status': True, 'task_ids': [task_id], 'chat_id': chat_id}
+        if body_fails:
+            with pytest.raises(RuntimeError):
+                await body
+        else:
+            assert await body == 'finished'
+        await drain_callbacks()
+        assert tracking.tasks == tracking.item_tasks == tracking.response_streams == {}
+    finally:
+        caller.cancel()
+        active = list(tracking.tasks.values())
+        for task in active:
+            task.cancel()
+        await asyncio.gather(caller, *active, return_exceptions=True)
+        await drain_callbacks()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize('cancel_by_chat', [False, True])
 async def test_outer_or_child_stop_cancels_internal_process(tracking, cancel_by_chat):
     started, cancelled = asyncio.Event(), asyncio.Event()
 
     async def process(request, form_data, user, metadata, model, tasks):
         try:
-            await tracking.save_response_stream(None, metadata['task_id'], 'child', 'message', 'partial', [])
+            await tracking.save_response_stream(None, metadata['task_id'], 'child', 'message', message_output('partial'))
             started.set()
             await asyncio.Event().wait()
         except asyncio.CancelledError:
@@ -247,7 +363,7 @@ async def test_outer_or_child_stop_cancels_internal_process(tracking, cancel_by_
         finally:
             await tracking.cleanup_task(None, metadata['task_id'], 'child')
 
-    fanout, _ = load_fanout(tracking, process)
+    fanout, _, _ = load_fanout(tracking, process)
     request = SimpleNamespace(
         state=SimpleNamespace(internal=True), app=SimpleNamespace(state=SimpleNamespace(redis=None, MODELS={}))
     )
@@ -257,7 +373,7 @@ async def test_outer_or_child_stop_cancels_internal_process(tracking, cancel_by_
             request,
             {},
             None,
-            {'session_id': 'session', 'chat_id': 'child'},
+            {'session_id': 'session', 'chat_context': {}, 'chat_id': 'child'},
             {},
             None,
             [{'model_id': 'model', 'message_id': 'message'}],
@@ -443,6 +559,8 @@ def load_builtin_delegate(tracking, background):
     handler = AsyncMock()
     namespace = {
         'asyncio': asyncio,
+        'copy': copy,
+        'add_or_update_system_message': lambda content, messages, append=False: messages,
         'uuid4': uuid4,
         'create_task': tracking.create_task,
         'request': SimpleNamespace(
@@ -455,7 +573,7 @@ def load_builtin_delegate(tracking, background):
         '_background_lock': asyncio.Lock(),
         'max_concurrent': 1,
         'max_async': 2,
-        '_build_request': lambda *args, **kwargs: SimpleNamespace(state=SimpleNamespace()),
+        '_build_request': AsyncMock(return_value=SimpleNamespace(state=SimpleNamespace())),
         'user': SimpleNamespace(id='user'),
         'max_iterations': 1,
         'max_output': 100,

@@ -21,7 +21,7 @@ from urllib.parse import quote, urlencode
 
 import aiohttp
 import yaml
-from fastapi import Request
+from fastapi import HTTPException, Request
 from langchain_core.utils.function_calling import (
     convert_to_openai_function as convert_pydantic_model_to_openai_function_spec,
 )
@@ -34,7 +34,8 @@ from open_webui.env import (
     AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER,
     AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA,
     ENABLE_FORWARD_USER_INFO_HEADERS,
-    ENABLE_PLUGINS,
+    ENABLE_TOOL_SERVERS,
+    ENABLE_TOOLS,
     FORWARD_SESSION_INFO_HEADER_CHAT_ID,
     FORWARD_SESSION_INFO_HEADER_MESSAGE_ID,
     REDIS_KEY_PREFIX,
@@ -44,6 +45,7 @@ from open_webui.models.config import Config
 from open_webui.models.groups import Groups
 from open_webui.models.tools import Tools
 from open_webui.models.users import UserModel
+from open_webui.ext.terminal_context_authorization import resolve_terminal_chat_context
 from open_webui.ext.terminal_persist_tool import (
     persist_terminal_file_to_platform,
     transfer_platform_file_to_terminal,
@@ -103,10 +105,14 @@ from open_webui.tools.builtin import (
     view_knowledge_file,
     view_note,
     view_skill,
+    read_skill_file,
+    grep_skill_files,
+    create_skill,
+    update_skill_files,
     write_note,
 )
 from open_webui.utils.access_control import has_access, has_connection_access, has_permission
-from open_webui.utils.chat_id import is_saved_chat_id
+from open_webui.utils.chat_id import is_saved_chat_id, is_temporary_chat_id
 from open_webui.utils.headers import (
     bearer_auth_header,
     get_custom_headers,
@@ -114,8 +120,15 @@ from open_webui.utils.headers import (
     normalize_bearer_token,
 )
 from open_webui.utils.json_codec import JSONCodec
+from open_webui.utils.mcp.client import MCPClient, OAuthTokenAuth
 from open_webui.utils.misc import is_string_allowed
-from open_webui.utils.plugin import get_tool_contents_cache, get_tools_cache, load_tool_module_by_id
+from open_webui.utils.oauth import get_system_oauth_token
+from open_webui.utils.plugin import (
+    get_tool_contents_cache,
+    get_tools_cache,
+    load_tool_module_by_id,
+    set_tool_module_in_cache,
+)
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
     get_terminal_server_url,
@@ -123,6 +136,7 @@ from open_webui.utils.terminals import (
     terminal_context_config,
     terminal_context_id,
 )
+from open_webui.utils.voice_avatar import avatar_animation_tools
 from pydantic import BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
 
@@ -135,7 +149,6 @@ async def build_tool_server_headers(
     user,
     server_id: str = '',
     metadata: dict | None = None,
-    extra_params: dict | None = None,
 ) -> tuple[dict, dict]:
     """Build auth headers and cookies for a tool server connection.
 
@@ -145,7 +158,6 @@ async def build_tool_server_headers(
 
     Returns (headers, cookies).
     """
-    extra_params = extra_params or {}
     metadata = metadata or {}
 
     auth_type = connection.get('auth_type', 'bearer')
@@ -157,7 +169,7 @@ async def build_tool_server_headers(
     elif auth_type == 'session':
         headers.update(bearer_auth_header(request.state.token.credentials))
     elif auth_type == 'system_oauth':
-        oauth_token = extra_params.get('__oauth_token__', None)
+        oauth_token = await get_system_oauth_token(request, user)
         if oauth_token:
             headers.update(bearer_auth_header(oauth_token.get('access_token', '')))
     elif auth_type in ('oauth_2.1', 'oauth_2.1_static'):
@@ -176,7 +188,8 @@ async def build_tool_server_headers(
     # Interpolate template vars in custom connection headers
     connection_headers = connection.get('headers', None)
     if connection_headers and isinstance(connection_headers, dict):
-        headers.update(await get_custom_headers(connection_headers, user, metadata))
+        for key, value in (await get_custom_headers(connection_headers, user, metadata)).items():
+            headers['Authorization' if key.lower() == 'authorization' else key] = value
 
     # Add user info headers if enabled
     if ENABLE_FORWARD_USER_INFO_HEADERS and user:
@@ -187,6 +200,72 @@ async def build_tool_server_headers(
             headers[FORWARD_SESSION_INFO_HEADER_MESSAGE_ID] = metadata['message_id']
 
     return headers, cookies
+
+
+async def connect_mcp_server(
+    request,
+    server_id: str,
+    user,
+    extra_params: dict,
+) -> tuple[MCPClient, list[dict]] | None:
+    """Resolve an MCP server connection, authenticate, and return (client, tool_specs).
+
+    Returns None if the server is not found or access is denied.
+    """
+    if not ENABLE_TOOL_SERVERS:
+        log.debug('MCP resolution skipped: external plugins are disabled')
+        return None
+
+    mcp_server_connection = None
+    for server_connection in await Config.get('tool_server.connections', []):
+        if server_connection.get('type', '') == 'mcp' and (server_connection.get('info') or {}).get('id') == server_id:
+            mcp_server_connection = server_connection
+            break
+
+    if not mcp_server_connection or not (mcp_server_connection.get('config') or {}).get('enable'):
+        log.error(f'MCP server with id {server_id} not found')
+        return None
+
+    if not await has_connection_access(user, mcp_server_connection):
+        log.warning(f'Access denied to MCP server {server_id} for user {user.id}')
+        return None
+
+    metadata = extra_params.get('__metadata__', {})
+
+    async def get_headers():
+        headers, _ = await build_tool_server_headers(
+            mcp_server_connection, request, user, server_id=server_id, metadata=metadata
+        )
+        return headers
+
+    auth = OAuthTokenAuth(get_headers) if mcp_server_connection.get('auth_type') == 'system_oauth' else None
+    headers = {} if auth else await get_headers()
+
+    if mcp_server_connection.get('auth_type') in ('oauth_2.1', 'oauth_2.1_static') and not headers.get('Authorization'):
+        raise HTTPException(status_code=401, detail='Auth required')
+
+    client = MCPClient(
+        event_caller=extra_params.get('__event_call__') if metadata.get('session_id') else None,
+        server_name=server_id,
+    )
+    try:
+        await client.connect(
+            url=mcp_server_connection.get('url', ''),
+            headers=headers if headers else None,
+            auth=auth,
+        )
+        function_name_filter_list = (mcp_server_connection.get('config') or {}).get('function_name_filter_list', '')
+        if isinstance(function_name_filter_list, str):
+            function_name_filter_list = function_name_filter_list.split(',')
+
+        tool_specs = await client.list_tool_specs()
+        if function_name_filter_list:
+            tool_specs = [spec for spec in tool_specs if is_string_allowed(spec['name'], function_name_filter_list)]
+        return client, tool_specs
+    except BaseException:
+        # MCP sessions must be closed in the same task that opened them.
+        await client.disconnect()
+        raise
 
 
 # Let no function be called without need, and let what
@@ -271,19 +350,26 @@ async def get_updated_tool_function(function: Callable, extra_params: dict):
 
 async def get_tools(request: Request, tool_ids: list[str], user: UserModel, extra_params: dict) -> dict[str, dict]:
     """Load tools for the given tool_ids, checking access control."""
-    if not ENABLE_PLUGINS:
+    if not tool_ids:
         return {}
 
+    enabled_ids = [
+        tool_id for tool_id in tool_ids if (ENABLE_TOOL_SERVERS if tool_id.startswith('server:') else ENABLE_TOOLS)
+    ]
+    if len(enabled_ids) != len(tool_ids):
+        log.debug('Excluded tools disabled by plugin configuration')
+    tool_ids = enabled_ids
     if not tool_ids:
         return {}
 
     tools_dict = {}
 
     # Get user's group memberships for access control checks
-    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
 
     # Batch-fetch all DB tools in one query instead of one per tool_id
-    tool_models = await Tools.get_tools_by_ids(tool_ids)
+    local_tool_ids = [tool_id for tool_id in tool_ids if not tool_id.startswith('server:')]
+    tool_models = await Tools.get_tools_by_ids(local_tool_ids) if local_tool_ids else {}
 
     for tool_id in tool_ids:
         tool = tool_models.get(tool_id)
@@ -307,9 +393,8 @@ async def get_tools(request: Request, tool_ids: list[str], user: UserModel, extr
             tool_contents_cache = get_tool_contents_cache(request)
             module = tools_cache.get(tool_id)
             if module is None or tool_contents_cache.get(tool_id) != tool.content:
-                module, _ = await load_tool_module_by_id(tool_id, content=tool.content)
-                tools_cache[tool_id] = module
-                tool_contents_cache[tool_id] = tool.content
+                module, _, source_module = await load_tool_module_by_id(tool_id, content=tool.content)
+                set_tool_module_in_cache(request, tool_id, tool.content, module, source_module)
 
             __user__ = {
                 **extra_params['__user__'],
@@ -440,18 +525,13 @@ async def get_tools(request: Request, tool_ids: list[str], user: UserModel, extr
                                 continue
 
                         metadata = extra_params.get('__metadata__', {})
-                        headers, cookies = await build_tool_server_headers(
-                            tool_server_connection,
-                            request,
-                            user,
-                            server_id=server_id,
-                            metadata=metadata,
-                            extra_params=extra_params,
-                        )
-                        headers.setdefault('Content-Type', 'application/json')
 
-                        async def make_tool_function(function_name, tool_server_data, headers, cookies):
+                        async def make_tool_function(function_name, tool_server_data, connection, server_id, metadata):
                             async def tool_function(**kwargs):
+                                headers, cookies = await build_tool_server_headers(
+                                    connection, request, user, server_id=server_id, metadata=metadata
+                                )
+                                headers.setdefault('Content-Type', 'application/json')
                                 return await execute_tool_server(
                                     url=tool_server_data['url'],
                                     headers=headers,
@@ -463,7 +543,9 @@ async def get_tools(request: Request, tool_ids: list[str], user: UserModel, extr
 
                             return tool_function
 
-                        tool_function = await make_tool_function(function_name, tool_server_data, headers, cookies)
+                        tool_function = await make_tool_function(
+                            function_name, tool_server_data, tool_server_connection, server_id, metadata
+                        )
 
                         callable = await get_async_tool_function_and_apply_extra_params(
                             tool_function,
@@ -588,6 +670,41 @@ async def get_builtin_tools(
             await Config.get('user.permissions'),
         )
 
+    gestures = (model.get('info', {}).get('meta', {}).get('voice_avatar') or {}).get('gestures', [])
+    event_call = extra_params.get('__event_call__')
+    if (
+        features.get('voice')
+        and gestures
+        and event_call
+        and get_model_capability('builtin_tools')
+        and not getattr(request.state, 'internal', False)
+        and await has_user_chat_permission('call')
+    ):
+        spec = avatar_animation_tools(gestures)[0]
+        spec.pop('type')
+        names = set(spec['parameters']['properties']['name']['enum'])
+
+        async def play_animation(name: str):
+            if not isinstance(name, str) or name not in names:
+                return {'status': 'unavailable'}
+            try:
+                result = await asyncio.wait_for(
+                    event_call({'type': 'voice:play_animation', 'data': {'name': name, 'model_id': model['id']}}),
+                    timeout=3,
+                )
+                if isinstance(result, dict) and result.get('status') in {'started', 'cancelled', 'unavailable'}:
+                    return {'status': result['status']}
+            except Exception:
+                pass
+            return {'status': 'unavailable'}
+
+        tools_dict['play_animation'] = {
+            'tool_id': 'builtin:play_animation',
+            'callable': play_animation,
+            'spec': spec,
+            'type': 'builtin',
+        }
+
     # Time utilities - available for date calculations
     if is_builtin_tool_enabled('time'):
         builtin_functions.extend([get_current_timestamp, calculate_timestamp])
@@ -664,6 +781,7 @@ async def get_builtin_tools(
         and config.get('subagents.enable')
         and getattr(request.state, 'internal', False) is not True
         and getattr(request.state, 'direct', False) is not True
+        and not is_temporary_chat_id(metadata.get('chat_id'))
     ):
         builtin_functions.extend([delegate_task, timer])
 
@@ -745,9 +863,18 @@ async def get_builtin_tools(
             ]
         )
 
-    # Skills tools - view_skill allows model to load full skill instructions on demand
-    if extra_params.get('__skill_ids__'):
-        builtin_functions.append(view_skill)
+    # Skills tools - overview, targeted search, and bounded reads of relevant passages.
+    skill_ids = sorted(set(extra_params.get('__skill_ids__') or []))
+    workspace_skill_ids = [skill_id for skill_id in skill_ids if not skill_id.startswith('terminal:')]
+    if is_builtin_tool_enabled('skills'):
+        if skill_ids:
+            builtin_functions.extend([view_skill, read_skill_file, grep_skill_files])
+        if workspace_skill_ids:
+            builtin_functions.append(update_skill_files)
+        if user.get('role') == 'admin' or await has_permission(
+            user.get('id', ''), 'workspace.skills', await Config.get('user.permissions')
+        ):
+            builtin_functions.append(create_skill)
 
     # Task management - break down complex work into trackable steps
     # Task state is stored on the chats row; local/channel IDs do not have one.
@@ -1182,6 +1309,9 @@ def convert_openapi_to_tool_payload(openapi_spec):
 
 
 async def set_tool_servers(request: Request):
+    if not ENABLE_TOOL_SERVERS:
+        return []
+
     try:
         request.app.state.TOOL_SERVERS = await get_tool_servers_data(await Config.get('tool_server.connections', []))
     except Exception as e:
@@ -1200,6 +1330,9 @@ async def set_tool_servers(request: Request):
 
 
 async def get_tool_servers(request: Request):
+    if not ENABLE_TOOL_SERVERS:
+        return []
+
     try:
         tool_servers = None
         if request.app.state.redis is not None:
@@ -1207,7 +1340,13 @@ async def get_tool_servers(request: Request):
                 data = await request.app.state.redis.get(f'{REDIS_KEY_PREFIX}:tool_servers')
                 if data is not None:
                     tool_servers = JSONCodec.loads(data)
-                    request.app.state.TOOL_SERVERS = tool_servers
+                    if tool_servers or not any(
+                        connection.get('config', {}).get('enable') and connection.get('type', 'openapi') == 'openapi'
+                        for connection in await Config.get('tool_server.connections', []) or []
+                    ):
+                        request.app.state.TOOL_SERVERS = tool_servers
+                    else:
+                        tool_servers = None
             except Exception as e:
                 log.error(f'Error fetching tool_servers from Redis: {e}')
 
@@ -1300,6 +1439,9 @@ async def _fresh_terminal_connection(terminal_id: str, expected_fingerprint: str
     """Return exactly one enabled current connection, never an ambiguous ID."""
     from open_webui.ext.terminal_discovery_cache import terminal_fingerprint
 
+    if not ENABLE_TOOL_SERVERS:
+        return None
+
     connections = await Config.get('terminal_server.connections', []) or []
     matches = [item for item in connections if isinstance(item, dict) and item.get('id') == terminal_id]
     if len(matches) != 1:
@@ -1337,7 +1479,7 @@ def _apply_terminal_display_name(data: dict, connection: dict) -> dict:
 
 async def _discover_terminal_server(request: Request, connection: dict) -> tuple[dict | None, str | None]:
     """Discover one terminal without falling back to another connection."""
-    from open_webui.ext.terminal_discovery_cache import DiscoveryResult, safe_fetch_openapi
+    from open_webui.ext.terminal_discovery_cache import DiscoveryResult, safe_fetch_openapi, terminal_discovery_timeout
 
     from open_webui.ext.terminal_discovery_cache import terminal_fingerprint
 
@@ -1353,12 +1495,13 @@ async def _discover_terminal_server(request: Request, connection: dict) -> tuple
         return None, 'invalid_connection'
     if not expected_fingerprint:
         return None, 'invalid_connection'
-    deadline = asyncio.get_running_loop().time() + AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA
+    discovery_timeout = terminal_discovery_timeout(snapshot, AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA)
+    deadline = asyncio.get_running_loop().time() + discovery_timeout
 
     async def discover():
         headers = bearer_auth_header(snapshot.get('key', '')) if snapshot.get('auth_type', 'bearer') == 'bearer' else {}
         result = await safe_fetch_openapi(
-            spec_url, headers, timeout=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA, ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
+            spec_url, headers, timeout=discovery_timeout, ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
         )
         document = result.data
         if not isinstance(document, dict) or not isinstance(document.get('paths'), dict):
@@ -1406,7 +1549,7 @@ async def _discover_terminal_server(request: Request, connection: dict) -> tuple
             return False
 
     result = await _terminal_discovery_cache(request).get_or_discover(
-        snapshot, base_url, spec_url, discover, validate=validate, timeout=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA
+        snapshot, base_url, spec_url, discover, validate=validate, timeout=discovery_timeout
     )
     # Also validate cache hits: Config/Redis are not an atomic store.
     try:
@@ -1420,6 +1563,10 @@ async def _discover_terminal_server(request: Request, connection: dict) -> tuple
 
 async def set_terminal_servers(request: Request):
     """Best-effort projection of independently cached terminal specs."""
+    if not ENABLE_TOOL_SERVERS:
+        request.app.state.TERMINAL_SERVERS = []
+        return []
+
     connections = await Config.get('terminal_server.connections', []) or []
     enabled = [item for item in connections if isinstance(item, dict) and item.get('enabled', True) and item.get('url')]
     if not enabled:
@@ -1458,19 +1605,37 @@ async def get_terminal_tools(
     - Loads specs from cache
     - Builds callables that route through the terminal proxy
     """
+    if not ENABLE_TOOL_SERVERS:
+        return {}
+
     fresh_initial = await _fresh_terminal_connection(terminal_id)
     if fresh_initial is None:
         raise RuntimeError(f"Terminal server '{terminal_id}' not found")
     connection, _, _, expected_fingerprint = fresh_initial
+    connection_config = connection.get('config') or {}
 
-    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+    user_group_ids = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
     if not await has_connection_access(user, connection, user_group_ids):
         raise RuntimeError(f'Access denied to terminal {terminal_id}')
 
     # Context is an authorization boundary: do it before cache recovery or any
     # gateway/upstream request.
-    metadata = extra_params.get('__metadata__', {})
+    # Pin the selected context for this turn; caller metadata must not redirect
+    # already constructed tools to a different runtime.
+    metadata = copy.deepcopy(extra_params.get('__metadata__') or {})
     terminal_context = 'automation' if metadata.get('automation_id') else 'chat'
+
+    async def authorize_chat_context():
+        if terminal_context == 'chat':
+            try:
+                chat_id, _ = await resolve_terminal_chat_context(user, metadata.get('chat_id', ''))
+            except Exception:
+                raise RuntimeError('Terminal chat authorization unavailable') from None
+            if chat_id is None:
+                raise RuntimeError('Access denied to terminal chat context')
+            metadata['chat_id'] = chat_id
+
+    await authorize_chat_context()
     if not terminal_context_available(connection, terminal_context):
         raise RuntimeError(f"Terminal server '{terminal_id}' is not available for {terminal_context}")
     context_id = terminal_context_id(connection, metadata, terminal_context)
@@ -1494,10 +1659,19 @@ async def get_terminal_tools(
         if fresh_result is None:
             raise RuntimeError(f"Terminal server '{terminal_id}' configuration changed; start a new turn")
         fresh, _, _, _ = fresh_result
-        fresh_groups = {group.id for group in await Groups.get_groups_by_member_id(user.id)}
+        # These upstream behavior knobs are not schema-cache identity fields,
+        # but a callable must not retain an obsolete shell-execution policy.
+        fresh_config = fresh.get('config') or {}
+        if any(
+            fresh_config.get(key, default) != connection_config.get(key, default)
+            for key, default in (('working_directory_context', True), ('user_shell_tools', 'auto'))
+        ):
+            raise RuntimeError(f"Terminal server '{terminal_id}' configuration changed; start a new turn")
+        fresh_groups = {group.id for group in await Groups.get_groups_by_member_id(user.id, include_inherited=True)}
         if not await has_connection_access(user, fresh, fresh_groups):
             raise RuntimeError(f'Access denied to terminal {terminal_id}')
-        fresh_context = 'automation' if metadata.get('automation_id') else 'chat'
+        await authorize_chat_context()
+        fresh_context = terminal_context
         fresh_context_id = terminal_context_id(fresh, metadata, fresh_context)
         fresh_config = terminal_context_config(fresh, fresh_context)
         if not terminal_context_available(fresh, fresh_context) or (
@@ -1531,10 +1705,14 @@ async def get_terminal_tools(
 
     # Fetch live with the user's credentials so prompt changes apply without a restart
     _, headers, cookies = await fresh_connection_and_headers()
-    terminal_cwd, system_prompt = await asyncio.gather(
-        get_terminal_cwd(server_data['url'], headers, cookies),
-        get_terminal_system_prompt(server_data['url'], headers, cookies),
-    )
+    terminal_cwd = None
+    if connection_config.get('working_directory_context', True):
+        terminal_cwd, system_prompt = await asyncio.gather(
+            get_terminal_cwd(server_data['url'], headers, cookies),
+            get_terminal_system_prompt(server_data['url'], headers, cookies),
+        )
+    else:
+        system_prompt = await get_terminal_system_prompt(server_data['url'], headers, cookies)
     if not system_prompt:
         system_prompt = server_data.get('system_prompt')
 
@@ -1573,6 +1751,7 @@ async def get_terminal_tools(
             'callable': callable,
             'spec': tool_spec,
             'type': 'terminal',
+            'user_shell_tools': connection_config.get('user_shell_tools', 'auto'),
         }
 
     async def persist_file_to_chat(path: str):
@@ -1657,6 +1836,9 @@ async def get_terminal_tools(
 
 
 async def get_tool_server_data(url: str, headers: dict | None) -> dict[str, Any]:
+    if not ENABLE_TOOL_SERVERS:
+        raise RuntimeError('Tool servers are disabled')
+
     _headers = {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
@@ -1704,6 +1886,9 @@ async def get_tool_server_data(url: str, headers: dict | None) -> dict[str, Any]
 
 async def get_tool_servers_data(servers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # Prepare list of enabled servers along with their original index
+
+    if not ENABLE_TOOL_SERVERS:
+        return []
 
     tasks = []
     server_entries = []
@@ -1811,6 +1996,9 @@ async def execute_tool_server(
     params: dict[str, Any],
     server_data: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any | None]]:
+    if not ENABLE_TOOL_SERVERS:
+        raise RuntimeError('Tool servers are disabled')
+
     error = None
     try:
         openapi = server_data.get('openapi', {})
