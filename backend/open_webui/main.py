@@ -1727,7 +1727,9 @@ async def chat_completion(
                     pass
                 raise  # re-raise to ensure proper task cancellation handling
             except Exception as e:
+                log.exception('Chat processing failed (chat_id=%s, model_id=%s)', metadata.get('chat_id'), form_data.get('model'))
                 error_detail = e.detail if isinstance(e, HTTPException) else str(e)
+                error_detail = error_detail or f'Chat processing failed ({type(e).__name__}).'
                 if not (metadata.get('session_id') and metadata.get('chat_id')):
                     raise
             finally:
