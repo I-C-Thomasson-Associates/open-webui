@@ -2631,11 +2631,15 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     f'<description>{skill.description or ""}</description>\n</skill>\n'
                 )
 
-        listed = (
-            await get_terminal_json(request, user, metadata, '/skills', extra_params)
-            if terminal_id or terminal_skill_ids
-            else None
-        )
+        try:
+            listed = (
+                await get_terminal_json(request, user, metadata, '/skills', extra_params)
+                if terminal_id or terminal_skill_ids
+                else None
+            )
+        except Exception as e:
+            log.warning('Terminal skill listing unavailable (%s); continuing without terminal skills', type(e).__name__)
+            listed = None
 
         listed_terminal_skills = listed if isinstance(listed, list) else []
 

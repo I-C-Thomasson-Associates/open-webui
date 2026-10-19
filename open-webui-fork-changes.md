@@ -1297,6 +1297,31 @@ After upstream merges, revalidate that `Select.svelte` still delegates to `selec
 
 ---
 
+### 30. Chat Exception Diagnostics and Empty-Error Fallback
+
+**Status:** Verified in DEV on October 19, 2026; no PROD deployment claim.
+
+- The chat exception handler logs the original traceback with chat/model IDs instead of losing the exception type behind an empty `str(e)`.
+- Empty exception details become `Chat processing failed (<exception type>).` through the existing saved-message/socket error path; nonempty details remain unchanged.
+- No retries or changes to cancellation handling were added.
+- **File modified:** `backend/open_webui/main.py` (two added lines).
+- **Validation:** syntax and four focused handler checks passed. After the user's DEV redeployment, a manual chat failure produced a traceback identifying a timeout in the terminal `/skills` listing. The earlier 3 AM automation's original exception remains unproven because its traceback was not recorded.
+
+---
+
+### 31. Best-Effort Terminal Skill Listing
+
+**Status:** Local fix; deployment and live fail-open behavior not verified.
+
+- During chat preparation, exceptions from the terminal `/skills` listing are logged as a warning with the exception type, and the chat continues without terminal skills from that listing.
+- The existing discovery timeout (10 seconds in the investigated DEV deployment) is unchanged; a failed lookup can still briefly delay the chat.
+- This applies only to listing terminal skills. Explicit skill-content reads, terminal schema discovery, and actual terminal tool failures retain their existing handling; this is not a guarantee that all terminal outages allow chat completion.
+- Cancellation propagates; no retry, authentication, or permission changes were added.
+- **File modified:** `backend/open_webui/utils/middleware.py` (localized `try/except` around the listing).
+- **Validation:** syntax and six focused async checks passed, covering successful listing, timeout/connection failures, explicitly selected terminal skills, no-terminal bypass, and cancellation propagation. These were extracted-block checks, not full-backend or live-provider tests; `git diff --check` passed.
+
+---
+
 ## Deployment Notes
 
 ### Required Configuration
@@ -1355,3 +1380,4 @@ After merging a newer upstream version, verify:
 - The complete `DATABASE_URL` is supplied without relying on automatic URL suffixing.
 - Current dependency manifests still include `azure-keyvault-secrets`.
 - Docker workflow triggers and image variants remain appropriate for the deployment branch.
+- Chat exceptions retain traceback/chat/model diagnostics and a nonempty fallback (item 30); terminal `/skills` listing failures remain best-effort without swallowing cancellation or changing actual terminal tool failure handling (item 31).
