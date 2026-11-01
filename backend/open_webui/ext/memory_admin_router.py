@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from open_webui.config import RAG_EMBEDDING_CONTENT_PREFIX
 from open_webui.internal.db import get_async_db_context
+from open_webui.models.config import Config
 from open_webui.models.memories import Memory, Memories, MemoryModel
 from open_webui.models.users import Users
 from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
@@ -88,13 +88,15 @@ def _memory_snapshot(memories: list[MemoryModel]) -> tuple[tuple, ...]:
 
 async def _rebuild_user_memory_vectors(request: Request, user, memories: list[MemoryModel]) -> int | None:
     """Rebuild one collection with one optimistic retry if SQL rows drift."""
+    # Same admin-configurable prefix the per-user reset endpoint uses.
+    content_prefix = await Config.get('rag.embedding_content_prefix')
     for attempt in range(2):
         vector_texts = [memory_vector_text(memory.content, memory.path) for memory in memories]
         vectors = await asyncio.gather(
             *[
                 request.app.state.EMBEDDING_FUNCTION(
                     vector_text,
-                    prefix=RAG_EMBEDDING_CONTENT_PREFIX,
+                    prefix=content_prefix,
                     user=user,
                 )
                 for vector_text in vector_texts

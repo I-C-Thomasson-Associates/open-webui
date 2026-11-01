@@ -262,7 +262,7 @@
 			const isLocalhost = fullUrl.includes('localhost') || fullUrl.includes('127.0.0.1');
 
 			const res = await getToolServerData(
-				auth_type === 'bearer' ? key : localStorage.token,
+				auth_type === 'bearer' ? key : auth_type === 'session' ? localStorage.token : null,
 				fullUrl
 			).catch((err) => {
 				console.error('Tool server connection error:', err);
@@ -687,6 +687,8 @@
 		terminalGatewayEnabled = false;
 		terminalGatewayAllowedMethods = 'GET, POST';
 		terminalGatewayAllowedPathPrefixes = '/auth/status\n/me';
+		headers = '';
+		showAdvanced = false;
 	};
 
 	const init = async () => {

@@ -62,7 +62,7 @@ def _load(monkeypatch, connections, access=True):
     has_access = AsyncMock(return_value=access)
     build = AsyncMock(return_value=({}, {}))
     session = MagicMock()
-    session.get = MagicMock(return_value=Response())
+    session.request = MagicMock(return_value=Response())
     session_cm = MagicMock()
     session_cm.__aenter__ = AsyncMock(return_value=session)
     session_cm.__aexit__ = AsyncMock(return_value=False)
@@ -85,6 +85,7 @@ def _load(monkeypatch, connections, access=True):
     mod('open_webui.utils.tools', build_tool_server_headers=build)
     ns = {
         'ENABLE_TOOL_SERVERS': True,
+        'AIOHTTP_CLIENT_TIMEOUT_TERMINAL': 1,
         'is_saved_chat_id': chat_id_ns['is_saved_chat_id'],
         'quote': quote,
         'TERMINAL_CONTEXT_HEADER': 'X-Terminal-Context-Id',
@@ -218,7 +219,7 @@ async def test_saved_chat_owner_and_admin_rules(monkeypatch, role, owner, admin_
         build.assert_not_awaited()
         session.assert_not_called()
         return
-    headers = ns['session'].get.call_args.kwargs['headers']
+    headers = ns['session'].request.call_args.kwargs['headers']
     assert headers['X-Session-Id'] == 'saved-chat'
     assert headers['X-User-Id'] == 'u1'
     assert headers.get('X-Terminal-Context-Id') == ('chat:saved-chat' if context_id == 'chat_id' else None)
@@ -244,7 +245,7 @@ async def test_non_saved_context_normalized_without_saved_runtime(monkeypatch, c
     normalized_chat_id = chat_id if isinstance(chat_id, str) else ''
     assert build.await_args.kwargs['metadata']['chat_id'] == normalized_chat_id
     assert build.await_args.kwargs['metadata'] is not metadata
-    headers = ns['session'].get.call_args.kwargs['headers']
+    headers = ns['session'].request.call_args.kwargs['headers']
     assert headers.get('X-Session-Id') == (normalized_chat_id or None)
     assert 'X-Terminal-Context-Id' not in headers
 
@@ -280,7 +281,7 @@ async def test_repeated_read_reauthorizes_after_revocation(monkeypatch, context_
     assert ns['chat_store'].get_chat_by_id.await_count == 2
     build.assert_awaited_once()
     session.assert_called_once()
-    ns['session'].get.assert_called_once()
+    ns['session'].request.assert_called_once()
     caller.assert_not_awaited()
 
 
@@ -292,7 +293,7 @@ async def test_automation_keeps_existing_context_semantics(monkeypatch, context_
     assert await ns['get_terminal_json'](None, User(), metadata, '/skills') == {'ok': True}
     ns['resolve'].assert_not_awaited()
     ns['chat_store'].get_chat_by_id.assert_not_awaited()
-    headers = ns['session'].get.call_args.kwargs['headers']
+    headers = ns['session'].request.call_args.kwargs['headers']
     assert headers['X-Session-Id'] == 'foreign-chat'
     assert headers.get('X-Terminal-Context-Id') == (
         'automation:automation-1' if context_id == 'automation_id' else None
@@ -301,7 +302,11 @@ async def test_automation_keeps_existing_context_semantics(monkeypatch, context_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('content,expected', [('instructions', '# AGENTS.md\n\ninstructions'), ('x' * 32769, None)])
+@pytest.mark.parametrize(
+    'content,expected',
+    [('instructions', '# AGENTS.md\n\ninstructions'), ('x' * 32769, None)],
+    ids=['small', 'oversized'],  # Windows caps PYTEST_CURRENT_TEST at 32767 chars
+)
 async def test_agents_read_requests_runtime_byte_bound_and_checks_response(content, expected):
     tree = ast.parse(SRC.read_text(encoding='utf-8'))
     node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'get_terminal_agents_md')

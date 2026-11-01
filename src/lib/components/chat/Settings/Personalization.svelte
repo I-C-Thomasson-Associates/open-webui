@@ -190,6 +190,7 @@
 			first
 		>
 			<UserSettingRow
+				let:labelId
 				description={$i18n
 					.t('settings.personal.personalization.memory.description')
 					.replace(
@@ -203,6 +204,7 @@
 				</div>
 
 				<Switch
+					ariaLabelledbyId={labelId}
 					bind:state={enableMemory}
 					on:change={async () => {
 						saveSettings({ memory: enableMemory });

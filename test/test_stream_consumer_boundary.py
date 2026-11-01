@@ -67,7 +67,7 @@ async def test_process_chat_and_direct_provider_contract(has_emitter):
         observed.append(b''.join(chunks))
         return observed[-1]
 
-    scope = {'Request': Request, 'asyncio': asyncio, 'log': logging.getLogger(__name__), 'Response': Response, 'HTTPException': HTTPException, 'process_chat_payload': AsyncMock(return_value=(form, metadata, [], False)), **vars(helper), **vars(context), 'process_chat_response': consume, 'has_active_tasks': AsyncMock(return_value=True)}
+    scope = {'Request': Request, 'asyncio': asyncio, 'log': logging.getLogger(__name__), 'is_saved_chat_id': lambda _: False, 'Response': Response, 'HTTPException': HTTPException, 'process_chat_payload': AsyncMock(return_value=(form, metadata, [], False)), **vars(helper), **vars(context), 'process_chat_response': consume, 'has_active_tasks': AsyncMock(return_value=True)}
     process = nested_function('main.py', 'process_chat', scope)
     await asyncio.gather(process(request, form, 'user', metadata, {}), process(request, form, 'user', metadata, {}))
     assert len(calls) == 2 and calls[0] is not calls[1]
@@ -104,7 +104,7 @@ async def test_persist_continuation_exposes_exact_final_list(continuing, legacy)
     prior.append(dict(prior[-1]))
     prior.append({'type': 'message', 'id': 'old', 'status': 'in_progress', 'content': [{'type': 'output_text', 'text': 'Working.'}]})
     output = [{'type': 'message', 'id': 'new', 'status': 'in_progress', 'content': [{'type': 'output_text', 'text': 'Finished.'}]}]
-    scope = {'continuing': continuing, 'prior_output': prior, 'output': output, **vars(helper), 'get_output_text': text, 'usage': None, 'finish_reason': None, 'save_to_chat': True, 'metadata': {'chat_id': 'c', 'message_id': 'm'}, 'request': SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None))), 'response_stream_task_id': 't', 'user': 'user', 'content_parts': ['Finished.'], 'ctx': {}, 'Chats': SimpleNamespace(get_chat_title_by_id=AsyncMock(return_value='title'), upsert_message_to_chat_by_id_and_message_id=AsyncMock()), 'clear_response_stream': AsyncMock(), 'publish_chat_finished_event': AsyncMock(), 'event_emitter': AsyncMock(), 'outlet_filter_handler': AsyncMock(), 'background_tasks_handler': AsyncMock()}
+    scope = {'time': __import__('time'), 'continuing': continuing, 'prior_output': prior, 'output': output, **vars(helper), 'get_output_text': text, 'usage': None, 'finish_reason': None, 'save_to_chat': True, 'metadata': {'chat_id': 'c', 'message_id': 'm'}, 'request': SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None))), 'response_stream_task_id': 't', 'user': 'user', 'content_parts': ['Finished.'], 'ctx': {}, 'Chats': SimpleNamespace(get_chat_title_by_id=AsyncMock(return_value='title'), upsert_message_to_chat_by_id_and_message_id=AsyncMock()), 'clear_response_stream': AsyncMock(), 'publish_chat_finished_event': AsyncMock(), 'event_emitter': AsyncMock(), 'outlet_filter_handler': AsyncMock(), 'background_tasks_handler': AsyncMock()}
     nested_function('utils/middleware.py', 'full_output', scope)
     tree = ast.parse((BACKEND / 'utils/middleware.py').read_text(encoding='utf-8'))
     handler = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'streaming_chat_response_handler')
@@ -208,7 +208,7 @@ async def test_concurrent_models_finalize_with_isolated_attribution(continuation
         finalized[ctx['metadata']['message_id']] = scope['usage']
         assert usage == initial_usage  # Reconciliation must not mutate accumulated input.
 
-    scope = {'Request': Request, 'asyncio': asyncio, 'log': logging.getLogger(__name__),
+    scope = {'Request': Request, 'asyncio': asyncio, 'log': logging.getLogger(__name__), 'is_saved_chat_id': lambda _: False,
              'Response': Response, 'HTTPException': HTTPException, 'process_chat_payload': payload,
              **vars(helper), **vars(context), 'process_chat_response': consume,
              'cleanup_task': AsyncMock(), 'has_active_tasks': AsyncMock(return_value=True)}
@@ -246,7 +246,7 @@ async def test_process_failure_keeps_original_state_and_clears_stale_attribution
     provider = AsyncMock(side_effect=error)
     helper = load_functions('utils/middleware.py', ['generate_chat_completion_for_response'],
                             {'Request': Request, 'generate_chat_completion': provider})
-    scope = {'Request': Request, 'asyncio': asyncio, 'log': logging.getLogger(__name__),
+    scope = {'Request': Request, 'asyncio': asyncio, 'log': logging.getLogger(__name__), 'is_saved_chat_id': lambda _: False,
              'Response': Response, 'HTTPException': HTTPException,
              'process_chat_payload': AsyncMock(return_value=({}, metadata, [], False)),
              'build_chat_response_context': context, 'get_event_emitter': AsyncMock(return_value=None),

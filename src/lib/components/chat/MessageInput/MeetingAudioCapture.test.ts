@@ -133,10 +133,12 @@ function capture(overrides: any = {}) {
 
 function upload(overrides: any = {}) {
 	// Execute the actual bounded handler, not a reimplementation or a mounted component.
-	const script = inputSource.slice(
-		inputSource.indexOf('\tconst getFilesystemUploadTerminal ='),
-		inputSource.indexOf('\tconst inputFilesHandler =')
-	);
+	const script = inputSource
+		.slice(
+			inputSource.indexOf('\tconst getFilesystemUploadTerminal ='),
+			inputSource.indexOf('\tconst inputFilesHandler =')
+		)
+		.replace(/\bexport\s+const\b/g, 'const');
 	const context: any = {
 		$_user: { role: 'admin' },
 		$selectedTerminalId: null,

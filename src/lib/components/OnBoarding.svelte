@@ -1,5 +1,6 @@
 <script>
 	import { getContext, onDestroy } from 'svelte';
+	import { WEBUI_NAME } from '$lib/stores';
 	const i18n = getContext('i18n');
 
 	export let show = true;
@@ -63,7 +64,7 @@
 				crossorigin="anonymous"
 				src="/static/favicon.png"
 				class="size-6 rounded-full"
-				alt="logo"
+				alt="{$WEBUI_NAME} logo"
 			/>
 		</div>
 

@@ -66,7 +66,7 @@ async def test_centralized_helper_passes_structured_context_and_filters_argument
     blocks = [{'type': 'function_call', 'call_id': 'call_1'}]
     form = {'messages': [{'role': 'user', 'content': 'hi'}]}
     metadata['files'] = [{'id': 'file_1'}]
-    call = {'function': {'name': 'test', 'arguments': '{"x":1,"untrusted":2}'}}
+    call = {'name': 'test', 'arguments': '{"x":1,"untrusted":2}'}
     params, result, *_ = await execute(form, metadata, None, call, content_blocks=blocks)
     assert params == {'x': 1}
     assert result == 'result'
@@ -81,7 +81,7 @@ async def test_centralized_helper_passes_structured_context_and_filters_argument
 @pytest.mark.parametrize('arguments', ['{invalid', '[]', 'null'])
 async def test_bad_arguments_never_execute_tools(arguments):
     execute, updated, metadata = tool_helper()
-    result = await execute({}, metadata, None, {'function': {'name': 'test', 'arguments': arguments}})
+    result = await execute({}, metadata, None, {'name': 'test', 'arguments': arguments})
     assert result[2] is None
     updated.assert_not_awaited()
 
@@ -91,7 +91,7 @@ async def test_approval_requires_true_and_direct_tool_requires_browser():
     execute, updated, metadata = tool_helper()
     metadata.update(chat_id='temporary', params={'tool_approval_mode': 'ask'})
     caller = AsyncMock(return_value={'error': 'disconnected'})
-    call = {'function': {'name': 'test', 'arguments': '{}'}}
+    call = {'name': 'test', 'arguments': '{}'}
     result = await execute({}, metadata, caller, call)
     assert result[1] == 'Error: tool call was not approved.'
     updated.assert_not_awaited()
@@ -105,7 +105,7 @@ async def test_approval_requires_true_and_direct_tool_requires_browser():
 @pytest.mark.asyncio
 async def test_tool_exception_is_result_but_cancellation_propagates():
     execute, _, metadata = tool_helper(AsyncMock(side_effect=RuntimeError('failed')))
-    call = {'function': {'name': 'test', 'arguments': '{}'}}
+    call = {'name': 'test', 'arguments': '{}'}
     assert (await execute({}, metadata, None, call))[1] == {'error': 'failed'}
     execute, _, metadata = tool_helper(AsyncMock(side_effect=asyncio.CancelledError()))
     with pytest.raises(asyncio.CancelledError):
@@ -119,8 +119,10 @@ def test_all_tool_call_sites_use_one_helper_and_preserve_output_context():
     assert definitions[0] in tree.body
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'execute_tool_call']
     assert len(calls) == 3  # resume, ordinary loop, concurrent delegates
+    # Resume executes the saved item; streaming paths execute each response tool_call.
+    assert sorted(ast.unparse(call.args[3]) for call in calls) == ['item', 'tool_call', 'tool_call']
     for call in calls:
-        assert [ast.unparse(arg) for arg in call.args] == ['form_data', 'metadata', 'event_caller', 'tool_call']
+        assert [ast.unparse(arg) for arg in call.args[:3]] == ['form_data', 'metadata', 'event_caller']
         assert [(keyword.arg, ast.unparse(keyword.value)) for keyword in call.keywords] == [('content_blocks', 'output')]
     assert any(isinstance(node, ast.Call) and ast.unparse(node.func) == 'asyncio.gather' for node in ast.walk(tree))
 
@@ -135,7 +137,7 @@ async def test_streaming_dispatch_runs_delegates_concurrently_after_ordinary_too
     wrapper = ast.parse('async def dispatch(): pass')
     wrapper.body[0].body = container.body[start:start + 4]
     blocks = [{'type': 'function_call'}]
-    calls = [{'function': {'name': name}} for name in ['ordinary', 'delegate_task', 'delegate_task']]
+    calls = [{'name': name, 'call_id': f'call_{index}'} for index, name in enumerate(['ordinary', 'delegate_task', 'delegate_task'])]
     delegates_started = 0
     both_started = asyncio.Event()
     order = []
@@ -143,7 +145,7 @@ async def test_streaming_dispatch_runs_delegates_concurrently_after_ordinary_too
     async def execute(form_data, metadata, event_caller, call, *, content_blocks):
         nonlocal delegates_started
         assert content_blocks is blocks
-        name = call['function']['name']
+        name = call['name']
         order.append(name)
         if name == 'delegate_task':
             delegates_started += 1

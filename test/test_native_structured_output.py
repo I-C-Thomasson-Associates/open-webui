@@ -18,11 +18,18 @@ def tool_context():
     }).resolve_tool_call
     function = AsyncMock(return_value={'content': [{'type': 'text', 'text': 'result'}]})
     updated = AsyncMock(return_value=function)
-    execute = load_functions('utils/middleware.py', ['execute_tool_call'], {
-        'resolve_tool_call': resolver,
+    execute_item = load_functions('utils/middleware.py', ['execute_tool_call'], {
         'get_updated_tool_function': updated,
         'is_saved_chat_id': lambda value: value == 'saved',
     }).execute_tool_call
+
+    async def execute(form_data, metadata, event_caller, call, **kwargs):
+        # Mirror the streaming loop: dispatch is resolved before staging the saved item.
+        error = resolver(call, metadata.get('tools', {}))
+        if error:
+            return {}, error, None, None, False
+        item = {'type': 'function_call', 'call_id': call['id'], **call['function']}
+        return await execute_item(form_data, metadata, event_caller, item, **kwargs)
     target = {'callable': function, 'type': 'external', 'spec': {
         'parameters': {'properties': {'x': {}}},
     }}

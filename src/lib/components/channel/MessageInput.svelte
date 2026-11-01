@@ -90,6 +90,7 @@
 
 	let loaded = false;
 	let draggedOver = false;
+	let shiftKey = false;
 
 	let recording = false;
 	let content = '';
@@ -411,7 +412,7 @@
 		const compressImageHandler = async (imageUrl: string, settings: any = {}, config: any = {}) => {
 			// Quick shortcut so we don’t do unnecessary work.
 			const settingsCompression =
-				(settings?.imageCompression && settings?.imageCompressionInChannels) ?? false;
+				(settings?.imageCompression ?? false) && (settings?.imageCompressionInChannels ?? true);
 			const configWidth = config?.file?.image_compression?.width ?? null;
 			const configHeight = config?.file?.image_compression?.height ?? null;
 
@@ -542,9 +543,23 @@
 	};
 
 	const handleKeyDown = (event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
+			shiftKey = true;
+		}
+
 		if (event.key === 'Escape') {
 			draggedOver = false;
 		}
+	};
+
+	const handleKeyUp = (event: KeyboardEvent) => {
+		if (event.key === 'Shift') {
+			shiftKey = false;
+		}
+	};
+
+	const handleBlur = () => {
+		shiftKey = false;
 	};
 
 	const onDragOver = (e: DragEvent) => {
@@ -711,6 +726,24 @@
 				: []),
 			{
 				char: '/',
+				command: ({ editor, range, props }) => {
+					if (props?.type === 'prompt') {
+						void insertTextAtCursor(props.content ?? '');
+						return;
+					}
+
+					editor
+						.chain()
+						.focus()
+						.insertContentAt(range, [
+							{
+								type: 'mention',
+								attrs: { ...props, mentionSuggestionChar: '/' }
+							},
+							{ type: 'text', text: ' ' }
+						])
+						.run();
+				},
 				render: getSuggestionRenderer(CommandSuggestionList, {
 					i18n,
 					onSelect: (e) => {
@@ -774,6 +807,8 @@
 		}, 100);
 
 		window.addEventListener('keydown', handleKeyDown);
+		window.addEventListener('keyup', handleKeyUp);
+		window.addEventListener('blur', handleBlur);
 
 		let dropzoneElement: HTMLElement | null = null;
 		const initialize = async () => {
@@ -794,6 +829,8 @@
 			isDestroyed = true;
 
 			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('keyup', handleKeyUp);
+			window.removeEventListener('blur', handleBlur);
 
 			if (dropzoneElement) {
 				dropzoneElement.removeEventListener('dragover', onDragOver);
@@ -1067,7 +1104,7 @@
 													navigator.maxTouchPoints > 0 ||
 													navigator.msMaxTouchPoints > 0
 												)}
-											largeTextAsFile={$settings?.largeTextAsFile ?? false}
+											largeTextAsFile={($settings?.largeTextAsFile ?? false) && !shiftKey}
 											floatingMenuPlacement={'top-start'}
 											{suggestions}
 											on:pasted={resolveInputMentions}
@@ -1149,7 +1186,7 @@
 												if (clipboardData && clipboardData.items) {
 													for (const item of clipboardData.items) {
 														if (item.type === 'text/plain') {
-															if ($settings?.largeTextAsFile ?? false) {
+															if (($settings?.largeTextAsFile ?? false) && !shiftKey) {
 																const text = clipboardData.getData('text/plain');
 
 																if (text.length > PASTED_TEXT_CHARACTER_LIMIT) {
