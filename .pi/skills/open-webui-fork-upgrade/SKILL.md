@@ -23,6 +23,16 @@ Read `references/validation.md` before the validation phase.
 
 ## 1. Baseline
 
+### 1a. Sync preflight (automatic, every repo, before reading or acting)
+
+Standing user instruction. Before reading, auditing or editing a repo, and again before publishing, bring each working branch up to date with its remote:
+- Repos and branches: this fork `jp_dev`; orchestrator `../open-webui-terminals` `dev` (unless the user names another branch); runtime `../open-terminal-internal` `dev`.
+- For each: `git status -sb`, `git fetch origin --no-tags`, then compare local and `origin/<branch>` (`git rev-list --left-right --count <branch>...origin/<branch>`).
+- Behind only, clean tree, branch checked out: `git pull --ff-only --no-tags origin <branch>`, then record the new HEAD.
+- Behind but not checked out: `git fetch origin <branch>:<branch>` fast-forwards it without switching branches. Never switch branches automatically.
+- Dirty tree, ahead or diverged, or wrong branch checked out: do not pull, stash, reset, rebase or switch. Report the state and ask.
+- This covers fast-forward updates only. It never covers pushing, or syncing runtime `main` from upstream (3a), and it is not a reason to skip the baseline below.
+
 Record, with actual commands, not remembered values:
 - `git status`, current branch, `jp_dev` SHA (the original fork base).
 - The upstream remote: find it from `git remote -v` (often tracks upstream `main`; `origin` is the fork). Verify the requested tag exists there, and record the tag object SHA and the commit it peels to, checked against the expected upstream repository. A hash alone is not a cryptographic authenticity claim, especially for an unsigned tag; verify the signature as extra provenance where available. Fetching is covered when within the approved scope.
@@ -45,7 +55,7 @@ Ask the user about material behavior choices. For example, the hide-unavailable-
 
 During reconciliation, BEFORE calling the candidate ready or proposing promotion, and even when all OWUI tests pass, check the sibling orchestrator/runtime repos the terminal feature calls. Look for them as siblings of this repo, `../open-webui-terminals` (orchestrator) and `../open-terminal-internal` (runtime); if they are elsewhere or missing, ask the user for their paths. Confirm each directory exists and actually plays that role (read its README/entrypoints). Hardcode no SHA or version; choose the current ones per upgrade.
 
-- Once per repo, record HEAD, branch and `git status`; read its `AGENTS.md`/guidance and protect existing changes (including untracked, user-owned or prior-agent files).
+- Once per repo, after the 1a sync preflight, record HEAD, branch and `git status`; read its `AGENTS.md`/guidance and protect existing changes (including untracked, user-owned or prior-agent files).
 - Runtime roles: in `../open-terminal-internal`, `main` mirrors the official `https://github.com/open-webui/open-terminal` source (verify which remote is the fork `origin` vs upstream) and `dev` is the custom integration/deploy branch. Mirror sync needs its own explicit authorization, fast-forward only: no force, no rebase, and never replace `dev` wholesale. Compare upstream `main` against `dev` and its original base HEAD. Updated local `main` ≠ pushed remote `main` ≠ integrated `dev`.
 - Re-read scoped baseline (branch, HEAD, working tree) when the user may have changed state since an earlier phase; update evidence rather than repeating full research. Audit the correct branch and actual working tree, and pin the source used.
 - Branch target gate: the runtime repo's explicit target is `dev`. Verify its HEAD and branch status; do not checkout over a dirty tree or auto-switch/ignore the checked-out branch. If it is on the wrong branch, request approval/authorization for a checkout before auditing, or read the `dev` tip via `git show`/`git rev-parse dev` and distinguish that source from the checked-out state in the report. For the orchestrator, inspect the user-requested branch; do not assume `main` or `dev` automatically. Treat findings and SHAs as per-audit evidence, never permanent facts, since heads change.
