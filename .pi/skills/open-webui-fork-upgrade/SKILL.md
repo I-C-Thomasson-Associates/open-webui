@@ -26,7 +26,7 @@ Read `references/validation.md` before the validation phase.
 ### 1a. Sync preflight (automatic, every repo, before reading or acting)
 
 Standing user instruction. Before reading, auditing or editing a repo, and again before publishing, bring each working branch up to date with its remote:
-- Repos and branches: this fork `jp_dev`; orchestrator `../open-webui-terminals` `dev` (unless the user names another branch); runtime `../open-terminal-internal` `dev`.
+- Repos and branches: this fork `jp_dev`; orchestrator `../open-webui-terminals` `dev` (unless the user names another branch); runtime `../open-terminal-internal` `dev`; tools `../sobe-ai-tools` `jp_dev`.
 - For each: `git status -sb`, `git fetch origin --no-tags`, then compare local and `origin/<branch>` (`git rev-list --left-right --count <branch>...origin/<branch>`).
 - Behind only, clean tree, branch checked out: `git pull --ff-only --no-tags origin <branch>`, then record the new HEAD.
 - Behind but not checked out: `git fetch origin <branch>:<branch>` fast-forwards it without switching branches. Never switch branches automatically.
@@ -70,6 +70,14 @@ During reconciliation, BEFORE calling the candidate ready or proposing promotion
 - Track cross-repo commits, source tree and candidate versions in temporary docs or the new matrix. Do not commit or publish other repos. Upgrade approval never covers sibling publication.
 - This is a source audit, not a live-image pass. Report when a rebuild is needed (when required, even if the repo already contains changes; do not assume the image has them).
 - Any prior audit is only an example; never treat its facts as permanent instructions.
+
+### 3c. Sub Agent tool gate (`../sobe-ai-tools`, mandatory)
+
+In `../sobe-ai-tools`, check only `Tools/Sub Agent/` (`ai_team_sub_agent.py`, its tests, README, manifests); ignore the rest of the repo. Same read-only, sync and no-publish rules as 3a.
+- List every `open_webui` import and internal the tool uses (models, `tasks`, `utils/subagents`, `socket.main`, `internal.db`, `CHAT_COMPLETION_HANDLER` form_data keys, chat/message shapes). Compare their signatures and behavior between the prior upstream tag and the target tag.
+- Diff upstream `backend/open_webui/utils/subagents.py` and grep the release log for sub-agent/delegate fixes. For each one, check whether the tool's own reimplementation needs the same fix (e.g. file/image delegation, error shape, partial output).
+- Confirm the fork's companion viewer pieces the tool README lists (item 26) survived the merge.
+- Run `test_ai_team_sub_agent.py` with `PYTHONDONTWRITEBYTECODE=1` so the tree stays clean. Report gaps as a scoped fix packet; edit the tool only on explicit request.
 
 ## 3b. Tag hygiene (sibling/fork releases)
 
