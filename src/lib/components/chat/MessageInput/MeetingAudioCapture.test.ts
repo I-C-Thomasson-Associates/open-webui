@@ -165,6 +165,8 @@ function upload(overrides: any = {}) {
 		extractContentFromFile: vi.fn().mockResolvedValue('transcript'),
 		...overrides
 	};
+	// Mirrors MessageInput's reactive `isTemporary = temporary ?? $temporaryChatEnabled`.
+	context.isTemporary ??= context.$temporaryChatEnabled;
 	const api = execute(script, context, '({ uploadFileHandler })');
 	return { ...api, context };
 }

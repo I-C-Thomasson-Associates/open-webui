@@ -195,8 +195,10 @@
 				'OpenRouter ignores the Realtime prompt template because every request uses the selected chat model.'
 			)
 		: ''}
+	forId="realtime-prompt-template"
 >
 	<Textarea
+		id="realtime-prompt-template"
 		className={textareaClass}
 		bind:value={realtime.REALTIME_CALL_PROMPT_TEMPLATE}
 		placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}

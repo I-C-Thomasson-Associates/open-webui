@@ -6,6 +6,21 @@
 
 The `jp_dev` and `prod` branches are based on Open WebUI with custom modifications for ICT / Salas O'Brien deployment.
 
+### Upstream 0.13.0 integration — local validation (pre-publication)
+
+**Pre-publication snapshot; not committed, published or deployed.** Historical sections below are unchanged.
+
+- Original fork base `jp_dev` = `origin/jp_dev`: `a9b0bb2fba1a9db76e0b462afa361f9e4275da23`. Prior upstream / merge base `v0.12.5`: `f7ac7ee10962ddec0017f5c29b6740d9b9c5faca`. Official `v0.13.0` (lightweight tag) = `c38885a1a737da4968f157092f304f3b5481d0bf`, checked with `git ls-remote https://github.com/open-webui/open-webui`; it matches `origin/main`. No signature check was done.
+- Candidate `integrate-v0.13.0`: `git merge --no-commit --no-ff v0.13.0` (193 upstream non-merge commits). 10 files conflicted; all resolved, zero unmerged paths/markers, `git diff --check` clean.
+- Key reconciliations: upstream replaced `ChatControls.svelte` with a tab model (`ChatTabs.svelte` + `ChatTabs/tabs.ts`, one panel moved between desktop and mobile). The Sub-agents viewer (item 26) is now a `subagents` tab kind: listed in the + menu while the scope matches, opened automatically by a companion row click (`openRevision`), and excluded from upstream's single-view auto-open so upstream behavior is unchanged. `ChatControls.svelte` and the now-unused `ext/SubAgentTabButton.svelte` were removed; the old terminal-activation tab fix is upstream-covered (ChatTabs no longer auto-switches). Upstream refactored terminal WebSockets into `_proxy_terminal_websocket` (new `/events`, `/desktop/*`, `/execute*` routes); the fork's pinned-identity `_watch_terminal_access` now guards all of them. Upstream's new browser-view WebSocket keeps its own upstream access watcher (it does not re-run the fork's saved-chat recheck; its ticket is issued through the fork-authorized HTTP proxy). Upstream renamed `openai_chat_chunk_message_template` to `chat_completion_chunk_template`; the fork's Responses stream converter was updated. `MCPAppResult` unwrapping was added beside the fork's tool-result attachments. Realtime settings keep the fork component (item 28) with upstream's new `forId`/`id` a11y on the prompt template. The README kept the fork terminal-upload section under upstream's new short layout.
+- Fork test harnesses adapted for upstream internals (renamed template/Anthropic helpers, `MCPAppResult`, sub-agent `model_id`, `isTemporary`, `_proxy_terminal_websocket`, ChatTabs). No production behavior was relaxed.
+- Checks: Windows `.venv` 3.11.9, isolated synthetic env: `backend/open_webui/ext` + `test/` **364 passed** (gateway schema excluded, no `re2`). Ruff F821 clean on `backend/open_webui`. Node 22.23.3 Vitest **142 passed / 8 files**.
+- Cross-repo: orchestrator `dev` `861ef03` and runtime `dev` `99636ec`, both clean, read-only. New upstream browser, desktop, events, execute-WS and Git features have no runtime implementation (dev or `main`) and the orchestrator WS route only allows `/api/terminals/{id}`; OWUI gates them on `/api/config` feature flags the runtime does not advertise, so they stay hidden. Legacy terminal/files/skills/discovery contracts unchanged. Orchestrator focused mocks **31 passed**; runtime focused **43 passed, 38 skipped, 3 failed** (fixture key mismatch under the synthetic key, 401 before assertions). No sibling rebuild is required by this upgrade. Sub Agent tool: no broken imports; **61 passed**; it does not enforce upstream's new parent-model `meta.subagents.model_ids` allow-list.
+- Approved `npm ci --ignore-scripts` (Node 22.23.3) left the manifests unchanged. Production Vite build **passed** with `APP_BUILD_CHANNEL=main` (`build/index.html` SHA-256 `66ed0edac17bf122492c600ede8bb796bd1fe0f2b2abd2ec095aa9243fc2be67`, placeholder `APP_BUILD_HASH`; Pyodide fetch not run).
+- Prepared sibling candidates (uncommitted): runtime `integrate-upstream-v0.16.0` merges official open-terminal `main` `758db1a` (v0.16.0; adds browser, desktop, events/execute WS, Git, `/api/config` feature flags) into `dev`, keeping fork uploads, bounded/no-follow reads, skills and MCP auth; Windows tests **111 passed, 39 skipped** (Linux no-follow, `fastmcp`), `test_owui_tool.py` not collected (`requests` missing). Sub Agent tool 1.3.0 enforces the parent-model `meta.subagents.model_ids` allow-list (**68 passed**). Orchestrator `feat/owui-0.13-websocket-relay` (from `dev` `861ef03`) relays exactly `events`, `desktop/stream`, `desktop/audio`, `execute`, `execute/{id}/status` and `browser/view/{sid}/{capability}/{ws|stream|vnc}` at policy and default roots, reusing the legacy relay's auth, admission, quarantine and child-key injection (browser views use the capability token); full suite **354 passed**.
+- Synthetic boot in WSL Conda `open-webui` 3.11.14 after the user-chosen `pip install -r backend/requirements.txt` into that env (updated mcp 2.3.0, httpx2 2.16.0, aiohttp 3.14.5, pillow 13.0.0, uvicorn 0.54.0, pypdf 6.21.2, cryptography 48.0.1, Brotli/brotlicffi 1.2.1; `pip check` shows only the preexisting protobuf conflicts): `/health`, `/ready`, `/health/db`, `/api/version` (0.13.0), `/api/config` and `/` (built frontend) all 200.
+- Not run: gateway-schema test (Windows lacks `re2`; Conda lacks `pytest-asyncio`), svelte-check, dependency audit, browser/provider/live checks, PostgreSQL/Redis, Docker build, deployment.
+
 ### Upstream 0.12.5 integration — local validation (pre-publication)
 
 **Pre-publication snapshot; not committed, published or deployed.** Historical sections below are unchanged.
@@ -1144,6 +1159,8 @@ This authorization boundary complements the terminal gateway controls in item 11
 ---
 
 ### 26. Native Sub-Agent Conversation Viewer
+
+**v0.13.0 candidate adaptation:** upstream replaced `ChatControls.svelte` with `ChatTabs.svelte`. The viewer is now a `subagents` tab kind in ChatTabs (+ menu, auto-opened by a companion row click); `SubAgentTabButton.svelte` was removed. References to `ChatControls` below are historical.
 
 **Status:** Committed in the local checkout against Open WebUI 0.11.4; deployment and live-browser behavior are not verified.
 

@@ -232,7 +232,7 @@ describe('selected native sidebar controller', () => {
 			new URL('./Messages/ResponseMessage.svelte', import.meta.url),
 			'utf8'
 		);
-		const controls = readFileSync(new URL('./ChatControls.svelte', import.meta.url), 'utf8');
+		const controls = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
 		expect(viewer).not.toMatch(/Modal|FullHeightIframe|chatId\.set/);
 		expect(viewer.match(/<Messages\b/g)).toHaveLength(1);
 		for (const flag of ['readOnly', 'compactPreview']) expect(viewer).toContain(`${flag}={true}`);
@@ -240,48 +240,36 @@ describe('selected native sidebar controller', () => {
 			expect(viewer).toContain(`${flag}={false}`);
 		expect(response).not.toContain('<SubAgentChatViewer');
 		expect(response).toContain('onEmbedMessage={embedMessageHandler}');
-		expect(controls.match(/<SubAgentChatViewer\b/g)).toHaveLength(2);
-		expect(controls.match(/<SubAgentTabButton\b/g)).toHaveLength(2);
+		// ChatTabs mounts one panel that moves between the desktop and mobile layouts.
+		expect(controls.match(/<SubAgentChatViewer\b/g)).toHaveLength(1);
 		expect(controls).not.toContain('>Sub-agents<');
 	});
-	it('open requests take sidebar precedence once and an existing terminal does not steal a user tab', () => {
-		const source = readFileSync(new URL('./ChatControls.svelte', import.meta.url), 'utf8');
+	it('an open request opens the sub-agents tab once per revision', () => {
+		const source = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
 		const open = source.match(/\$: if \(showSubAgentsTab &&[\s\S]*?\n\t\}/)![0].replace('$:', '');
-		const terminal = source
-			.match(
-				/\$: if \(\s*\$selectedTerminalId\s*&&\s*terminalFilesAvailable\s*&&[\s\S]*?\n\t\}/
-			)![0]
-			.replace('$:', '');
 		const context: any = {
 			showSubAgentsTab: true,
 			$subAgentViewer: { openRevision: 1 },
 			handledOpenRevision: 0,
-			activeTab: 'overview',
-			showArtifacts: { set: vi.fn() },
-			showEmbeds: { set: vi.fn() },
-			showCallOverlay: { set: vi.fn() },
-			showControls: { set: vi.fn() },
-			$selectedTerminalId: 'terminal',
-			activatedTerminalId: 'terminal',
-			terminalFilesAvailable: true
+			$i18n: { t: (key: string) => key },
+			openPanel: vi.fn()
 		};
-		runInNewContext(open + terminal, context);
-		expect(context.activeTab).toBe('subagents');
-		for (const store of ['showArtifacts', 'showEmbeds', 'showCallOverlay'])
-			expect(context[store].set).toHaveBeenCalledWith(false);
-		expect(context.showControls.set).toHaveBeenCalledWith(true);
-		context.activeTab = 'overview';
-		runInNewContext(open + terminal, context);
-		expect(context.activeTab).toBe('overview');
-		expect(context.showControls.set).toHaveBeenCalledTimes(1);
-		context.$selectedTerminalId = 'new-terminal';
-		runInNewContext(terminal, context);
-		expect(context.activeTab).toBe('files');
+		runInNewContext(open, context);
+		expect(context.openPanel).toHaveBeenCalledWith({
+			id: 'subagents',
+			kind: 'subagents',
+			label: 'Sub-agents'
+		});
+		runInNewContext(open, context);
+		expect(context.openPanel).toHaveBeenCalledTimes(1);
+		context.showSubAgentsTab = false;
+		context.$subAgentViewer = { openRevision: 2 };
+		runInNewContext(open, context);
+		expect(context.openPanel).toHaveBeenCalledTimes(1);
 	});
 	it('compiles the affected Svelte components for client and SSR without executing SSR scope state', () => {
 		for (const file of [
-			'ChatControls.svelte',
-			'../../ext/SubAgentTabButton.svelte',
+			'ChatTabs.svelte',
 			'SubAgentChatViewer.svelte',
 			'../common/Select.svelte',
 			'Messages/ResponseMessage.svelte'
@@ -293,7 +281,7 @@ describe('selected native sidebar controller', () => {
 		}
 	});
 	it('keeps the tab visible for an empty saved or new active owner scope in both layouts', () => {
-		const source = readFileSync(new URL('./ChatControls.svelte', import.meta.url), 'utf8');
+		const source = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
 		const expression = source.match(/\$: showSubAgentsTab =[\s\S]*?;/)![0].replace('$:', '');
 		for (const parentId of ['', id]) {
 			const context = {
@@ -320,7 +308,10 @@ describe('selected native sidebar controller', () => {
 				expect(changed.showSubAgentsTab).toBe(false);
 			}
 		}
-		expect(source.match(/\{#if showSubAgentsTab\}/g)).toHaveLength(2);
+		expect(source).toContain(
+			"{ kind: 'subagents', label: $i18n.t('Sub-agents'), available: showSubAgentsTab }"
+		);
+		expect(source).toContain("{:else if tab.kind === 'subagents' && showSubAgentsTab}");
 	});
 	it('uses the house Select with UUID values, title labels and accessible read-only context', () => {
 		const viewer = readFileSync(new URL('./SubAgentChatViewer.svelte', import.meta.url), 'utf8');

@@ -397,6 +397,6 @@ async def test_ws_watcher_keeps_unchanged_runtime_then_stops_on_revocation(monke
 def test_ws_proxy_uses_watcher_in_first_completion_task_group():
     source = (Path(__file__).resolve().parents[1] / 'routers' / 'terminals.py').read_text(encoding='utf-8')
     tree = ast.parse(source)
-    proxy = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'ws_terminal')
+    proxy = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == '_proxy_terminal_websocket')
     assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == '_watch_terminal_access' for node in ast.walk(proxy))
     assert 'return_when=asyncio.FIRST_COMPLETED' in ast.get_source_segment(source, proxy)

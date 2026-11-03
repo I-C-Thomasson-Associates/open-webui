@@ -8,7 +8,7 @@ from test_streaming_tool_merge import stream_functions
 
 _router, _pool, _anthropic = stream_functions()
 responses_stream_chunks_handler = _router.responses_stream_chunks_handler
-openai_stream_to_anthropic_stream = _anthropic.openai_stream_to_anthropic_stream
+openai_stream_to_anthropic_stream = _anthropic.convert_chat_completions_stream_to_anthropic
 stream_wrapper = _pool.stream_wrapper
 
 

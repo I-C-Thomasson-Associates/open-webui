@@ -580,6 +580,7 @@ def load_builtin_delegate(tracking, background):
         'config': {},
         'DEFAULT_SUBAGENT_SYSTEM_PROMPT': 'system',
         'run': {'model_id': 'model'},
+        'model_id': 'model',
         'prompt': 'task',
         'assistant_message_id': 'message',
         'user_message': {},

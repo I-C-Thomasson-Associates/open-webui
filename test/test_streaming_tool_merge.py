@@ -30,10 +30,10 @@ def load_functions(relative_path, names, namespace=None):
 
 
 def stream_functions():
-    misc = load_functions('utils/misc.py', ['openai_chat_message_template', 'openai_chat_chunk_message_template', 'stream_chunks_handler'], {'CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE': None})
+    misc = load_functions('utils/misc.py', ['chat_completion_template', 'chat_completion_chunk_template', 'stream_chunks_handler'], {'CHAT_STREAM_RESPONSE_CHUNK_MAX_BUFFER_SIZE': None})
     router = load_functions('routers/openai.py', ['_normalize_responses_usage', 'responses_stream_chunks_handler'], vars(misc))
     pool = load_functions('utils/session_pool.py', ['cleanup_response', 'stream_wrapper'], vars(misc))
-    anthropic = load_functions('utils/anthropic.py', ['openai_stream_to_anthropic_stream'])
+    anthropic = load_functions('utils/anthropic.py', ['convert_chat_completions_stream_to_anthropic'])
     return router, pool, anthropic
 
 
@@ -198,6 +198,7 @@ async def test_attachment_result_reaches_display_files_without_live_storage():
     handler = AsyncMock(return_value=('Downloaded report', [attachment]))
     helpers = load_functions('utils/middleware.py', ['process_tool_result'], {
         'HTMLResponse': type('HTMLResponse', (), {}),
+        'MCPAppResult': type('MCPAppResult', (), {}),
         'handle_tool_result_attachment': handler,
         'extract_base64_images': lambda result, files: result,
         'json': json,

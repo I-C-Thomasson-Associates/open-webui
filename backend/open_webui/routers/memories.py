@@ -45,11 +45,9 @@ async def check_memories_permission(user):
         )
 
 
-############################
-# GetMemories
+# Get Memories
 # Let what is remembered here spare someone the cost
 # of learning it twice.
-############################
 
 
 @router.get('/', response_model=list[MemoryModel])
@@ -63,9 +61,7 @@ async def get_memories(
     return await Memories.get_memories_by_user_id(user.id, db=db)
 
 
-############################
-# AddMemory
-############################
+# Add Memory
 
 
 class AddMemoryForm(BaseModel):
@@ -354,9 +350,7 @@ async def update_memories(
     return response
 
 
-############################
-# BatchAddMemories
-############################
+# Batch Add Memories
 
 
 class BatchAddMemoryForm(BaseModel):
@@ -431,9 +425,7 @@ async def batch_add_memories(
     return memories
 
 
-############################
-# QueryMemory
-############################
+# Query Memory
 
 
 class QueryMemoryForm(BaseModel):
@@ -447,10 +439,7 @@ async def query_memory(
     form_data: QueryMemoryForm,
     user=Depends(get_verified_user),
 ):
-    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
-    # Database operations (get_memories_by_user_id) manage their own short-lived sessions.
-    # This prevents holding a connection during EMBEDDING_FUNCTION()
-    # which makes external embedding API calls (1-5+ seconds).
+    # Let DB helpers own short-lived sessions so remote calls and streams do not hold pool connections.
     await check_memories_permission(user)
 
     memories = await Memories.get_memories_by_user_id(user.id)
@@ -467,12 +456,7 @@ async def query_memory(
         limit=form_data.k,
     )
 
-    # Filter results by relevance threshold to avoid returning unrelated
-    # memories.  Vector similarity search always returns the top-K nearest
-    # neighbours even when they are completely irrelevant; applying the
-    # same RELEVANCE_THRESHOLD used by RAG ensures only genuinely matching
-    # memories are surfaced (distances are normalised to 0→1, higher is
-    # better).
+    # Apply the RAG relevance threshold; top-K results can include unrelated memories.
     relevance_threshold = await Config.get('rag.relevance_threshold', 0.0)
     if results and relevance_threshold > 0.0 and results.distances and results.distances[0]:
         from open_webui.retrieval.vector.main import SearchResult
@@ -557,9 +541,7 @@ async def read_memory_path(
     }
 
 
-############################
-# ReindexMemoryVectorDB
-############################
+# Reindex Memory Vector DB
 @router.post('/reindex')
 async def reindex_memories_from_vector_db(
     request: Request,
@@ -621,9 +603,7 @@ async def reset_memory_from_vector_db(
     return True
 
 
-############################
-# DeleteMemoriesByUserId
-############################
+# Delete Memories By User Id
 
 
 @router.delete('/delete/user', response_model=bool)
@@ -653,9 +633,7 @@ async def delete_memory_by_user_id(
     return False
 
 
-############################
-# UpdateMemoryById
-############################
+# Update Memory By Id
 
 
 @router.post('/{memory_id}/update', response_model=MemoryModel | None)
@@ -665,10 +643,7 @@ async def update_memory_by_id(
     form_data: MemoryUpdateModel,
     user=Depends(get_verified_user),
 ):
-    # NOTE: We intentionally do NOT use Depends(get_async_session) here.
-    # Database operations (update_memory_by_id_and_user_id) manage their own
-    # short-lived sessions. This prevents holding a connection during
-    # EMBEDDING_FUNCTION() which makes external API calls (1-5+ seconds).
+    # Let DB helpers own short-lived sessions so remote calls and streams do not hold pool connections.
     await check_memories_permission(user)
 
     content = clean_memory_content(form_data.content) if form_data.content is not None else None
@@ -717,9 +692,7 @@ async def update_memory_by_id(
     return memory
 
 
-############################
-# DeleteMemoryById
-############################
+# Delete Memory By Id
 
 
 @router.delete('/{memory_id}', response_model=bool)

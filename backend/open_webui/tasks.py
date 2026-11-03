@@ -84,9 +84,7 @@ async def redis_task_heartbeat(app):
             log.exception('Redis task heartbeat failed')
 
 
-### ------------------------------
-### REDIS-ENABLED HANDLERS
-### ------------------------------
+# Redis-enabled handlers
 
 
 async def redis_save_task(redis: Redis, task_id: str, item_id: str | None):
@@ -180,11 +178,11 @@ async def create_task(redis, coroutine, id=None, task_id=None):
 
     task = asyncio.create_task(run_registered())
 
-    # Add a done callback for cleanup
+    # Give the task a checkout routine before handing it the keys.
     task.add_done_callback(on_done)
     tasks[task_id] = task
 
-    # If an ID is provided, associate the task with that ID
+    # File this task under its item ID, if it came with a return address.
     if id:
         if item_tasks.get(id):
             item_tasks[id].append(task_id)

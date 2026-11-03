@@ -38,7 +38,7 @@
 		selectedTerminalId,
 		showSearch,
 		showSidebar,
-		showControls,
+		showTabs,
 		mobile,
 		chatId,
 		chats
@@ -210,14 +210,9 @@
 
 	onMount(() => {
 		const socketInstance = $socket;
-		const scheduleAccessRefresh = () => {
-			socketInstance?.off('connect', refreshAccess);
-			socketInstance?.once('connect', refreshAccess);
-		};
-		socketInstance?.on('access:updated', scheduleAccessRefresh);
+		socketInstance?.on('access:updated', refreshAccess);
 		return () => {
-			socketInstance?.off('access:updated', scheduleAccessRefresh);
-			socketInstance?.off('connect', refreshAccess);
+			socketInstance?.off('access:updated', refreshAccess);
 		};
 	});
 
@@ -343,7 +338,7 @@
 				} else if (shortcut === Shortcut.TOGGLE_CONTROLS) {
 					console.log('Shortcut triggered: TOGGLE_CONTROLS');
 					event.preventDefault();
-					showControls.set(!$showControls);
+					showTabs.set(!$showTabs);
 				} else if (shortcut === Shortcut.DELETE_CHAT) {
 					console.log('Shortcut triggered: DELETE_CHAT');
 					event.preventDefault();
@@ -441,11 +436,11 @@
 				checkForVersionUpdates();
 			}
 		}
-		// Persist showControls: track open/close state separately from saved size
+		// Persist showTabs: track open/close state separately from saved size
 		// chatControlsSize always retains the last width for openPane()
-		await showControls.set(!$mobile ? localStorage.showControls === 'true' : false);
-		showControls.subscribe((value) => {
-			localStorage.showControls = value ? 'true' : 'false';
+		await showTabs.set(!$mobile ? localStorage.showTabs === 'true' : false);
+		showTabs.subscribe((value) => {
+			localStorage.showTabs = value ? 'true' : 'false';
 		});
 
 		// Persist selectedTerminalId across page loads
