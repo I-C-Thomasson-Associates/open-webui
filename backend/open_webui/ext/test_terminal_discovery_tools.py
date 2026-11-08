@@ -112,6 +112,9 @@ def _load(monkeypatch):
         'get_terminal_cwd': AsyncMock(return_value=None), 'get_terminal_system_prompt': AsyncMock(return_value=None),
         'persist_terminal_file_to_platform': AsyncMock(), 'transfer_platform_file_to_terminal': AsyncMock(),
         'log': SimpleNamespace(debug=lambda *args, **kwargs: None),
+        # Tether: without a live device the user's connections are the admin Config list.
+        'get_terminal_connections': AsyncMock(side_effect=lambda user: config.get.return_value),
+        'get_tool_server_data': AsyncMock(),
     }
     module = ast.Module(body=nodes, type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), str(TOOLS), 'exec'), globals_)
@@ -523,10 +526,23 @@ async def test_discovery_uses_only_static_bearer_credentials(monkeypatch, auth_t
     )
     await subject.g['_discover_terminal_server'](request, connection)
     headers = subject.fetch.await_args.args[1]
-    assert headers == ({'Authorization': 'Bearer configured-schema-key'} if auth_type == 'bearer' else {})
+    assert headers == ({'Authorization': 'Bearer configured-schema-key'} if auth_type in ('bearer', 'session') else {})
     assert 'browser-cookie-private' not in repr(subject.fetch.await_args)
     assert 'caller-session-private' not in repr(subject.fetch.await_args)
     assert 'caller-oauth-private' not in repr(subject.fetch.await_args)
+
+
+@pytest.mark.asyncio
+async def test_tether_connection_bypasses_discovery_cache(monkeypatch):
+    subject = _load(monkeypatch)
+    connection = _connection('tether:dev', url='tether://dev', owner_id='u', auth_type='none')
+    subject.config.get.return_value = [connection]
+    subject.g['get_tool_server_data'].return_value = _openapi()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={})
+    tools, _ = await subject.g['get_terminal_tools'](request, 'tether:dev', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    assert 'run_command' in tools
+    subject.g['get_tool_server_data'].assert_awaited_once_with('tether://dev/openapi.json', {'X-User-Id': 'u'})
+    assert subject.cache.calls == [] and subject.fetch.await_count == 0
 
 
 @pytest.mark.asyncio

@@ -131,6 +131,7 @@ from open_webui.utils.plugin import (
     load_tool_module_by_id,
     set_tool_module_in_cache,
 )
+from open_webui.utils.tether import RelayInterrupted, get_terminal_connections, get_terminal_client
 from open_webui.utils.terminals import (
     TERMINAL_CONTEXT_HEADER,
     get_terminal_server_url,
@@ -599,6 +600,14 @@ async def get_tools(request: Request, tool_ids: list[str], user: UserModel, extr
     return tools_dict
 
 
+def is_file_context_enabled(model: dict, metadata: dict) -> bool:
+    # Calls without a session get no file tools, so they need the file text.
+    return (model.get('info', {}).get('meta', {}).get('capabilities') or {}).get(
+        'file_context',
+        metadata.get('params', {}).get('function_calling') == 'legacy' or not metadata.get('session_id'),
+    )
+
+
 def get_attached_knowledge(model: dict, metadata: dict) -> list[dict]:
     model_meta = model.get('info', {}).get('meta', {})
     knowledge = []
@@ -617,8 +626,7 @@ def get_attached_knowledge(model: dict, metadata: dict) -> list[dict]:
             knowledge.append({**item, 'source': source})
             seen.add(key)
 
-    file_context_enabled = (model_meta.get('capabilities') or {}).get('file_context', True)
-    if not file_context_enabled:
+    if not is_file_context_enabled(model, metadata):
         for item in metadata.get('files') or []:
             if not isinstance(item, dict) or item.get('type') not in ('collection', 'note'):
                 continue
@@ -750,7 +758,7 @@ async def get_builtin_tools(
     if (
         is_builtin_tool_enabled('files')
         and get_model_capability('file_upload')
-        and not get_model_capability('file_context')
+        and not is_file_context_enabled(model, metadata)
         and has_chat_files
         and await has_user_chat_permission('file_upload')
     ):
@@ -1385,7 +1393,9 @@ async def get_terminal_cwd(
     """Fetch the current working directory from a terminal server."""
     try:
         cwd_url = f'{base_url.rstrip("/")}/files/cwd'
-        async with aiohttp.ClientSession(
+        async with get_terminal_client(
+            base_url,
+            headers.get('X-User-Id'),
             timeout=aiohttp.ClientTimeout(total=5),
             trust_env=True,
         ) as session:
@@ -1413,7 +1423,9 @@ async def get_terminal_system_prompt(
     """
     base = base_url.rstrip('/')
     try:
-        async with aiohttp.ClientSession(
+        async with get_terminal_client(
+            base_url,
+            headers.get('X-User-Id'),
             timeout=aiohttp.ClientTimeout(total=3),
             trust_env=True,
         ) as session:
@@ -1453,14 +1465,20 @@ def _terminal_discovery_cache(request):
     return cache
 
 
-async def _fresh_terminal_connection(terminal_id: str, expected_fingerprint: str | None = None):
-    """Return exactly one enabled current connection, never an ambiguous ID."""
+async def _fresh_terminal_connection(terminal_id: str, expected_fingerprint: str | None = None, user=None):
+    """Return exactly one enabled current connection, never an ambiguous ID.
+
+    With a user, that user's personal (Tether) terminals are included.
+    """
     from open_webui.ext.terminal_discovery_cache import terminal_fingerprint
 
     if not ENABLE_TOOL_SERVERS:
         return None
 
-    connections = await Config.get('terminal_server.connections', []) or []
+    if user is not None:
+        connections = await get_terminal_connections(user)
+    else:
+        connections = await Config.get('terminal_server.connections', []) or []
     matches = [item for item in connections if isinstance(item, dict) and item.get('id') == terminal_id]
     if len(matches) != 1:
         return None
@@ -1517,7 +1535,12 @@ async def _discover_terminal_server(request: Request, connection: dict) -> tuple
     deadline = asyncio.get_running_loop().time() + discovery_timeout
 
     async def discover():
-        headers = bearer_auth_header(snapshot.get('key', '')) if snapshot.get('auth_type', 'bearer') == 'bearer' else {}
+        # Spec discovery has no user, so Session connections use the orchestrator key.
+        headers = (
+            bearer_auth_header(snapshot.get('key', ''))
+            if snapshot.get('auth_type', 'bearer') in ('bearer', 'session')
+            else {}
+        )
         result = await safe_fetch_openapi(
             spec_url, headers, timeout=discovery_timeout, ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL
         )
@@ -1626,7 +1649,7 @@ async def get_terminal_tools(
     if not ENABLE_TOOL_SERVERS:
         return {}
 
-    fresh_initial = await _fresh_terminal_connection(terminal_id)
+    fresh_initial = await _fresh_terminal_connection(terminal_id, user=user)
     if fresh_initial is None:
         raise RuntimeError(f"Terminal server '{terminal_id}' not found")
     connection, _, _, expected_fingerprint = fresh_initial
@@ -1663,7 +1686,18 @@ async def get_terminal_tools(
 
     # Resolve only the selected ID.  An unhealthy unrelated terminal must not
     # delay this one, and aggregate cache data is never authority.
-    server_data, category = await _discover_terminal_server(request, connection)
+    if connection.get('owner_id') == user.id:
+        # Personal (Tether) terminals are reached through the user's relay, not the shared cache.
+        url = connection['url']
+        openapi = await get_tool_server_data(url + '/openapi.json', {'X-User-Id': user.id})
+        server_data, category = {
+            'id': terminal_id,
+            'url': url,
+            'openapi': openapi,
+            'specs': convert_openapi_to_tool_payload(openapi),
+        }, None
+    else:
+        server_data, category = await _discover_terminal_server(request, connection)
     if server_data is None:
         raise RuntimeError(f"Terminal server '{terminal_id}' is unavailable")
 
@@ -1673,7 +1707,7 @@ async def get_terminal_tools(
 
     async def fresh_connection_and_headers():
         """Fail closed if a displayed schema no longer matches configuration."""
-        fresh_result = await _fresh_terminal_connection(terminal_id, expected_fingerprint)
+        fresh_result = await _fresh_terminal_connection(terminal_id, expected_fingerprint, user=user)
         if fresh_result is None:
             raise RuntimeError(f"Terminal server '{terminal_id}' configuration changed; start a new turn")
         fresh, _, _, _ = fresh_result
@@ -1870,7 +1904,7 @@ async def get_tool_server_data(url: str, headers: dict | None) -> dict[str, Any]
     error = None
     try:
         timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA)
-        async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+        async with get_terminal_client(url, _headers.get('X-User-Id'), timeout=timeout, trust_env=True) as session:
             async with session.get(url, headers=_headers, ssl=AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL) as response:
                 if response.status != 200:
                     error_body = await response.json()
@@ -2111,8 +2145,11 @@ async def execute_tool_server(
             else:
                 body_params = params
 
-        async with aiohttp.ClientSession(
-            trust_env=True, timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER)
+        async with get_terminal_client(
+            url,
+            (headers or {}).get('X-User-Id'),
+            trust_env=True,
+            timeout=aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER),
         ) as session:
             request_method = getattr(session, http_method.lower())
 
@@ -2168,6 +2205,8 @@ async def execute_tool_server(
                     response_headers = response.headers
                     return (response_data, response_headers)
 
+    except RelayInterrupted as err:
+        return (err.result(), None)
     except Exception as err:
         error = str(err)
         log.warning(f'API Request Error: {error}')

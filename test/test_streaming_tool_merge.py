@@ -2,8 +2,10 @@
 
 import ast
 import asyncio
+import importlib.util
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,10 +53,38 @@ def test_router_normalizes_only_streams_without_structured_consumer(marker, norm
         assert selected is (normal if normalized and is_responses else native)
 
 
+def load_tool_calling():
+    # tool_calling.py is stdlib-only, so load the real module instead of copying its helper graph.
+    spec = importlib.util.spec_from_file_location('tool_calling_under_test', BACKEND / 'utils/tool_calling.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_tool_resolver():
+    return load_functions('utils/tool_search.py', ['resolve_tool_call'], {'CALL_TOOL_NAME': 'call_tool', 'SEARCH_TOOL_NAME': 'search_tools', 'parse_arguments': load_tool_calling().parse_arguments})
+
+
+def load_execute_tool_call(updated):
+    """Production execute_tool_call with only its external collaborators supplied."""
+    resolver = load_tool_resolver()
+    calling = load_tool_calling()
+
+    async def requires_tool_approval(form_data, metadata, call, tool, params):
+        # Stub of tool_permissions.requires_tool_approval for the 'ask'/'full' modes (its own policy is out of scope here).
+        return metadata.get('params', {}).get('tool_approval_mode', 'full') != 'full'
+
+    return load_functions('utils/middleware.py', ['execute_tool_call', '_is_tool_result_error'], {
+        'Any': object, 'requires_tool_approval': requires_tool_approval, 're': re,
+        'ToolApprovalRequired': type('ToolApprovalRequired', (Exception,), {}),
+        'prepare_tool_call': calling.prepare_tool_call, 'tool_repetition_error': calling.tool_repetition_error,
+        **vars(resolver), 'get_updated_tool_function': updated, 'is_saved_chat_id': lambda value: value == 'saved',
+    }).execute_tool_call
+
+
 def tool_helper(function=None):
     updated = AsyncMock(return_value=function or AsyncMock(return_value='ok'))
-    resolver = load_functions('utils/tool_search.py', ['resolve_tool_call'], {'CALL_TOOL_NAME': 'call_tool', 'SEARCH_TOOL_NAME': 'search_tools'})
-    helper = load_functions('utils/middleware.py', ['execute_tool_call'], {**vars(resolver), 'get_updated_tool_function': updated, 'is_saved_chat_id': lambda value: value == 'saved'})
+    helper = SimpleNamespace(execute_tool_call=load_execute_tool_call(updated))
     tool = {'callable': function, 'type': 'builtin', 'spec': {'parameters': {'properties': {'x': {}}}}}
     return helper.execute_tool_call, updated, {'tools': {'test': tool}, 'chat_id': 'saved'}
 
@@ -95,7 +125,8 @@ async def test_approval_requires_true_and_direct_tool_requires_browser():
     result = await execute({}, metadata, caller, call)
     assert result[1] == 'Error: tool call was not approved.'
     updated.assert_not_awaited()
-    metadata.update(chat_id='saved')
+    # Upstream now prompts in saved chats too; use 'full' so the direct-tool browser check is what's under test.
+    metadata.update(chat_id='saved', params={'tool_approval_mode': 'full'})
     metadata['tools']['test']['direct'] = True
     result = await execute({}, metadata, None, call)
     assert 'Browser session is not connected' in result[1]
@@ -118,11 +149,15 @@ def test_all_tool_call_sites_use_one_helper_and_preserve_output_context():
     assert len(definitions) == 1
     assert definitions[0] in tree.body
     calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'execute_tool_call']
-    assert len(calls) == 3  # resume, ordinary loop, concurrent delegates
+    # Upstream's pre-stream tool handler (no output blocks) plus resume, ordinary loop, concurrent delegates, auto mode.
+    legacy = [call for call in calls if not call.keywords]
+    assert len(calls) == 5 and len(legacy) == 1 and ast.unparse(legacy[0].args[0]) == 'body'
+    calls = [call for call in calls if call.keywords]
     # Resume executes the saved item; streaming paths execute each response tool_call.
-    assert sorted(ast.unparse(call.args[3]) for call in calls) == ['item', 'tool_call', 'tool_call']
+    assert sorted(ast.unparse(call.args[3]) for call in calls) == ['item', 'tool_call', 'tool_call', 'tool_call']
     for call in calls:
         assert [ast.unparse(arg) for arg in call.args[:3]] == ['form_data', 'metadata', 'event_caller']
+        assert [ast.unparse(arg) for arg in call.args[4:]] == ['history'] * (ast.unparse(call.args[3]) == 'item') + ['tool_history'] * (ast.unparse(call.args[3]) != 'item')
         assert [(keyword.arg, ast.unparse(keyword.value)) for keyword in call.keywords] == [('content_blocks', 'output')]
     assert any(isinstance(node, ast.Call) and ast.unparse(node.func) == 'asyncio.gather' for node in ast.walk(tree))
 
@@ -142,7 +177,7 @@ async def test_streaming_dispatch_runs_delegates_concurrently_after_ordinary_too
     both_started = asyncio.Event()
     order = []
 
-    async def execute(form_data, metadata, event_caller, call, *, content_blocks):
+    async def execute(form_data, metadata, event_caller, call, history, *, content_blocks):
         nonlocal delegates_started
         assert content_blocks is blocks
         name = call['name']
@@ -154,7 +189,7 @@ async def test_streaming_dispatch_runs_delegates_concurrently_after_ordinary_too
             await asyncio.wait_for(both_started.wait(), timeout=1)
         return {}, name, None, None, False
 
-    scope = {'asyncio': asyncio, 'response_tool_calls': calls, 'execute_tool_call': execute, 'form_data': {}, 'metadata': {}, 'event_caller': None, 'output': blocks}
+    scope = {'asyncio': asyncio, 'response_tool_calls': calls, 'execute_tool_call': execute, 'form_data': {}, 'metadata': {}, 'event_caller': None, 'output': blocks, 'tool_history': [], 'tool_results': {}}
     exec(compile(ast.fix_missing_locations(wrapper), '<dispatch>', 'exec'), scope)
     await scope['dispatch']()
     assert order == ['ordinary', 'delegate_task', 'delegate_task']

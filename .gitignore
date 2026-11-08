@@ -313,3 +313,7 @@ cypress/screenshots
 .cptr
 
 .serena/
+/evals/
+
+# Local temporary fixtures and screenshots
+/tmp/

@@ -39,7 +39,7 @@ class Response:
 def _load(monkeypatch, connections, access=True):
     tree = ast.parse(SRC.read_text(encoding='utf-8'))
     names = {
-        'get_terminal_json', 'is_terminal_orchestrator', 'get_terminal_server_url',
+        'get_terminal_json', 'resolve_terminal_connection', 'is_terminal_orchestrator', 'get_terminal_server_url',
         'terminal_context_config', 'terminal_context_available', 'terminal_context_id',
     }
     nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
@@ -77,6 +77,8 @@ def _load(monkeypatch, connections, access=True):
 
     mod('aiohttp', **aiohttp.__dict__)
     mod('open_webui.env', AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL=None, AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA=1)
+    client = MagicMock(return_value=session_cm)
+    mod('open_webui.utils.tether', get_terminal_connections=AsyncMock(return_value=connections), get_terminal_client=client)
     mod('open_webui.ext.terminal_context_authorization', resolve_terminal_chat_context=resolve)
     mod('open_webui.models.config', Config=config)
     mod('open_webui.models.groups', Groups=groups)
@@ -99,7 +101,7 @@ def _load(monkeypatch, connections, access=True):
         'session': session,
     }
     exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), str(SRC), 'exec'), ns)
-    return ns, aiohttp.ClientSession, build, has_access
+    return ns, client, build, has_access
 
 
 def _conn(**kw):

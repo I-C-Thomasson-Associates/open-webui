@@ -103,6 +103,14 @@ def _load_terminal_ingress():
         'aiohttp': SimpleNamespace(ClientSession=object, ClientTimeout=object, ClientConnectionError=Exception),
         'log': SimpleNamespace(error=lambda *args, **kwargs: None, exception=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None),
     }
+    async def get_terminal_connections(user):
+        return await globals_['Config'].get('terminal_server.connections')
+
+    globals_.update(
+        get_terminal_connections=get_terminal_connections,
+        get_terminal_client=lambda *args, **kwargs: None,
+        RelayInterrupted=type('RelayInterrupted', (Exception,), {}),
+    )
     module = ast.Module(body=nodes, type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), str(source_path), 'exec'), globals_)
     return SimpleNamespace(globals=globals_, **{name: globals_[name] for name in names})
@@ -130,6 +138,7 @@ class _WebSocket:
         self.payload = payload
         self.app = SimpleNamespace(state=SimpleNamespace(redis=None))
         self.closed = []
+        self.state = SimpleNamespace()
 
     async def receive_text(self):
         return json.dumps(self.payload)
@@ -263,6 +272,7 @@ async def test_ws_default_normalizes_non_saved_context_and_access_keeps_upstream
 
     assert await ingress._resolve_authenticated_connection(ws, 'terminal-id') == (user, connection, '', 'token')
     assert ws.closed == []
+    assert ws.state.auth == {'type': 'auth', 'token': 'token', 'chat_id': ''}
 
     access_ws = _WebSocket({})
     ingress.globals['get_verified_user_by_token'] = AsyncMock(return_value=user)

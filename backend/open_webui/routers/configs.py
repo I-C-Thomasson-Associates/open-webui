@@ -411,7 +411,7 @@ async def verify_terminal_server_connection(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     try:
@@ -484,7 +484,7 @@ async def put_terminal_server_policy(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {'Content-Type': 'application/json'}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     try:
@@ -524,7 +524,7 @@ async def put_terminal_server_lifecycle(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {'Content-Type': 'application/json'}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     try:
@@ -566,7 +566,7 @@ async def refresh_terminal_server_terminals(
         raise HTTPException(status_code=400, detail='Terminal server URL is required')
 
     headers = {'Content-Type': 'application/json'}
-    if form_data.auth_type == 'bearer' and form_data.key:
+    if form_data.auth_type in ('bearer', 'session') and form_data.key:
         headers.update(bearer_auth_header(form_data.key))
 
     body = {
@@ -795,6 +795,7 @@ class ModelsConfigForm(BaseModel):
 async def get_models_defaults(request: Request, user=Depends(get_verified_user)):
     return {
         'DEFAULT_MODEL_METADATA': await Config.get('models.default_metadata'),
+        'DEFAULT_FUNCTION_CALLING': (await Config.get('models.default_params') or {}).get('function_calling'),
     }
 
 

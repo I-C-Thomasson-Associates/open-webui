@@ -67,7 +67,7 @@ def load_fanout(tracking, process_chat):
     chat = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == 'chat_completion')
     fanout = chat.body[-1]
     assert isinstance(fanout, ast.If) and "metadata.get('session_id')" in ast.unparse(fanout.test)
-    wrapper = ast.parse('async def fanout(request, form_data, user, metadata, model, tasks, message_ids, model_id=None, fallback_model=None): pass')
+    wrapper = ast.parse('async def fanout(request, form_data, user, metadata, model, tasks, message_ids, model_id=None, fallback_model=None, agent_model=None): pass')
     wrapper.body[0].body = [fanout]
     chats = SimpleNamespace(upsert_message_to_chat_by_id_and_message_id=AsyncMock())
     namespace = {

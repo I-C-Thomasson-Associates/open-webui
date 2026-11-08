@@ -8,20 +8,15 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.requests import Request
 
-from test_streaming_tool_merge import load_functions
+from test_streaming_tool_merge import load_execute_tool_call, load_functions, load_tool_calling, load_tool_resolver
 
 
 @pytest.fixture
 def tool_context():
-    resolver = load_functions('utils/tool_search.py', ['resolve_tool_call'], {
-        'CALL_TOOL_NAME': 'call_tool', 'SEARCH_TOOL_NAME': 'search_tools',
-    }).resolve_tool_call
+    resolver = load_tool_resolver().resolve_tool_call
     function = AsyncMock(return_value={'content': [{'type': 'text', 'text': 'result'}]})
     updated = AsyncMock(return_value=function)
-    execute_item = load_functions('utils/middleware.py', ['execute_tool_call'], {
-        'get_updated_tool_function': updated,
-        'is_saved_chat_id': lambda value: value == 'saved',
-    }).execute_tool_call
+    execute_item = load_execute_tool_call(updated)
 
     async def execute(form_data, metadata, event_caller, call, **kwargs):
         # Mirror the streaming loop: dispatch is resolved before staging the saved item.
@@ -97,7 +92,7 @@ async def test_deferred_direct_tool_approval_names_target_and_fails_closed(tool_
 
 
 def test_responses_replay_restores_dispatcher_without_local_structured_fields():
-    provider = load_functions('utils/misc.py', ['get_provider_function'])
+    provider = load_functions('utils/misc.py', ['get_provider_function'], {'prepare_tool_call': load_tool_calling().prepare_tool_call})
     normalizer = load_functions('routers/openai.py', ['_normalize_stored_item'], {
         'get_provider_function': provider.get_provider_function,
         'RESPONSES_ALLOWED_FIELDS': {
