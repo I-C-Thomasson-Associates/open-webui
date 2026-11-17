@@ -157,6 +157,10 @@ function upload(overrides: any = {}) {
 		localStorage: { token: 'test' },
 		console: { ...console, log: vi.fn(), warn: vi.fn() },
 		uploadFile: vi.fn().mockResolvedValue({ id: 'uploaded-id', meta: {} }),
+		selectedModels: ['model'],
+		getCurrentDirectory: undefined,
+		resolveTerminalTarget: vi.fn((selector: string) => ({ selector, baseUrl: 'local', key: 'test' })),
+		isSavedChatId: (id: string) => !!id && !id.startsWith('local:'),
 		getCwd: vi.fn().mockResolvedValue({ cwd: '/workspace' }),
 		uploadNewFileToTerminal: vi
 			.fn()
@@ -165,8 +169,8 @@ function upload(overrides: any = {}) {
 		extractContentFromFile: vi.fn().mockResolvedValue('transcript'),
 		...overrides
 	};
-	// Mirrors MessageInput's reactive `isTemporary = temporary ?? $temporaryChatEnabled`.
-	context.isTemporary ??= context.$temporaryChatEnabled;
+	// MessageInput reads temporary mode from the chat context store `$temporary`.
+	context.$temporary ??= context.$temporaryChatEnabled;
 	const api = execute(script, context, '({ uploadFileHandler })');
 	return { ...api, context };
 }
@@ -435,21 +439,6 @@ describe('T9 explicit upload success contract', () => {
 			expect(u.context.onUpdate).toHaveBeenCalledOnce();
 		}
 	);
-
-	it('preserves enabled user-configured filesystem terminal uploads', async () => {
-		const u = upload({
-			$selectedTerminalId: 'configured',
-			fileUploadCapableModels: [],
-			$settings: {
-				terminalServers: [
-					{ url: 'configured', enabled: true, config: { chat_uploads: 'filesystem' } }
-				]
-			}
-		});
-		expect(await u.uploadFileHandler(transcriptFile())).toBe(true);
-		expect(u.context.uploadFile).not.toHaveBeenCalled();
-		expect(u.context.uploadNewFileToTerminal).toHaveBeenCalledOnce();
-	});
 
 	it.each(['null', 'throw', 'missing-id', 'error-without-id'])(
 		'returns false and cleans regular upload after %s',

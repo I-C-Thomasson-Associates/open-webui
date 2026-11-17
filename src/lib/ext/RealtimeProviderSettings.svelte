@@ -201,6 +201,7 @@
 		id="realtime-prompt-template"
 		className={textareaClass}
 		bind:value={realtime.REALTIME_CALL_PROMPT_TEMPLATE}
+		maxSize={300}
 		placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
 	/>
 </AdminSettingField>

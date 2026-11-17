@@ -460,9 +460,9 @@ class TerminalDiscoveryCache:
 
 
 def terminal_discovery_timeout(connection: dict, configured: object) -> float:
-    """Finite discovery budget: policy connections get a cold-start floor, never below the configured bound."""
+    """Finite discovery budget: policy/template connections get a cold-start floor, never below the configured bound."""
     timeout = TerminalDiscoveryCache._timeout(configured)
-    if isinstance(connection, dict) and connection.get('policy_id'):
+    if isinstance(connection, dict) and (connection.get('policy_id') or connection.get('template_id')):
         return max(timeout, POLICY_DISCOVERY_TIMEOUT_SECONDS)
     return timeout
 

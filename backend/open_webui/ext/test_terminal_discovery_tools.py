@@ -18,6 +18,7 @@ from urllib.parse import quote
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 
 
 TOOLS = Path(__file__).parents[1] / 'utils' / 'tools.py'
@@ -54,7 +55,7 @@ class Cache:
 
 
 def _fingerprint(connection, base_url, spec_url):
-    return repr((connection.get('id'), base_url, spec_url, connection.get('policy_id'), connection.get('path'), connection.get('key')))
+    return repr((connection.get('id'), base_url, spec_url, connection.get('path'), connection.get('key')))
 
 
 def _load(monkeypatch):
@@ -104,7 +105,7 @@ def _load(monkeypatch):
         'asyncio': asyncio, 'copy': copy, 'quote': quote, 'Optional': Optional,
         'logging': SimpleNamespace(getLogger=lambda _: SimpleNamespace()), 'Config': config, 'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),
         'has_connection_access': AsyncMock(return_value=True), 'Request': object, 'UserModel': object, 'AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA': 10,
-        'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': None, 'REDIS_KEY_PREFIX': 'test', 'TERMINAL_CONTEXT_HEADER': 'X-Terminal-Context-Id',
+        'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': None, 'REDIS_KEY_PREFIX': 'test',
         'ENABLE_TOOL_SERVERS': True,
         'bearer_auth_header': lambda token: {'Authorization': f'Bearer {token}'} if token else {},
         'clean_openai_tool_schema': lambda value: value, 'execute_tool_server': AsyncMock(return_value=({}, {})),
@@ -118,26 +119,30 @@ def _load(monkeypatch):
     }
     module = ast.Module(body=nodes, type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), str(TOOLS), 'exec'), globals_)
-    chat_tree = ast.parse((Path(__file__).parents[1] / 'utils' / 'chat_id.py').read_text(encoding='utf-8'))
-    chat_nodes = [copy.deepcopy(node) for node in chat_tree.body if isinstance(node, (ast.Assign, ast.FunctionDef))]
-    terminal_names = {'is_terminal_orchestrator', 'get_terminal_server_url', 'terminal_context_config', 'terminal_context_available', 'terminal_context_id'}
-    terminal_nodes = [copy.deepcopy(node) for node in terminal_tree.body if isinstance(node, ast.Assign) or isinstance(node, ast.FunctionDef) and node.name in terminal_names]
-    exec(compile(ast.fix_missing_locations(ast.Module(body=chat_nodes + terminal_nodes, type_ignores=[])), '<terminal-routing>', 'exec'), globals_)
-    # Execute the real authorization helper with legitimate saved-chat owners;
-    # no model/database imports or live stores are used by this AST harness.
-    auth_tree = ast.parse((Path(__file__).parents[1] / 'ext' / 'terminal_context_authorization.py').read_text(encoding='utf-8'))
-    auth_nodes = [copy.deepcopy(node) for node in auth_tree.body if isinstance(node, ast.AsyncFunctionDef)]
-    chats = SimpleNamespace(get_chat_by_id=AsyncMock(side_effect=lambda chat_id: SimpleNamespace(
-        id=chat_id, user_id={'chat': 'user-a', 'saved': 'u'}.get(chat_id, 'owner'), meta={}
-    )))
-    globals_.update(Chats=chats, ENABLE_ADMIN_CHAT_ACCESS=False, is_internal_chat=lambda meta: False)
-    exec(compile(ast.fix_missing_locations(ast.Module(body=auth_nodes, type_ignores=[])), '<terminal-authorization>', 'exec'), globals_)
+    terminal_names = {'get_terminal_server_url'}
+    terminal_nodes = [copy.deepcopy(node) for node in terminal_tree.body if isinstance(node, ast.FunctionDef) and node.name in terminal_names]
+    exec(compile(ast.fix_missing_locations(ast.Module(body=terminal_nodes, type_ignores=[])), '<terminal-routing>', 'exec'), globals_)
+
+    # find_terminal_connection is the central authorizer (tested against the real
+    # module in test_terminal_json_resolution.py).  Its default fake mirrors the
+    # admin-connection rules: one enabled Config entry, ambiguous IDs rejected.
+    async def find_terminal_connection(user, terminal_id, metadata=None, request=None):
+        matches = [c for c in config.get.return_value if c.get('id') == terminal_id]
+        if len(matches) > 1:
+            raise HTTPException(409, 'Ambiguous terminal ID')
+        return copy.deepcopy(matches[0]) if matches else None
+
+    authorizer = types.ModuleType('open_webui.utils.terminals')
+    authorizer.find_terminal_connection = AsyncMock(side_effect=find_terminal_connection)
+    # Same contract as the real helper: only trusted connection context becomes headers.
+    authorizer.terminal_headers = lambda connection: connection.get('_headers', {})
+    monkeypatch.setitem(sys.modules, 'open_webui.utils.terminals', authorizer)
     globals_['_terminal_discovery_cache'] = lambda request: cache
-    return SimpleNamespace(g=globals_, cache=cache, config=config, fetch=fake_cache.safe_fetch_openapi, gateway=gateway, chats=chats)
+    return SimpleNamespace(g=globals_, cache=cache, config=config, fetch=fake_cache.safe_fetch_openapi, gateway=gateway, find=authorizer.find_terminal_connection)
 
 
 def _connection(id='terminal-a', **extra):
-    value = {'id': id, 'url': 'https://orchestrator.example', 'policy_id': 'policy-a', 'key': 'discovery-secret', 'enabled': True, 'auth_type': 'bearer', 'config': {'contexts': {'chat': {'context_id': 'chat_id'}}}}
+    value = {'id': id, 'url': 'https://orchestrator.example', 'key': 'discovery-secret', 'enabled': True, 'auth_type': 'bearer', 'config': {}}
     value.update(extra)
     return value
 
@@ -161,32 +166,6 @@ async def test_discovery_uses_actual_converter_document_and_static_credentials(m
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('extra, expected', [({}, 60.0), ({'policy_id': None}, 10)])
-async def test_policy_cold_start_gets_one_finite_budget_direct_keeps_configured(monkeypatch, extra, expected):
-    subject = _load(monkeypatch)
-    connection = _connection(**extra)
-    if not extra:
-        subject.g['AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA'] = 10
-    subject.config.get.return_value = [connection]
-    subject.fetch.return_value = Result(_openapi())
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
-    await subject.g['_discover_terminal_server'](request, connection)
-    assert subject.cache.calls[0][3]['timeout'] == expected
-    assert subject.fetch.await_args.kwargs['timeout'] == expected
-
-
-@pytest.mark.asyncio
-async def test_configured_policy_timeout_above_floor_is_preserved(monkeypatch):
-    subject = _load(monkeypatch)
-    subject.g['AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA'] = 120
-    connection = _connection()
-    subject.config.get.return_value = [connection]
-    subject.fetch.return_value = Result(_openapi())
-    await subject.g['_discover_terminal_server'](SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None))), connection)
-    assert subject.cache.calls[0][3]['timeout'] == 120
-
-
-@pytest.mark.asyncio
 async def test_cached_prompt_is_fp_bound_and_live_prompt_failure_falls_back(monkeypatch):
     subject = _load(monkeypatch)
     connection = _connection()
@@ -200,7 +179,7 @@ async def test_cached_prompt_is_fp_bound_and_live_prompt_failure_falls_back(monk
     assert tools['run_command']['spec']['name'] == 'run_command'
     assert prompt == 'static prompt'
     static_headers = subject.g['get_terminal_system_prompt'].await_args_list[0].args[1]
-    assert static_headers == {'Authorization': 'Bearer discovery-secret', 'X-User-Id': 'system'}
+    assert static_headers == {'Authorization': 'Bearer discovery-secret'}
 
 
 @pytest.mark.asyncio
@@ -208,7 +187,7 @@ async def test_name_change_updates_cached_display_without_network_discovery(monk
     subject = _load(monkeypatch)
     connection = _connection(name='new terminal')
     subject.config.get.return_value = [connection]
-    cached = {'id': 'terminal-a', 'url': 'https://orchestrator.example/p/policy-a', 'openapi': _openapi(), 'info': {'title': 'old terminal'}, 'specs': [{'name': 'run_command'}], 'system_prompt': 'old static'}
+    cached = {'id': 'terminal-a', 'url': 'https://orchestrator.example', 'openapi': _openapi(), 'info': {'title': 'old terminal'}, 'specs': [{'name': 'run_command'}], 'system_prompt': 'old static'}
     subject.cache.get_or_discover = AsyncMock(return_value=Result(cached))
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
     server, category = await subject.g['_discover_terminal_server'](request, connection)
@@ -216,34 +195,6 @@ async def test_name_change_updates_cached_display_without_network_discovery(monk
     assert server['openapi']['info']['title'] == 'new terminal'
     assert server['info']['title'] == 'new terminal'
     subject.fetch.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_duplicate_disabled_and_context_rejection_happen_before_discovery_or_gateway(monkeypatch):
-    subject = _load(monkeypatch)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='session')))
-    user = SimpleNamespace(id='user-a')
-    connection = _connection(enabled=False)
-    subject.config.get.return_value = [connection]
-    with pytest.raises(RuntimeError):
-        await subject.g['get_terminal_tools'](request, 'terminal-a', user, {'__metadata__': {'chat_id': 'chat'}})
-    assert not subject.cache.calls
-    assert not subject.gateway.build_terminal_tool_gateway_seed_headers.await_count
-    subject.config.get.return_value = [_connection(config={'contexts': {'chat': False}})]
-    with pytest.raises(RuntimeError):
-        await subject.g['get_terminal_tools'](request, 'terminal-a', user, {'__metadata__': {'chat_id': 'chat'}})
-    assert not subject.cache.calls
-    subject.config.get.return_value = [_connection()]
-    subject.g['has_connection_access'].return_value = False
-    with pytest.raises(RuntimeError):
-        await subject.g['get_terminal_tools'](request, 'terminal-a', user, {'__metadata__': {'chat_id': 'chat'}})
-    assert not subject.cache.calls
-    subject.g['has_connection_access'].return_value = True
-    connection = _connection()
-    subject.config.get.return_value = [connection, copy.deepcopy(connection)]
-    with pytest.raises(RuntimeError):
-        await subject.g['get_terminal_tools'](request, 'terminal-a', user, {'__metadata__': {'chat_id': 'chat'}})
-    assert not subject.cache.calls
 
 
 @pytest.mark.asyncio
@@ -258,10 +209,9 @@ async def test_tool_operation_rechecks_config_and_rebuilds_headers(monkeypatch):
     request.state.token.credentials = 'session-two'
     await tools['run_command']['callable']()
     call = subject.g['execute_tool_server'].await_args.kwargs
-    assert call['url'] == 'https://orchestrator.example/p/policy-a'
+    assert call['url'] == 'https://orchestrator.example'
     assert call['headers']['X-User-Id'] == 'user-a'
     assert call['headers']['X-Session-Id'] == 'chat'
-    assert call['headers']['X-Terminal-Context-Id'] == 'chat:chat'
     assert call['headers']['X-Gateway'] == 'seed'
     assert call['cookies'] == {'cookie': 'value'}
     subject.config.get.return_value = []
@@ -296,7 +246,7 @@ async def test_projection_skips_empty_disabled_and_duplicate_ids_without_io(monk
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
     subject.config.get.return_value = [
         {}, _connection(id=''), _connection(id='off', enabled=False),
-        _connection(id='same'), _connection(id='same'),
+        _connection(id='same'), _connection(id='same'), _connection(id='managed', server_type='orchestrator'),
     ]
     assert await subject.g['set_terminal_servers'](request) == []
     assert request.app.state.TERMINAL_SERVERS == []
@@ -332,59 +282,10 @@ async def test_projection_is_bounded_and_keeps_healthy_results(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('chat_id', [None, 'temporary:x', 'local:x', 'channel:x'], ids=['none', 'temporary', 'local', 'channel'])
-async def test_required_saved_chat_context_rejects_before_recovery(monkeypatch, chat_id):
-    subject = _load(monkeypatch)
-    connection = _connection(config={'contexts': {'chat': {'context_id': 'chat_id'}}})
-    subject.config.get.return_value = [connection]
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
-    with pytest.raises(RuntimeError, match='requires a saved chat context'):
-        await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': chat_id}})
-    assert not subject.cache.calls
-    subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
-    subject.g['get_terminal_cwd'].assert_not_awaited()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ('connection', 'metadata'),
-    [
-        (_connection(config={'contexts': {'chat': False}}), {'chat_id': 'saved'}),
-        (_connection(config={'contexts': {'automation': False}}), {'automation_id': 'job'}),
-        (_connection(config={'contexts': {'chat': {'context_id': 'chat_id'}}}), {}),
-    ], ids=['chat-disabled', 'automation-disabled', 'chat-required'],
-)
-async def test_context_rejections_happen_before_discovery(monkeypatch, connection, metadata):
-    subject = _load(monkeypatch)
-    subject.config.get.return_value = [connection]
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
-    with pytest.raises(RuntimeError):
-        await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': metadata})
-    assert not subject.cache.calls
-    subject.g['get_terminal_cwd'].assert_not_awaited()
-    subject.g['execute_tool_server'].assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_falsy_automation_id_uses_allowed_legacy_chat_context(monkeypatch):
-    """The production selector deliberately chooses automation only for a truthy ID."""
-    subject = _load(monkeypatch)
-    connection = _connection(config={'contexts': {'chat': {}, 'automation': False}})
-    subject.config.get.return_value = [connection]
-    subject.fetch.return_value = Result(_openapi())
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
-    tools, _ = await subject.g['get_terminal_tools'](
-        request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'automation_id': None, 'chat_id': 'saved'}}
-    )
-    assert 'run_command' in tools
-    assert len(subject.cache.calls) == 1
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize('field,value', [
-    ('url', 'https://changed.example'), ('policy_id', 'other'), ('path', '/other.json'),
+    ('url', 'https://changed.example'), ('path', '/other.json'),
     ('key', 'rotated'), ('auth_type', 'session'), ('enabled', False),
-], ids=['url', 'policy', 'path', 'key', 'auth', 'disabled'])
+], ids=['url', 'path', 'key', 'auth', 'disabled'])
 async def test_discovery_race_does_not_publish_stale_schema(monkeypatch, field, value):
     subject = _load(monkeypatch)
     connection = _connection()
@@ -409,38 +310,10 @@ async def test_discovery_race_does_not_publish_stale_schema(monkeypatch, field, 
 
 
 @pytest.mark.asyncio
-async def test_discovery_race_context_and_access_are_fail_closed(monkeypatch):
-    subject = _load(monkeypatch)
-    connection = _connection()
-    subject.config.get.return_value = [connection]
-    started, release = asyncio.Event(), asyncio.Event()
-
-    async def fetch(*_args, **_kwargs):
-        started.set()
-        await release.wait()
-        return Result(_openapi())
-
-    subject.fetch.side_effect = fetch
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
-    task = asyncio.create_task(subject.g['_discover_terminal_server'](request, connection))
-    await started.wait()
-    changed = copy.deepcopy(connection)
-    changed['config'] = {'contexts': {'chat': False}}
-    subject.config.get.return_value = [changed]
-    release.set()
-    assert await task == (None, 'configuration_changed')
-    subject.g['has_connection_access'].return_value = False
-    with pytest.raises(RuntimeError, match='Access denied'):
-        await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
-    assert subject.g['get_terminal_cwd'].await_count == 0
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize('mutation', [
-    lambda c: None, lambda c: c.update(enabled=False), lambda c: c.update(policy_id='other'),
-    lambda c: c.update(path='/other.json'), lambda c: c.update(key='rotated'),
-    lambda c: c.update(config={'contexts': {'chat': False}}),
-], ids=['removed', 'disabled', 'policy', 'path', 'key', 'context'])
+    lambda c: None, lambda c: c.update(enabled=False), lambda c: c.update(path='/other.json'), lambda c: c.update(key='rotated'),
+    lambda c: c.update(config={'working_directory_context': False}),
+], ids=['removed', 'disabled', 'path', 'key', 'cwd-policy'])
 async def test_generated_callables_fail_closed_after_configuration_change(monkeypatch, mutation):
     subject = _load(monkeypatch)
     connection = _connection()
@@ -481,39 +354,6 @@ async def test_generated_callable_rechecks_access_without_upstream_io(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_policy_routing_is_quoted_for_discovery_live_calls_and_raw_terminal(monkeypatch):
-    subject = _load(monkeypatch)
-    connection = _connection(policy_id='team/a b')
-    subject.config.get.return_value = [connection]
-    subject.fetch.return_value = Result(_openapi())
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
-    expected = 'https://orchestrator.example/p/team%2Fa%20b'
-    assert subject.fetch.await_args.args[0] == f'{expected}/openapi.json'
-    assert subject.g['get_terminal_cwd'].await_args.args[0] == expected
-    await tools['run_command']['callable']()
-    assert subject.g['execute_tool_server'].await_args.kwargs['url'] == expected
-    await tools['persist_file_to_chat']['callable']('/tmp/x')
-    assert subject.g['persist_terminal_file_to_platform'].await_args.kwargs['base_url'] == expected
-    await tools['transfer_file_to_terminal']['callable']('file', '/tmp/x')
-    assert subject.g['transfer_platform_file_to_terminal'].await_args.kwargs['base_url'] == expected
-    assert subject.g['persist_terminal_file_to_platform'].await_args.kwargs['headers']['X-User-Id'] == 'u'
-    assert subject.g['transfer_platform_file_to_terminal'].await_args.kwargs['headers']['X-User-Id'] == 'u'
-    raw = _connection(policy_id=None, server_type='raw', url='https://raw.example')
-    subject.config.get.return_value = [raw]
-    subject.fetch.return_value = Result(_openapi())
-    raw_tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
-    await raw_tools['run_command']['callable']()
-    assert subject.g['execute_tool_server'].await_args.kwargs['url'] == 'https://raw.example'
-    await raw_tools['persist_file_to_chat']['callable']('/tmp/x')
-    await raw_tools['transfer_file_to_terminal']['callable']('file', '/tmp/x')
-    assert subject.g['persist_terminal_file_to_platform'].await_args.kwargs['base_url'] == 'https://raw.example'
-    assert subject.g['transfer_platform_file_to_terminal'].await_args.kwargs['base_url'] == 'https://raw.example'
-    assert subject.g['persist_terminal_file_to_platform'].await_args.kwargs['headers']['X-User-Id'] == 'u'
-    assert subject.g['transfer_platform_file_to_terminal'].await_args.kwargs['headers']['X-User-Id'] == 'u'
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize('auth_type', ['bearer', 'none', 'session', 'system_oauth'])
 async def test_discovery_uses_only_static_bearer_credentials(monkeypatch, auth_type):
     subject = _load(monkeypatch)
@@ -541,7 +381,7 @@ async def test_tether_connection_bypasses_discovery_cache(monkeypatch):
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={})
     tools, _ = await subject.g['get_terminal_tools'](request, 'tether:dev', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
     assert 'run_command' in tools
-    subject.g['get_tool_server_data'].assert_awaited_once_with('tether://dev/openapi.json', {'X-User-Id': 'u'})
+    subject.g['get_tool_server_data'].assert_awaited_once_with('tether://dev/openapi.json', {'X-User-Id': 'u'}, service='open_terminal')
     assert subject.cache.calls == [] and subject.fetch.await_count == 0
 
 
@@ -655,37 +495,102 @@ async def test_existing_callables_fail_closed_when_feature_or_config_knobs_chang
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('meta', [{'shared': True}, {'folder_id': 'writable-folder'}])
-@pytest.mark.parametrize('context', ['default', 'chat_id'])
-async def test_model_tools_deny_foreign_shared_or_folder_writer_before_discovery(monkeypatch, meta, context):
+@pytest.mark.parametrize('extra, expected', [({}, 10), ({'template_id': 'tpl'}, 60.0)], ids=['direct', 'template-floor'])
+async def test_template_cold_start_gets_floor_direct_keeps_configured(monkeypatch, extra, expected):
     subject = _load(monkeypatch)
-    subject.config.get.return_value = [_connection(config={'contexts': {'chat': {'context_id': context}}})]
-    subject.chats.get_chat_by_id.side_effect = None
-    subject.chats.get_chat_by_id.return_value = SimpleNamespace(id='foreign', user_id='owner', meta=meta)
-    with pytest.raises(RuntimeError, match='Access denied to terminal chat context'):
-        await subject.g['get_terminal_tools'](SimpleNamespace(), 'terminal-a', SimpleNamespace(id='writer', role='user'), {'__metadata__': {'chat_id': 'foreign'}})
-    assert not subject.cache.calls
-    subject.fetch.assert_not_awaited()
-    subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
-    subject.g['get_terminal_cwd'].assert_not_awaited()
+    connection = _connection(**extra)
+    subject.config.get.return_value = [connection]
+    subject.fetch.return_value = Result(_openapi())
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
+    await subject.g['_discover_terminal_server'](request, connection)
+    assert subject.cache.calls[0][3]['timeout'] == expected
+    assert subject.fetch.await_args.kwargs['timeout'] == expected
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('revocation', ['deleted', 'owner-changed', 'store-error'])
-async def test_all_model_operations_reauthorize_saved_owner_before_gateway(monkeypatch, revocation):
+async def test_configured_timeout_above_floor_is_preserved(monkeypatch):
+    subject = _load(monkeypatch)
+    subject.g['AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA'] = 120
+    connection = _connection(template_id='tpl')
+    subject.config.get.return_value = [connection]
+    subject.fetch.return_value = Result(_openapi())
+    await subject.g['_discover_terminal_server'](SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None))), connection)
+    assert subject.cache.calls[0][3]['timeout'] == 120
+
+
+def _tool_request():
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['disabled', 'no-access', 'duplicate', 'chat-denied', 'missing'])
+async def test_authorization_failures_happen_before_discovery_or_gateway(monkeypatch, case):
+    subject = _load(monkeypatch)
+    connection = _connection()
+    subject.config.get.return_value = [connection]
+    if case == 'disabled':
+        subject.config.get.return_value = [_connection(enabled=False)]
+    elif case == 'no-access':
+        subject.g['has_connection_access'].return_value = False
+    elif case == 'duplicate':
+        subject.config.get.return_value = [connection, copy.deepcopy(connection)]
+    elif case == 'chat-denied':
+        # e.g. fork item 25: a foreign saved chat is rejected by find_terminal_connection itself.
+        subject.find.side_effect = HTTPException(403, 'Chat access denied')
+    else:
+        subject.config.get.return_value = []
+    with pytest.raises((RuntimeError, HTTPException)):
+        await subject.g['get_terminal_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='user-a'), {'__metadata__': {'chat_id': 'chat'}})
+    assert subject.find.await_args.args[1] == 'terminal-a'
+    assert subject.find.await_args.args[2]['chat_id'] == 'chat'
+    assert not subject.cache.calls
+    subject.fetch.assert_not_awaited()
+    subject.g['get_terminal_cwd'].assert_not_awaited()
+    subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_template_connection_discovers_directly_with_floor_and_trusted_headers(monkeypatch):
+    subject = _load(monkeypatch)
+    template = _connection('template:conn:tpl', template_id='tpl', _headers={'X-Terminal-Template-Id': 'tpl', 'X-User-Id': 'user-a'})
+    subject.config.get.return_value = []
+    subject.find.side_effect = None
+    subject.find.return_value = template
+    subject.fetch.return_value = Result(_openapi())
+    metadata = {'chat_id': 'saved'}
+    tools, _ = await subject.g['get_terminal_tools'](_tool_request(), 'template:conn:tpl', SimpleNamespace(id='user-a'), {'__metadata__': metadata})
+    # Not cached/fingerprinted: a template instance is per user, so it is fetched live.
+    assert not subject.cache.calls
+    fetch = subject.fetch.await_args
+    assert fetch.args == ('https://orchestrator.example/openapi.json', {'Authorization': 'Bearer discovery-secret', 'X-Terminal-Template-Id': 'tpl', 'X-User-Id': 'user-a'})
+    assert fetch.kwargs['timeout'] == 60.0
+    metadata['chat_id'] = 'temporary:redirect'
+    await tools['run_command']['callable']()
+    call = subject.g['execute_tool_server'].await_args.kwargs
+    assert call['headers']['X-Terminal-Template-Id'] == 'tpl'
+    assert call['headers']['X-Session-Id'] == 'saved'
+    # Every call re-authorizes with the metadata pinned when the tools were built.
+    assert subject.find.await_args.args[2] == {'chat_id': 'saved'}
+    assert subject.find.await_count >= 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('revocation', ['gone', 'disabled', 'chat-denied', 'store-error'])
+async def test_every_operation_reauthorizes_through_find_before_gateway(monkeypatch, revocation):
     subject = _load(monkeypatch)
     subject.config.get.return_value = [_connection()]
     subject.fetch.return_value = Result(_openapi())
-    metadata = {'chat_id': 'saved'}
-    tools, _ = await subject.g['get_terminal_tools'](SimpleNamespace(cookies={}), 'terminal-a', SimpleNamespace(id='u', role='user'), {'__metadata__': metadata})
-    metadata['chat_id'] = 'temporary:redirect'
-    subject.chats.get_chat_by_id.side_effect = RuntimeError('private store detail') if revocation == 'store-error' else None
-    subject.chats.get_chat_by_id.return_value = None if revocation == 'deleted' else SimpleNamespace(user_id='new-owner', meta={})
+    tools, _ = await subject.g['get_terminal_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    subject.find.side_effect = {
+        'gone': AsyncMock(return_value=None),
+        'disabled': AsyncMock(return_value=_connection(enabled=False)),
+        'chat-denied': HTTPException(403, 'Chat access denied'),
+        'store-error': RuntimeError('private store detail'),
+    }[revocation]
     subject.gateway.build_terminal_tool_gateway_seed_headers.reset_mock()
     for name, args in [('run_command', ()), ('persist_file_to_chat', ('/x',)), ('transfer_file_to_terminal', ('f', '/x'))]:
-        with pytest.raises(RuntimeError):
+        with pytest.raises((RuntimeError, HTTPException)):
             await tools[name]['callable'](*args)
-    assert subject.chats.get_chat_by_id.await_args.args == ('saved',)
     subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
     subject.g['execute_tool_server'].assert_not_awaited()
     subject.g['persist_terminal_file_to_platform'].assert_not_awaited()
@@ -694,24 +599,10 @@ async def test_all_model_operations_reauthorize_saved_owner_before_gateway(monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('chat_id', ['', 'temporary:x', 'local:x', 'channel:x'])
-async def test_model_default_context_preserves_non_saved_tracking(monkeypatch, chat_id):
+async def test_non_saved_chat_ids_still_track_the_session(monkeypatch, chat_id):
     subject = _load(monkeypatch)
-    subject.config.get.return_value = [_connection(config={})]
+    subject.config.get.return_value = [_connection()]
     subject.fetch.return_value = Result(_openapi())
-    tools, _ = await subject.g['get_terminal_tools'](SimpleNamespace(cookies={}), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': chat_id}})
+    tools, _ = await subject.g['get_terminal_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': chat_id}})
     await tools['run_command']['callable']()
-    headers = subject.g['execute_tool_server'].await_args.kwargs['headers']
-    assert headers.get('X-Session-Id', '') == chat_id
-    assert 'X-Terminal-Context-Id' not in headers
-    subject.chats.get_chat_by_id.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_model_automation_keeps_automation_context_without_chat_lookup(monkeypatch):
-    subject = _load(monkeypatch)
-    subject.config.get.return_value = [_connection(config={'contexts': {'automation': {'context_id': 'automation_id'}}})]
-    subject.fetch.return_value = Result(_openapi())
-    tools, _ = await subject.g['get_terminal_tools'](SimpleNamespace(cookies={}), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'automation_id': 'job', 'chat_id': 'saved'}})
-    await tools['run_command']['callable']()
-    assert subject.g['execute_tool_server'].await_args.kwargs['headers']['X-Terminal-Context-Id'] == 'automation:job'
-    subject.chats.get_chat_by_id.assert_not_awaited()
+    assert subject.g['execute_tool_server'].await_args.kwargs['headers'].get('X-Session-Id', '') == chat_id

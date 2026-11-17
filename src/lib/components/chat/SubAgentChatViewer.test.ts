@@ -232,7 +232,7 @@ describe('selected native sidebar controller', () => {
 			new URL('./Messages/ResponseMessage.svelte', import.meta.url),
 			'utf8'
 		);
-		const controls = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
+		const controls = readFileSync(new URL('./Tabs.svelte', import.meta.url), 'utf8');
 		expect(viewer).not.toMatch(/Modal|FullHeightIframe|chatId\.set/);
 		expect(viewer.match(/<Messages\b/g)).toHaveLength(1);
 		for (const flag of ['readOnly', 'compactPreview']) expect(viewer).toContain(`${flag}={true}`);
@@ -240,12 +240,12 @@ describe('selected native sidebar controller', () => {
 			expect(viewer).toContain(`${flag}={false}`);
 		expect(response).not.toContain('<SubAgentChatViewer');
 		expect(response).toContain('onEmbedMessage={embedMessageHandler}');
-		// ChatTabs mounts one panel that moves between the desktop and mobile layouts.
+		// Tabs mounts one panel that moves between the desktop and mobile layouts.
 		expect(controls.match(/<SubAgentChatViewer\b/g)).toHaveLength(1);
 		expect(controls).not.toContain('>Sub-agents<');
 	});
 	it('an open request opens the sub-agents tab once per revision', () => {
-		const source = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
+		const source = readFileSync(new URL('./Tabs.svelte', import.meta.url), 'utf8');
 		const open = source.match(/\$: if \(showSubAgentsTab &&[\s\S]*?\n\t\}/)![0].replace('$:', '');
 		const context: any = {
 			showSubAgentsTab: true,
@@ -269,7 +269,7 @@ describe('selected native sidebar controller', () => {
 	});
 	it('compiles the affected Svelte components for client and SSR without executing SSR scope state', () => {
 		for (const file of [
-			'ChatTabs.svelte',
+			'Tabs.svelte',
 			'SubAgentChatViewer.svelte',
 			'../common/Select.svelte',
 			'Messages/ResponseMessage.svelte'
@@ -281,7 +281,7 @@ describe('selected native sidebar controller', () => {
 		}
 	});
 	it('keeps the tab visible for an empty saved or new active owner scope in both layouts', () => {
-		const source = readFileSync(new URL('./ChatTabs.svelte', import.meta.url), 'utf8');
+		const source = readFileSync(new URL('./Tabs.svelte', import.meta.url), 'utf8');
 		const expression = source.match(/\$: showSubAgentsTab =[\s\S]*?;/)![0].replace('$:', '');
 		for (const parentId of ['', id]) {
 			const context = {

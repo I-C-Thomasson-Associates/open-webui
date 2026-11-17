@@ -16,7 +16,6 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tags from './common/Tags.svelte';
-	import { getToolServerData } from '$lib/apis';
 	import { slugify } from '$lib/utils';
 	import {
 		verifyToolServerConnection,
@@ -37,7 +36,6 @@
 	export let show = false;
 	export let edit = false;
 
-	export let direct = false;
 	export let connection: any = null;
 
 	let inputElement = null;
@@ -257,63 +255,36 @@
 			}
 		}
 
-		if (direct) {
-			const fullUrl = path.includes('://') ? path : `${url}${path.startsWith('/') ? '' : '/'}${path}`;
-			const isLocalhost = fullUrl.includes('localhost') || fullUrl.includes('127.0.0.1');
-
-			const res = await getToolServerData(
-				auth_type === 'bearer' ? key : auth_type === 'session' ? localStorage.token : null,
-				fullUrl
-			).catch((err) => {
-				console.error('Tool server connection error:', err);
-				
-				// Detect if blocked by browser content blocker (Brave Shields, uBlock, etc.)
-				if (isLocalhost && (err instanceof TypeError || err?.message?.includes('Failed to fetch'))) {
-					toast.error(
-						$i18n.t('Connection to {{URL}} blocked. Check your browser\'s content blocker or shield settings.', { URL: fullUrl }),
-						{ duration: 8000 }
-					);
-				} else {
-					toast.error($i18n.t('Failed to connect to {{URL}} OpenAPI tool server', { URL: fullUrl }));
-				}
-			});
-
-			if (res) {
-				toast.success($i18n.t('Connection successful'));
-				console.debug('Connection successful', res);
+		const res = await verifyToolServerConnection(localStorage.token, {
+			url,
+			path,
+			type,
+			auth_type,
+			headers: headers ? JSON.parse(headers) : undefined,
+			key,
+			config: {
+				enable: enable,
+				access_grants: accessGrants
+			},
+			info: {
+				id,
+				name,
+				description,
+				...(oauthAuthTypes.includes(auth_type)
+					? {
+							...(oauthServerUrl ? { oauth_server_url: oauthServerUrl } : {}),
+							...(oauthScope ? { oauth_scope: oauthScope } : {}),
+							oauth_resource_parameter: oauthResourceParameter
+						}
+					: {})
 			}
-		} else {
-			const res = await verifyToolServerConnection(localStorage.token, {
-				url,
-				path,
-				type,
-				auth_type,
-				headers: headers ? JSON.parse(headers) : undefined,
-				key,
-				config: {
-					enable: enable,
-					access_grants: accessGrants
-				},
-				info: {
-					id,
-					name,
-					description,
-					...(oauthAuthTypes.includes(auth_type)
-						? {
-								...(oauthServerUrl ? { oauth_server_url: oauthServerUrl } : {}),
-								...(oauthScope ? { oauth_scope: oauthScope } : {}),
-								oauth_resource_parameter: oauthResourceParameter
-							}
-						: {})
-				}
-			}).catch((err) => {
-				toast.error($i18n.t('Connection failed'));
-			});
+		}).catch((err) => {
+			toast.error($i18n.t('Connection failed'));
+		});
 
-			if (res) {
-				toast.success(verifySuccessMessage());
-				console.debug('Connection successful', res);
-			}
+		if (res) {
+			toast.success(verifySuccessMessage());
+			console.debug('Connection successful', res);
 		}
 	};
 
@@ -436,7 +407,7 @@
 				path,
 
 				auth_type,
-				...(!direct && ['', 'openapi'].includes(type) ? { forward_cookies: forwardCookies } : {}),
+				...(['', 'openapi'].includes(type) ? { forward_cookies: forwardCookies } : {}),
 				headers: headers ? JSON.parse(headers) : undefined,
 				key,
 
@@ -600,7 +571,7 @@
 			path,
 
 			auth_type,
-			...(!direct && ['', 'openapi'].includes(type) ? { forward_cookies: forwardCookies } : {}),
+			...(['', 'openapi'].includes(type) ? { forward_cookies: forwardCookies } : {}),
 			headers: headers ? JSON.parse(headers) : undefined,
 
 			key,
@@ -826,26 +797,20 @@
 								<div class=" text-xs text-gray-500">{$i18n.t('Type')}</div>
 
 								<div class="">
-									{#if !direct}
-										<button
-											on:click={() => {
-												type = ['', 'openapi'].includes(type) ? 'mcp' : 'openapi';
-											}}
-											type="button"
-											class=" text-xs text-gray-700 dark:text-gray-300"
-										>
-											{#if ['', 'openapi'].includes(type)}
-												{$i18n.t('settings.admin.integrations.openApi.label')}
-											{:else if type === 'mcp'}
-												{$i18n.t('settings.admin.integrations.mcp.label')}
-												<span class="text-gray-500">{$i18n.t('Streamable HTTP')}</span>
-											{/if}
-										</button>
-									{:else}
-										<div class="text-xs text-gray-700 dark:text-gray-300">
-											{$i18n.t('settings.personal.tools.openApi.label')}
-										</div>
-									{/if}
+									<button
+										on:click={() => {
+											type = ['', 'openapi'].includes(type) ? 'mcp' : 'openapi';
+										}}
+										type="button"
+										class=" text-xs text-gray-700 dark:text-gray-300"
+									>
+										{#if ['', 'openapi'].includes(type)}
+											{$i18n.t('settings.admin.integrations.openApi.label')}
+										{:else if type === 'mcp'}
+											{$i18n.t('settings.admin.integrations.mcp.label')}
+											<span class="text-gray-500">{$i18n.t('Streamable HTTP')}</span>
+										{/if}
+									</button>
 								</div>
 							</div>
 						</div>
@@ -867,43 +832,41 @@
 									/>
 								</div>
 							</div>
-							{#if !direct}
-								<div class="flex flex-col flex-1">
-									<div class="flex justify-between mb-0.5">
-										<label for="enter-id" class={`text-xs text-gray-500`}>
-											{#if type === 'mcp'}
-												{$i18n.t('Connection ID')}
-											{:else}
-												{$i18n.t('ID')}
-												<span class="opacity-50">({$i18n.t('optional')})</span>
-											{/if}</label
-										>
-									</div>
-									<Tooltip
-										className="flex flex-1 items-center"
-										tippyOptions={{ trigger: 'mouseenter focusin' }}
-										content={type === 'mcp' && oauthAuthTypes.includes(auth_type)
-											? edit
-												? $i18n.t(
-														'Identifies this connection in Open WebUI, separately from the OAuth client ID.'
-													)
-												: $i18n.t(
-														'Generated from the name, or enter your own. Identifies this connection in Open WebUI, separately from the OAuth client ID.'
-													)
-											: ''}
+							<div class="flex flex-col flex-1">
+								<div class="flex justify-between mb-0.5">
+									<label for="enter-id" class={`text-xs text-gray-500`}>
+										{#if type === 'mcp'}
+											{$i18n.t('Connection ID')}
+										{:else}
+											{$i18n.t('ID')}
+											<span class="opacity-50">({$i18n.t('optional')})</span>
+										{/if}</label
 									>
-										<input
-											id="enter-id"
-											class={`w-full flex-1 text-sm font-mono ${inputClass}`}
-											type="text"
-											bind:value={id}
-											placeholder="auto"
-											autocomplete="off"
-											required={type === 'mcp' && edit}
-										/>
-									</Tooltip>
 								</div>
-							{/if}
+								<Tooltip
+									className="flex flex-1 items-center"
+									tippyOptions={{ trigger: 'mouseenter focusin' }}
+									content={type === 'mcp' && oauthAuthTypes.includes(auth_type)
+										? edit
+											? $i18n.t(
+													'Identifies this connection in Open WebUI, separately from the OAuth client ID.'
+												)
+											: $i18n.t(
+													'Generated from the name, or enter your own. Identifies this connection in Open WebUI, separately from the OAuth client ID.'
+												)
+										: ''}
+								>
+									<input
+										id="enter-id"
+										class={`w-full flex-1 text-sm font-mono ${inputClass}`}
+										type="text"
+										bind:value={id}
+										placeholder="auto"
+										autocomplete="off"
+										required={type === 'mcp' && edit}
+									/>
+								</Tooltip>
+							</div>
 						</div>
 
 						<div class="flex flex-col w-full mt-1 mb-1.5">
@@ -1049,12 +1012,10 @@
 											<option value="bearer">{$i18n.t('Bearer')}</option>
 											<option value="session">{$i18n.t('Session')}</option>
 
-											{#if !direct}
-												<option value="system_oauth">{$i18n.t('OAuth')}</option>
-												{#if type === 'mcp'}
-													<option value="oauth_2.1">{$i18n.t('OAuth 2.1')}</option>
-													<option value="oauth_2.1_static">{$i18n.t('OAuth 2.1 (Static)')}</option>
-												{/if}
+											<option value="system_oauth">{$i18n.t('OAuth')}</option>
+											{#if type === 'mcp'}
+												<option value="oauth_2.1">{$i18n.t('OAuth 2.1')}</option>
+												<option value="oauth_2.1_static">{$i18n.t('OAuth 2.1 (Static)')}</option>
 											{/if}
 										</select>
 									</div>
@@ -1133,19 +1094,17 @@
 								{$i18n.t('Advanced')}
 							</button>
 
-							{#if !direct}
-								<AccessButton
-									className="mt-2"
-									on:click={() => {
-										showAccessControlModal = true;
-									}}
-									label={$i18n.t('Access Control')}
-								/>
-							{/if}
+							<AccessButton
+								className="mt-2"
+								on:click={() => {
+									showAccessControlModal = true;
+								}}
+								label={$i18n.t('Access Control')}
+							/>
 						</div>
 
 						{#if showAdvanced}
-							{#if !direct && ['', 'openapi'].includes(type)}
+							{#if ['', 'openapi'].includes(type)}
 								<div class="flex items-center justify-between gap-3 mt-2">
 									<div>
 										<label for="forward-cookies" class="text-xs text-gray-500">
@@ -1273,159 +1232,155 @@
 								</div>
 							{/if}
 
-							{#if !direct}
-								<div class="flex gap-2 mt-2">
-									<div class="flex flex-col w-full">
-										<label
-											for="headers-input"
-											class={`mb-0.5 text-xs text-gray-500
-									`}>{$i18n.t('Headers')}</label
+							<div class="flex gap-2 mt-2">
+								<div class="flex flex-col w-full">
+									<label
+										for="headers-input"
+										class={`mb-0.5 text-xs text-gray-500
+								`}>{$i18n.t('Headers')}</label
+									>
+
+									<div class="flex-1">
+										<Tooltip
+											content={$i18n.t(
+												'Enter additional headers in JSON format (e.g. {"X-Custom-Header": "value"}'
+											)}
 										>
-
-										<div class="flex-1">
-											<Tooltip
-												content={$i18n.t(
-													'Enter additional headers in JSON format (e.g. {"X-Custom-Header": "value"}'
-												)}
-											>
-												<Textarea
-													className="w-full text-sm outline-hidden"
-													bind:value={headers}
-													placeholder={$i18n.t('Enter additional headers in JSON format')}
-													required={false}
-													minSize={30}
-												/>
-											</Tooltip>
-										</div>
+											<Textarea
+												className="w-full text-sm outline-hidden"
+												bind:value={headers}
+												placeholder={$i18n.t('Enter additional headers in JSON format')}
+												required={false}
+												minSize={30}
+											/>
+										</Tooltip>
 									</div>
 								</div>
+							</div>
 
-								<div class="flex gap-2 mt-2">
-									<div class="flex flex-col w-full">
-										<div class="flex justify-between items-center mb-0.5">
+							<div class="flex gap-2 mt-2">
+								<div class="flex flex-col w-full">
+									<div class="flex justify-between items-center mb-0.5">
+										<div
+											class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+										>
+											{$i18n.t('Auth Callback Proxy')}
+										</div>
+
+										<Tooltip
+											content={$i18n.t(
+												'Route OAuth callback requests through Open WebUI to your tool server'
+											)}
+										>
+											<Switch bind:state={callbackProxyEnabled} />
+										</Tooltip>
+									</div>
+
+									{#if callbackProxyEnabled}
+										<div class="flex flex-col gap-1.5">
+											<input
+												class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												type="text"
+												bind:value={callbackProxyHost}
+												placeholder={$i18n.t('Callback Host')}
+												autocomplete="off"
+											/>
+
+											<input
+												class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												type="text"
+												bind:value={callbackProxyPath}
+												placeholder="/m365-tools/auth/callback"
+												autocomplete="off"
+											/>
+
+											<input
+												class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												type="text"
+												bind:value={callbackProxyUrl}
+												placeholder="http://localhost:8100/auth/callback"
+												autocomplete="off"
+											/>
+
 											<div
 												class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
 											>
-												{$i18n.t('Auth Callback Proxy')}
-											</div>
-
-											<Tooltip
-												content={$i18n.t(
-													'Route OAuth callback requests through Open WebUI to your tool server'
+												{$i18n.t(
+													'Incoming requests to this path will be proxied to the target callback URL'
 												)}
-											>
-												<Switch bind:state={callbackProxyEnabled} />
-											</Tooltip>
+											</div>
+										</div>
+									{/if}
+								</div>
+							</div>
+
+							<div class="flex gap-2 mt-2">
+								<div class="flex flex-col w-full">
+									<div class="flex justify-between items-center mb-0.5">
+										<div
+											class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
+										>
+											{$i18n.t('Terminal Tool Gateway')}
 										</div>
 
-										{#if callbackProxyEnabled}
-											<div class="flex flex-col gap-1.5">
-												<input
-													class={`w-full text-sm bg-transparent ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
-													type="text"
-													bind:value={callbackProxyHost}
-													placeholder={$i18n.t('Callback Host')}
-													autocomplete="off"
-												/>
-
-												<input
-													class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
-													type="text"
-													bind:value={callbackProxyPath}
-													placeholder="/m365-tools/auth/callback"
-													autocomplete="off"
-												/>
-
-												<input
-													class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
-													type="text"
-													bind:value={callbackProxyUrl}
-													placeholder="http://localhost:8100/auth/callback"
-													autocomplete="off"
-												/>
-
-												<div
-													class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-												>
-													{$i18n.t(
-														'Incoming requests to this path will be proxied to the target callback URL'
-													)}
-												</div>
-											</div>
-										{/if}
+										<Tooltip
+											content={$i18n.t(
+												'Allow scripts running in terminal runtimes to call this tool server through Open WebUI'
+											)}
+										>
+											<Switch bind:state={terminalGatewayEnabled} />
+										</Tooltip>
 									</div>
-								</div>
 
-								<div class="flex gap-2 mt-2">
-									<div class="flex flex-col w-full">
-										<div class="flex justify-between items-center mb-0.5">
+									{#if terminalGatewayEnabled}
+										<div class="flex flex-col gap-1.5">
+											<input
+												class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
+												type="text"
+												bind:value={terminalGatewayAllowedMethods}
+												placeholder="GET, POST"
+												autocomplete="off"
+											/>
+
+											<Textarea
+												className="w-full text-sm outline-hidden font-mono"
+												bind:value={terminalGatewayAllowedPathPrefixes}
+												placeholder={'/auth/status\n/me\n/email'}
+												required={false}
+												rows={3}
+											/>
+
 											<div
 												class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
 											>
-												{$i18n.t('Terminal Tool Gateway')}
-											</div>
-
-											<Tooltip
-												content={$i18n.t(
-													'Allow scripts running in terminal runtimes to call this tool server through Open WebUI'
+												{$i18n.t(
+													'Enter allowed HTTP methods as a comma-separated list and allowed path prefixes one per line'
 												)}
-											>
-												<Switch bind:state={terminalGatewayEnabled} />
-											</Tooltip>
-										</div>
-
-										{#if terminalGatewayEnabled}
-											<div class="flex flex-col gap-1.5">
-												<input
-													class={`w-full text-sm bg-transparent font-mono ${($settings?.highContrastMode ?? false) ? 'placeholder:text-gray-700 dark:placeholder:text-gray-100' : 'outline-hidden placeholder:text-gray-300 dark:placeholder:text-gray-700'}`}
-													type="text"
-													bind:value={terminalGatewayAllowedMethods}
-													placeholder="GET, POST"
-													autocomplete="off"
-												/>
-
-												<Textarea
-													className="w-full text-sm outline-hidden font-mono"
-													bind:value={terminalGatewayAllowedPathPrefixes}
-													placeholder={'/auth/status\n/me\n/email'}
-													required={false}
-													rows={3}
-												/>
-
-												<div
-													class={`text-xs ${($settings?.highContrastMode ?? false) ? 'text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}
-												>
-													{$i18n.t(
-														'Enter allowed HTTP methods as a comma-separated list and allowed path prefixes one per line'
-													)}
-												</div>
 											</div>
-										{/if}
-									</div>
-								</div>
-							{/if}
-						{/if}
-
-						{#if !direct}
-							<hr class=" border-gray-100/50 dark:border-gray-700/10 my-2.5 w-full" />
-
-							<div class="flex flex-col w-full mt-2">
-								<label for="function-name-filter-list" class={`mb-1 text-xs text-gray-500`}
-									>{$i18n.t('Function Name Filter List')}</label
-								>
-
-								<div class="flex-1">
-									<input
-										id="function-name-filter-list"
-										class={`w-full text-sm ${inputClass}`}
-										type="text"
-										bind:value={functionNameFilterList}
-										placeholder={$i18n.t('Enter function name filter list (e.g. func1, !func2)')}
-										autocomplete="off"
-									/>
+										</div>
+									{/if}
 								</div>
 							</div>
 						{/if}
+
+						<hr class=" border-gray-100/50 dark:border-gray-700/10 my-2.5 w-full" />
+
+						<div class="flex flex-col w-full mt-2">
+							<label for="function-name-filter-list" class={`mb-1 text-xs text-gray-500`}
+								>{$i18n.t('Function Name Filter List')}</label
+							>
+
+							<div class="flex-1">
+								<input
+									id="function-name-filter-list"
+									class={`w-full text-sm ${inputClass}`}
+									type="text"
+									bind:value={functionNameFilterList}
+									placeholder={$i18n.t('Enter function name filter list (e.g. func1, !func2)')}
+									autocomplete="off"
+								/>
+							</div>
+						</div>
 					</div>
 
 					{#if type === 'mcp'}

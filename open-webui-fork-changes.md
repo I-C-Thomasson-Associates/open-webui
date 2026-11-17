@@ -6,6 +6,23 @@
 
 The `jp_dev` and `prod` branches are based on Open WebUI with custom modifications for ICT / Salas O'Brien deployment.
 
+### Upstream 0.13.4 integration — pending local validation (pre-publication)
+
+**Pre-publication snapshot; not committed, published or deployed.** Historical snapshots below are unchanged.
+
+- Original fork `jp_dev` = `origin/jp_dev`: `25feb5344e5f5299e6a8a62f89271ea1520ed000`. Prior upstream `v0.13.3`: `b0e6098e940942281d9c83f3529ea117287a3a22`. Official lightweight `v0.13.4`: `0666e59d26a4d056e0bacee41742486badd71cf8`, checked with `git ls-remote https://github.com/open-webui/open-webui`; no signature check. 330 upstream commits.
+- Candidate `integrate-v0.13.4`: `git merge --no-commit --no-ff v0.13.4`. 17 conflicts resolved; zero unmerged paths or markers.
+- **Breaking upstream change, adopted (user decision):** "Terminals 0.4.0 required". Policies, `/p/{policy}`, `X-Terminal-Context-Id` and Terminal Contexts are gone; upstream now uses Terminals templates (`template:<connection>:<id>`, `X-Terminal-Template-Id`/`-Chat-Id`/`-Model-Id`) and the central authorizer `find_terminal_connection`. Our `open-webui-terminals` orchestrator still implements only the policy API, so **terminals through it stop working until the orchestrator implements the template API**; the user chose to change the orchestrator. Plain Open Terminal and Tether connections are unaffected. Existing models, folders, automations and chats that reference the old connection need a new terminal selected (upstream note).
+- Fork terminal behavior moved onto the new authorizer: item 25 (deviation documented there), ambiguous-ID refusal, item 29 floor extended to `template_id`, per-call fail-closed revalidation in `get_terminal_tools` (fingerprint, `find_terminal_connection`, config knobs, access, gateway seed headers, current request auth), WebSocket identity watcher (fingerprint + trusted terminal headers), raw `files/upload-stream` upload (item 23, now with upstream target headers), AGENTS.md `max_bytes`. Shared cache skips orchestrator connections, as upstream does.
+- Other reconciliations: direct tool servers/terminals removed upstream → item 1 user-settings toast dropped; item 4 `__content_blocks__` kept on upstream's tool path; item 15 normalization kept in upstream's connection-based image edit; item 22 Responses handler kept with upstream's Tether `relay`; item 26 Sub-agents tab moved into upstream's renamed `Tabs.svelte`/`Tabs/tabs.ts` (excluded from tab persistence); item 27 keeps upstream `dragstart` close; item 28 prompt template gets upstream's `maxSize`; item 18 filter-list parsing moved into upstream's shared OpenAPI/Tether spec loop.
+- Item 20: upstream Docker images now install from hash-locked `backend/requirements*.lock`. With user approval, `backend/update-locks.sh` (run as equivalent `uv pip compile` commands on Windows) added only `azure-keyvault-secrets==4.9.0` to both locks (+7 lines each); without it the image would lack Key Vault support (items 2, 9).
+- Checks: Windows `.venv` 3.11.9, isolated synthetic env: `backend/open_webui/ext` **210 passed** (gateway schema excluded, no `re2`); the three terminal test files were rewritten for the template/authorizer design (obsolete policy/context cases deleted). Ruff F821 clean; no new F-class findings vs upstream in touched files. Node 22.23.3 Vitest **142 passed / 8 files** (upstream deleted `ChatTabs/tabs.test.ts`; Capture Audio harness updated for upstream's `$temporary` store and target-based terminal upload; the removed user-configured terminal case deleted). Sub Agent 1.3.2 **69 passed**. Synthetic WSL Conda 3.11.14 boot (fresh SQLite, all migrations): `/health`, `/ready`, `/health/db`, `/api/version` (0.13.4), `/api/config` all 200, no tracebacks.
+- Sub Agent tool: core fixes for browser questions during sub-agents and the sub-agent terminal sharing its parent chat's machine apply to the tool's child chats automatically (same internal/subagent meta). Local, uncommitted Sub Agent 1.3.3 in `../sobe-ai-tools` ports #34542 (busy-parent report placement on the parent branch); **72 passed**.
+- Orchestrator (`../open-webui-terminals` `dev` at `08d6c1e` plus local, uncommitted changes): new `orchestrator/templates.py` implements the Terminals 0.4 template API (template = policy with the same ID; `default` keeps legacy unscoped runtimes, other templates use policy-keyed scoped identities `user:`/`shared:all`/`chat:`/`model:`) and root routing by `X-Terminal-Template-Id`. Template headers and the incoming `X-User-Id` are not forwarded to runtimes. Shortcut: instance stop/restart/reset/delete act per template and user, not per chat/model context. Templates (writable by non-admins with connection write access) may use only the default runtime image or an admin-set one, and may not set `OPEN_TERMINAL_*` env other than start dir/setup script. Full orchestrator suite **519 passed** (WSL Conda, temporary HOME); independent review findings (Docker cross-template reuse, PATCH field loss, duplicate user header, 500 on invalid data) fixed with regressions. Image rebuild and deployment required; WebSocket template routing has no dedicated test.
+- Item 23: `uploadToTerminal` falls back to upstream multipart `/files/upload` when `/files/upload-stream` returns 404/405 (official Open Terminal and Tether have no streaming endpoint); Vitest regression added, **144 passed / 9 files**.
+- Approved `npm ci --ignore-scripts` (Node 22.23.3) left manifests unchanged; production Vite build **passed** with `APP_BUILD_CHANNEL=main` (`build/index.html` SHA-256 `1e4ece259eb065e92ca358b63a2163804dbc248f2938e8b74dafe87b0dcfffe0`).
+- Not run: svelte-check, gateway-schema test, dependency audit, runtime (`open-terminal-internal`, still 0.17.5; upstream recommends Open Terminal 0.17.20+ for multi-user uploads) tests against the new contract, browser/live checks, Docker build, deployment.
+
 ### Upstream 0.13.3 integration — pending local validation (pre-publication)
 
 **Pre-publication validation snapshot.** The user authorized committing and pushing the OWUI source merge to `jp_dev` with the outstanding checks below; that authorization is not a completed validation, production promotion or deployment claim. Historical snapshots below are unchanged.
@@ -272,6 +289,8 @@ Open WebUI frequently changes internal APIs, database models, memory handling, t
 - `src/lib/apis/index.ts`
 
 > `src/routes/(app)/+layout.svelte` is not part of the current content-blocker-specific implementation and has been removed from this file list.
+
+> **0.13.4:** upstream removed user direct tool servers/terminals (moved to Tether) and deleted `Settings/Integrations.svelte`. Its content-blocker toast and the direct-server branch of the admin modal's verify handler are dropped; admin tool-server verification uses upstream's backend `verifyToolServerConnection`.
 
 ---
 
@@ -1201,11 +1220,15 @@ curl -X POST "http://localhost:8080/api/v1/memories/reset/all" \
 
 This authorization boundary complements the terminal gateway controls in item 11 without changing its request-forwarding behavior.
 
+**Deliberate deviation from upstream (since 0.13.4):** upstream 0.13.4 lets anyone who can reply to a chat shared with "Allow replies" use that chat's terminal (#34103). The fork does not. In `find_terminal_connection` (`backend/open_webui/utils/terminals.py`), a saved chat the caller can access but does not own is used only when `authorized_terminal_chat_context` allows it (owner, or admin with `ENABLE_ADMIN_CHAT_ACCESS`/internal chat). Otherwise the request takes upstream's "chat not accessible" branch: `403 Chat access denied`, unless the caller has write access to the terminal connection. Write access is upstream's separate terminal-manager right, and it reaches the owner's instance. Upstream's policy/context headers no longer exist; this check now covers HTTP proxying, WebSockets (handshake and the 10-second recheck), model tool calls and terminal file reads, because all of them go through `find_terminal_connection`. The fork also refuses ambiguous non-template terminal IDs (`409`).
+
 **Files Modified:**
 
 - `backend/open_webui/ext/terminal_context_authorization.py`
+- `backend/open_webui/utils/terminals.py`
 - `backend/open_webui/routers/terminals.py`
 - `backend/open_webui/ext/test_terminal_context_authorization.py`
+- `backend/open_webui/ext/test_terminal_json_resolution.py`
 
 ---
 
@@ -1370,7 +1393,7 @@ After upstream merges, revalidate that `Select.svelte` still delegates to `selec
 
 **Status:** Local fix; not deployed or live-validated.
 
-- Policy-backed terminal OpenAPI discovery gets a finite minimum 60-second budget; larger valid configured budgets are preserved. Direct terminals and generic tool servers retain their configured discovery timeout.
+- Policy-backed (and, since 0.13.4, Terminals template, `template_id`) terminal OpenAPI discovery gets a finite minimum 60-second budget; template schemas are fetched per turn with `safe_fetch_openapi` instead of the shared cache; larger valid configured budgets are preserved. Direct terminals and generic tool servers retain their configured discovery timeout.
 - The policy lives in `backend/open_webui/ext/terminal_discovery_cache.py`. The existing discovery hook in `backend/open_webui/utils/tools.py` uses the same budget for schema fetching, optional-prompt deadline, and coordinated cache discovery.
 - Existing fingerprinted per-terminal caching, single-flight coordination, backoff, saved authentication, and configuration/access checks are unchanged. No aggregate-cache retry or runtime/orchestrator change was added.
 - Validation: 90 focused discovery-cache/tools tests passed in an isolated import-safe layout with system Python 3.13.14; `git diff --check` passed. This is not a full-backend, live Redis, or cold-node acceptance test.

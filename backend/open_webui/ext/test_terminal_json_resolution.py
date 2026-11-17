@@ -1,306 +1,150 @@
-"""Import-safe terminal read resolution and chat authorization tests (AST-loaded)."""
+"""Terminal authorization (find_terminal_connection) and AGENTS.md read tests.
+
+find_terminal_connection is the real production function; only its storage and
+access collaborators are replaced, so the fork's chat-owner rule (item 25) and
+the duplicate-ID rule run as shipped.
+"""
 
 import ast
 import asyncio
 import logging
 import ntpath
 import posixpath
-import sys
-import types
 from pathlib import Path
 from urllib.parse import quote
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
+
+from open_webui.ext import terminal_context_authorization as chat_authorization
+from open_webui.models import chats as chats_module, users as users_module
+from open_webui.models.users import UserModel
+from open_webui.utils import access_control, terminals, tether
 
 SRC = Path(__file__).parents[1] / 'utils' / 'terminals.py'
 
 
-class User:
-    def __init__(self, id='u1', role='user', **_):
-        self.id = id
-        self.role = role
-
-
-class Response:
-    status = 200
-
-    async def json(self):
-        return {'ok': True}
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *a):
-        return False
-
-
-def _load(monkeypatch, connections, access=True):
-    tree = ast.parse(SRC.read_text(encoding='utf-8'))
-    names = {
-        'get_terminal_json', 'resolve_terminal_connection', 'is_terminal_orchestrator', 'get_terminal_server_url',
-        'terminal_context_config', 'terminal_context_available', 'terminal_context_id',
-    }
-    nodes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in names]
-    chat_id_ns = {}
-    chat_id_source = SRC.with_name('chat_id.py')
-    exec(compile(ast.parse(chat_id_source.read_text(encoding='utf-8')), str(chat_id_source), 'exec'), chat_id_ns)
-    chat_store = SimpleNamespace(get_chat_by_id=AsyncMock(return_value=None))
-    auth_ns = {
-        'Chats': chat_store,
-        'ENABLE_ADMIN_CHAT_ACCESS': False,
-        'is_internal_chat': lambda meta: bool(meta and meta.get('internal')),
-        'is_saved_chat_id': chat_id_ns['is_saved_chat_id'],
-    }
-    auth_source = SRC.parents[1] / 'ext' / 'terminal_context_authorization.py'
-    auth_nodes = [n for n in ast.parse(auth_source.read_text(encoding='utf-8')).body if isinstance(n, ast.AsyncFunctionDef)]
-    exec(compile(ast.Module(body=auth_nodes, type_ignores=[]), str(auth_source), 'exec'), auth_ns)
-    resolve = AsyncMock(wraps=auth_ns['resolve_terminal_chat_context'])
-    config = SimpleNamespace(get=AsyncMock(return_value=connections))
-    groups = SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[]))
-    has_access = AsyncMock(return_value=access)
-    build = AsyncMock(return_value=({}, {}))
-    session = MagicMock()
-    session.request = MagicMock(return_value=Response())
-    session_cm = MagicMock()
-    session_cm.__aenter__ = AsyncMock(return_value=session)
-    session_cm.__aexit__ = AsyncMock(return_value=False)
-    aiohttp = types.ModuleType('aiohttp')
-    aiohttp.ClientTimeout = lambda **k: None
-    aiohttp.ClientSession = MagicMock(return_value=session_cm)
-
-    def mod(name, **attrs):
-        m = types.ModuleType(name)
-        m.__dict__.update(attrs)
-        monkeypatch.setitem(sys.modules, name, m)
-
-    mod('aiohttp', **aiohttp.__dict__)
-    mod('open_webui.env', AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL=None, AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA=1)
-    client = MagicMock(return_value=session_cm)
-    mod('open_webui.utils.tether', get_terminal_connections=AsyncMock(return_value=connections), get_terminal_client=client)
-    mod('open_webui.ext.terminal_context_authorization', resolve_terminal_chat_context=resolve)
-    mod('open_webui.models.config', Config=config)
-    mod('open_webui.models.groups', Groups=groups)
-    mod('open_webui.models.users', UserModel=User)
-    mod('open_webui.utils.access_control', has_connection_access=has_access)
-    mod('open_webui.utils.tools', build_tool_server_headers=build)
-    ns = {
-        'ENABLE_TOOL_SERVERS': True,
-        'AIOHTTP_CLIENT_TIMEOUT_TERMINAL': 1,
-        'is_saved_chat_id': chat_id_ns['is_saved_chat_id'],
-        'quote': quote,
-        'TERMINAL_CONTEXT_HEADER': 'X-Terminal-Context-Id',
-        'TERMINAL_CONTEXT_DEFAULT': 'default',
-        'TERMINAL_CONTEXT_TYPES': {'chat', 'automation'},
-        'TERMINAL_CONTEXT_ID_SOURCES': {'chat': 'chat_id', 'automation': 'automation_id'},
-        'log': SimpleNamespace(debug=MagicMock()),
-        'chat_store': chat_store,
-        'authorization': auth_ns,
-        'resolve': resolve,
-        'session': session,
-    }
-    exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), str(SRC), 'exec'), ns)
-    return ns, client, build, has_access
+def _user(id='u1', role='user'):
+    return UserModel(id=id, email=f'{id}@example.test', name=id, role=role, last_active_at=0, updated_at=0, created_at=0)
 
 
 def _conn(**kw):
     return {'id': 't', 'url': 'http://t', **kw}
 
 
-async def _run(ns, caller):
-    return await ns['get_terminal_json'](
-        None, User(), {'terminal_id': 't'}, '/x', {'__event_call__': caller}
+def _chat(user_id, **meta):
+    return SimpleNamespace(id='chat-1', user_id=user_id, meta=meta, chat={})
+
+
+@pytest.fixture
+def world(monkeypatch):
+    """Patch collaborators of the real find_terminal_connection; returns the fakes."""
+    from open_webui.utils.agents import session
+
+    chats = SimpleNamespace(get_accessible_chat_by_id=AsyncMock(), get_chat_by_id=AsyncMock())
+    w = SimpleNamespace(
+        chats=chats,
+        users=SimpleNamespace(get_user_by_id=AsyncMock()),
+        connections=AsyncMock(return_value=[_conn()]),
+        access=AsyncMock(return_value=True),
+        write=AsyncMock(return_value=False),
     )
+    monkeypatch.setattr(terminals, 'ENABLE_TOOL_SERVERS', True)
+    monkeypatch.setattr(terminals, 'has_terminal_write_access', w.write)
+    monkeypatch.setattr(chats_module, 'Chats', chats)
+    monkeypatch.setattr(chat_authorization, 'Chats', chats)
+    monkeypatch.setattr(chat_authorization, 'ENABLE_ADMIN_CHAT_ACCESS', False)
+    monkeypatch.setattr(users_module, 'Users', w.users)
+    monkeypatch.setattr(access_control, 'has_connection_access', w.access)
+    monkeypatch.setattr(tether, 'get_terminal_connections', w.connections)
+    monkeypatch.setattr(session, 'get_session', AsyncMock(return_value=None))
+    return w
+
+
+async def _find(user, chat_id=None):
+    return await terminals.find_terminal_connection(user, 't', {'chat_id': chat_id} if chat_id else {})
 
 
 @pytest.mark.asyncio
-async def test_duplicate_ids_reject_before_network_auth_or_browser(monkeypatch):
-    ns, session, build, access = _load(monkeypatch, [_conn(), _conn(url='http://other')])
-    caller = AsyncMock(return_value={'data': 'browser'})
-    assert await _run(ns, caller) is None
-    session.assert_not_called()
-    build.assert_not_called()
-    access.assert_not_called()
-    caller.assert_not_called()
+async def test_duplicate_ids_are_ambiguous_before_access_check(world):
+    world.connections.return_value = [_conn(), _conn(url='http://other')]
+    with pytest.raises(HTTPException) as exc:
+        await _find(_user())
+    assert (exc.value.status_code, exc.value.detail) == (409, 'Ambiguous terminal ID')
+    world.access.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('extra', [{'enabled': False}])
-async def test_disabled_does_not_use_network_or_browser(monkeypatch, extra):
-    ns, session, build, _ = _load(monkeypatch, [_conn(**extra)])
-    caller = AsyncMock()
-    assert await _run(ns, caller) is None
-    session.assert_not_called()
-    caller.assert_not_called()
+@pytest.mark.parametrize('case', ['disabled', 'no-access', 'missing'])
+async def test_disabled_inaccessible_or_missing_terminal_is_not_found(world, case):
+    if case == 'disabled':
+        world.connections.return_value = [_conn(enabled=False)]
+    elif case == 'no-access':
+        world.access.return_value = False
+    else:
+        world.connections.return_value = []
+    assert await _find(_user()) is None
 
 
 @pytest.mark.asyncio
-async def test_access_denied(monkeypatch):
-    ns, session, build, _ = _load(monkeypatch, [_conn()], access=False)
-    caller = AsyncMock()
-    assert await _run(ns, caller) is None
-    build.assert_not_called()
-    session.assert_not_called()
-    caller.assert_not_called()
+async def test_single_accessible_connection_resolves_without_chat(world):
+    assert await _find(_user()) == _conn()
+    world.chats.get_accessible_chat_by_id.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_missing_terminal_id_returns_none(monkeypatch):
-    ns, session, _, _ = _load(monkeypatch, [_conn()])
-    assert await ns['get_terminal_json'](None, User(), {}, '/x') is None
-    session.assert_not_called()
+async def test_saved_chat_owner_uses_terminal_without_admin_lookup(world):
+    world.chats.get_accessible_chat_by_id.return_value = _chat('u1')
+    assert await _find(_user('u1'), 'chat-1') == _conn()
+    world.chats.get_chat_by_id.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_valid_single_connection_fetches(monkeypatch):
-    ns, session, build, _ = _load(monkeypatch, [_conn(), {'id': 'other', 'url': 'http://o'}])
-    caller = AsyncMock()
-    assert await _run(ns, caller) == {'ok': True}
-    session.assert_called_once()
-    caller.assert_not_called()
+@pytest.mark.parametrize('role', ['user', 'admin'])
+@pytest.mark.parametrize('meta', [{}, {'shared': True}, {'folder_id': 'writable-folder'}])
+async def test_foreign_accessible_chat_never_selects_owner_terminal(world, role, meta):
+    # Fork item 25: reply/folder-write access to someone else's chat is not terminal access.
+    world.chats.get_accessible_chat_by_id.return_value = _chat('owner', **meta)
+    world.chats.get_chat_by_id.return_value = _chat('owner', **meta)
+    with pytest.raises(HTTPException) as exc:
+        await _find(_user('u1', role), 'chat-1')
+    assert (exc.value.status_code, exc.value.detail) == (403, 'Chat access denied')
+    world.connections.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_unconfigured_id_keeps_personal_browser_path(monkeypatch):
-    ns, session, _, _ = _load(monkeypatch, [])
-    caller = AsyncMock(return_value={'data': 'browser'})
-    assert await ns['get_terminal_json'](
-        None, User(), {'terminal_id': 't', 'chat_id': 'foreign-chat', 'session_id': 'socket-session'},
-        '/skills', {'__event_call__': caller},
-    ) == 'browser'
-    caller.assert_awaited_once_with({
-        'type': 'request:terminal',
-        'data': {'terminal_id': 't', 'path': '/skills', 'session_id': 'socket-session'},
-    })
-    ns['resolve'].assert_not_awaited()
-    session.assert_not_called()
-
-
-def _scoped_connection(context_id='default', context='chat'):
-    return _conn(server_type='orchestrator', config={'contexts': {context: {'context_id': context_id}}})
+@pytest.mark.parametrize('admin_chat_access, meta', [(True, {}), (False, {'internal': True})])
+async def test_admin_may_use_foreign_chat_only_with_configured_or_internal_access(world, monkeypatch, admin_chat_access, meta):
+    monkeypatch.setattr(chat_authorization, 'ENABLE_ADMIN_CHAT_ACCESS', admin_chat_access)
+    monkeypatch.setattr(chat_authorization, 'is_internal_chat', lambda m: bool(m and m.get('internal')))
+    world.chats.get_accessible_chat_by_id.return_value = _chat('owner', **meta)
+    assert await _find(_user('admin', 'admin'), 'chat-1') == _conn()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('connection', [_conn(), _scoped_connection(), _scoped_connection('chat_id')])
-@pytest.mark.parametrize('chat_meta', [{}, {'shared': True}, {'folder_id': 'folder-with-write-access'}])
-@pytest.mark.parametrize('path', ['/skills', '/skills/read?name=example', '/files/cwd', '/files/read?path=AGENTS.md'])
-async def test_foreign_saved_chat_denied_for_every_admin_read(monkeypatch, connection, chat_meta, path):
-    ns, session, build, access = _load(monkeypatch, [connection])
-    ns['chat_store'].get_chat_by_id.return_value = SimpleNamespace(user_id='owner', meta=chat_meta)
-    caller = AsyncMock()
-    metadata = {'terminal_id': 't', 'chat_id': 'foreign-chat'}
-    assert await ns['get_terminal_json'](None, User(), metadata, path, {'__event_call__': caller}) is None
-    assert metadata == {'terminal_id': 't', 'chat_id': 'foreign-chat'}
-    ns['chat_store'].get_chat_by_id.assert_awaited_once_with('foreign-chat')
-    build.assert_not_awaited()
-    session.assert_not_called()
-    access.assert_not_awaited()
-    caller.assert_not_awaited()
+async def test_foreign_chat_with_terminal_write_access_reaches_owner_instance(world):
+    owner = _user('owner')
+    world.write.return_value = True
+    world.users.get_user_by_id.return_value = owner
+    world.chats.get_chat_by_id.return_value = _chat('owner')
+    # The manager's reply access is foreign (denied above); write access routes them to the owner's instance.
+    world.chats.get_accessible_chat_by_id.side_effect = lambda chat_id, user, **_: _chat('owner') if user.id == 'owner' else _chat('owner', shared=True)
+
+    connection = await _find(_user('manager'), 'chat-1')
+
+    assert connection['instance_user_id'] == 'owner'
+    assert world.connections.await_args.args[0].id == 'owner'
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('role,owner,admin_access,internal,allowed', [
-    ('user', 'u1', False, False, True),
-    ('admin', 'other', True, False, True),
-    ('admin', 'other', False, True, True),
-    ('admin', 'other', False, False, False),
-    ('user', 'other', True, True, False),
-])
-@pytest.mark.parametrize('context_id', ['default', 'chat_id'])
-async def test_saved_chat_owner_and_admin_rules(monkeypatch, role, owner, admin_access, internal, allowed, context_id):
-    ns, session, build, _ = _load(monkeypatch, [_scoped_connection(context_id)])
-    ns['authorization']['ENABLE_ADMIN_CHAT_ACCESS'] = admin_access
-    ns['chat_store'].get_chat_by_id.return_value = SimpleNamespace(user_id=owner, meta={'internal': internal})
-    metadata = {'terminal_id': 't', 'chat_id': 'saved-chat'}
-    caller = AsyncMock()
-    result = await ns['get_terminal_json'](None, {'id': 'u1', 'role': role}, metadata, '/skills', {'__event_call__': caller})
-    assert result == ({'ok': True} if allowed else None)
-    caller.assert_not_awaited()
-    if not allowed:
-        build.assert_not_awaited()
-        session.assert_not_called()
-        return
-    headers = ns['session'].request.call_args.kwargs['headers']
-    assert headers['X-Session-Id'] == 'saved-chat'
-    assert headers['X-User-Id'] == 'u1'
-    assert headers.get('X-Terminal-Context-Id') == ('chat:saved-chat' if context_id == 'chat_id' else None)
-    assert build.await_args.kwargs['metadata'] == metadata
-    assert build.await_args.kwargs['metadata'] is not metadata
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('chat_id', ['', 'temporary:chat', 'local:chat', 'channel:chat', None, 123])
-@pytest.mark.parametrize('context_id', ['default', 'chat_id'])
-async def test_non_saved_context_normalized_without_saved_runtime(monkeypatch, chat_id, context_id):
-    ns, session, build, _ = _load(monkeypatch, [_scoped_connection(context_id)])
-    metadata = {'terminal_id': 't', 'chat_id': chat_id}
-    result = await ns['get_terminal_json'](None, User(), metadata, '/skills')
-    assert metadata['chat_id'] == chat_id
-    ns['chat_store'].get_chat_by_id.assert_not_awaited()
-    if context_id == 'chat_id':
-        assert result is None
-        build.assert_not_awaited()
-        session.assert_not_called()
-        return
-    assert result == {'ok': True}
-    normalized_chat_id = chat_id if isinstance(chat_id, str) else ''
-    assert build.await_args.kwargs['metadata']['chat_id'] == normalized_chat_id
-    assert build.await_args.kwargs['metadata'] is not metadata
-    headers = ns['session'].request.call_args.kwargs['headers']
-    assert headers.get('X-Session-Id') == (normalized_chat_id or None)
-    assert 'X-Terminal-Context-Id' not in headers
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('failure', ['missing', 'unavailable'])
-async def test_saved_chat_resolution_fails_closed(monkeypatch, failure):
-    ns, session, build, _ = _load(monkeypatch, [_scoped_connection()])
-    if failure == 'unavailable':
-        ns['chat_store'].get_chat_by_id.side_effect = RuntimeError('store unavailable')
-    caller = AsyncMock()
-    assert await ns['get_terminal_json'](
-        None, User(), {'terminal_id': 't', 'chat_id': 'saved-chat'}, '/skills', {'__event_call__': caller},
-    ) is None
-    build.assert_not_awaited()
-    session.assert_not_called()
-    caller.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('context_id', ['default', 'chat_id'])
-async def test_repeated_read_reauthorizes_after_revocation(monkeypatch, context_id):
-    ns, session, build, _ = _load(monkeypatch, [_scoped_connection(context_id)])
-    ns['chat_store'].get_chat_by_id.side_effect = [
-        SimpleNamespace(user_id='u1', meta={}), SimpleNamespace(user_id='new-owner', meta={}),
-    ]
-    metadata = {'terminal_id': 't', 'chat_id': 'saved-chat'}
-    assert await ns['get_terminal_json'](None, User(), metadata, '/files/cwd') == {'ok': True}
-    caller = AsyncMock()
-    assert await ns['get_terminal_json'](
-        None, User(), metadata, '/files/read?path=AGENTS.md', {'__event_call__': caller},
-    ) is None
-    assert ns['chat_store'].get_chat_by_id.await_count == 2
-    build.assert_awaited_once()
-    session.assert_called_once()
-    ns['session'].request.assert_called_once()
-    caller.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('context_id', ['default', 'automation_id'])
-async def test_automation_keeps_existing_context_semantics(monkeypatch, context_id):
-    ns, session, build, _ = _load(monkeypatch, [_scoped_connection(context_id, 'automation')])
-    metadata = {'terminal_id': 't', 'automation_id': 'automation-1', 'chat_id': 'foreign-chat'}
-    assert await ns['get_terminal_json'](None, User(), metadata, '/skills') == {'ok': True}
-    ns['resolve'].assert_not_awaited()
-    ns['chat_store'].get_chat_by_id.assert_not_awaited()
-    headers = ns['session'].request.call_args.kwargs['headers']
-    assert headers['X-Session-Id'] == 'foreign-chat'
-    assert headers.get('X-Terminal-Context-Id') == (
-        'automation:automation-1' if context_id == 'automation_id' else None
-    )
-    assert build.await_args.kwargs['metadata'] == metadata
+async def test_deleted_chat_is_denied(world):
+    world.chats.get_accessible_chat_by_id.return_value = None
+    world.chats.get_chat_by_id.return_value = None
+    with pytest.raises(HTTPException) as exc:
+        await _find(_user(), 'chat-1')
+    assert (exc.value.status_code, exc.value.detail) == (403, 'Chat access denied')
 
 
 @pytest.mark.asyncio
@@ -320,7 +164,7 @@ async def test_agents_read_requests_runtime_byte_bound_and_checks_response(conte
     }
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(SRC), 'exec'), scope)
     metadata, extra = {'terminal_id': 't', 'chat_id': 'saved'}, {'__event_call__': object()}
-    assert await scope['get_terminal_agents_md'](None, User(), metadata, extra) == expected
+    assert await scope['get_terminal_agents_md'](None, _user(), metadata, extra) == expected
     assert fetch.await_args.args[3] == '/files/read?path=%2Fhome%2Fuser%2FAGENTS.md&max_bytes=32768'
     assert fetch.await_args.args[2] is metadata
     assert fetch.await_args.args[4] is extra
