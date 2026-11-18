@@ -1875,6 +1875,8 @@ async def get_terminal_tools(
             cookies=operation_cookies,
             path=path,
             metadata=metadata,
+            service=fresh.get('service', 'open_terminal'),
+            instance_user_id=fresh.get('instance_user_id'),
         )
 
     async def transfer_file_to_terminal(file_id: str, path: str):
@@ -1887,6 +1889,8 @@ async def get_terminal_tools(
             cookies=operation_cookies,
             file_id=file_id,
             path=path,
+            service=fresh.get('service', 'open_terminal'),
+            instance_user_id=fresh.get('instance_user_id'),
         )
 
     persist_file_tool_callable = await get_async_tool_function_and_apply_extra_params(persist_file_to_chat, {})

@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 import aiohttp
 from fastapi import HTTPException, Request, UploadFile
 
+from open_webui.utils.tether import get_terminal_client
 from open_webui.env import (
     AIOHTTP_CLIENT_ALLOW_REDIRECTS,
     AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
@@ -61,7 +62,7 @@ def _encode_bounded_text(content: Any, max_bytes: int) -> bytes:
 
 async def _read_bounded_response(response: aiohttp.ClientResponse) -> bytes:
     max_bytes = await _get_terminal_file_max_bytes()
-    content_length = response.content_length
+    content_length = getattr(response, 'content_length', None)  # Tether relay responses have none
     if content_length is not None and content_length > max_bytes:
         raise HTTPException(status_code=413, detail='Terminal file exceeds the configured upload size limit.')
 
@@ -124,6 +125,8 @@ async def persist_terminal_file_to_platform(
     cookies: dict[str, str],
     path: str,
     metadata: Optional[dict[str, Any]] = None,
+    service: str = 'open_terminal',
+    instance_user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     if not isinstance(path, str) or not path.strip():
         raise HTTPException(status_code=400, detail='A file path is required.')
@@ -137,7 +140,10 @@ async def persist_terminal_file_to_platform(
 
     timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER)
 
-    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+    # Tether terminals (tether://) are only reachable through the user's relay.
+    async with get_terminal_client(
+        base, instance_user_id or user.id, service=service, timeout=timeout, trust_env=True
+    ) as session:
         # Directory check: /files/list succeeds only for directories.
         async with session.get(
             list_url,
@@ -218,6 +224,8 @@ async def transfer_platform_file_to_terminal(
     cookies: dict[str, str],
     file_id: str,
     path: str,
+    service: str = 'open_terminal',
+    instance_user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     if not isinstance(file_id, str) or not file_id.strip():
         raise HTTPException(status_code=400, detail='A file_id is required.')
@@ -281,7 +289,10 @@ async def transfer_platform_file_to_terminal(
 
     timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER)
 
-    async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+    # Tether terminals (tether://) are only reachable through the user's relay.
+    async with get_terminal_client(
+        base, instance_user_id or user.id, service=service, timeout=timeout, trust_env=True
+    ) as session:
         async with session.post(
             upload_url,
             headers=upload_headers,
