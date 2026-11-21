@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Annotated
 
 import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -27,13 +28,14 @@ router = APIRouter()
 
 TOKEN_PATH = '/viewer/token'
 MAX_TOKEN_RESPONSE_BYTES = 262_144
+MAX_MODELS = 5
 
 
 class TokenForm(BaseModel):
     model_config = ConfigDict(extra='forbid')
     server_id: str = Field(min_length=1, max_length=256)
     project_id: str = Field(min_length=1, max_length=256)
-    version_id: str = Field(min_length=1, max_length=2048)
+    version_ids: list[Annotated[str, Field(min_length=1, max_length=2048)]] = Field(min_length=1, max_length=MAX_MODELS)
     region: str | None = Field(None, max_length=16)
 
 
@@ -72,10 +74,13 @@ async def model_viewer_event(result, tool: dict | None, event_emitter) -> None:
     server_id = server_id_from_tool(tool)
     if not server_id:
         return
+    version_ids = (model or {}).get('version_ids') if isinstance(model, dict) else None
     if (
         isinstance(model, dict)
         and isinstance(model.get('project_id'), str)
-        and isinstance(model.get('version_id'), str)
+        and isinstance(version_ids, list)
+        and 0 < len(version_ids) <= MAX_MODELS
+        and all(isinstance(v, str) for v in version_ids)
     ):
         await event_emitter(
             {
@@ -83,7 +88,7 @@ async def model_viewer_event(result, tool: dict | None, event_emitter) -> None:
                 'data': {
                     'serverId': server_id,
                     'projectId': model['project_id'],
-                    'versionId': model['version_id'],
+                    'versionIds': version_ids,
                     'region': model.get('region') if isinstance(model.get('region'), str) else None,
                     'name': str(model.get('name') or 'Model')[:200],
                 },
@@ -135,10 +140,13 @@ async def viewer_token(request: Request, form: TokenForm, user=Depends(get_verif
         raise HTTPException(
             status if status in (401, 403, 404, 422, 429, 503) else 502, detail or 'Model viewer token unavailable'
         )
+    models = payload.get('models') if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
         or not isinstance(payload.get('access_token'), str)
-        or not isinstance(payload.get('urn'), str)
+        or not isinstance(models, list)
+        or not models
+        or not all(isinstance(m, dict) and isinstance(m.get('urn'), str) for m in models)
     ):
         raise HTTPException(502, 'Invalid model viewer token response')
     return JSONResponse(payload, headers={'Cache-Control': 'no-store'})

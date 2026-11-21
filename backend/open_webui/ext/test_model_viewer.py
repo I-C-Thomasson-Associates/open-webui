@@ -12,8 +12,8 @@ OPEN = {
     'data': {
         'model_viewer': {
             'project_id': 'b.p',
-            'version_id': 'urn:v?version=1',
-            'urn': 'dXJu',
+            'version_ids': ['urn:v?version=1', 'urn:p?version=2'],
+            'models': [{'version_id': 'urn:v?version=1', 'urn': 'dXJu'}],
             'region': 'US',
             'name': 'Tower',
         }
@@ -54,7 +54,7 @@ async def test_open_and_command_events_carry_identifiers_only():
         'data': {
             'serverId': 'forma',
             'projectId': 'b.p',
-            'versionId': 'urn:v?version=1',
+            'versionIds': ['urn:v?version=1', 'urn:p?version=2'],
             'region': 'US',
             'name': 'Tower',
         },
@@ -138,18 +138,21 @@ def wired(monkeypatch):
 
 
 def _form(**changes):
-    return mv.TokenForm(**{'server_id': 'forma', 'project_id': 'b.p', 'version_id': 'urn:v?version=1', **changes})
+    return mv.TokenForm(**{'server_id': 'forma', 'project_id': 'b.p', 'version_ids': ['urn:v?version=1'], **changes})
 
 
 @pytest.mark.asyncio
 async def test_token_uses_connection_headers_and_is_not_cached(wired):
-    FakeSession.reply = (200, {'access_token': 'narrow', 'expires_in': 3599, 'urn': 'dXJu', 'region': 'US'})
+    FakeSession.reply = (
+        200,
+        {'access_token': 'narrow', 'expires_in': 3599, 'models': [{'version_id': 'v', 'urn': 'dXJu'}]},
+    )
     response = await mv.viewer_token(SimpleNamespace(), _form(), user=USER)
     assert response.headers['cache-control'] == 'no-store'
     assert json.loads(response.body)['access_token'] == 'narrow'
     url, kwargs = FakeSession.calls[0]
     assert url == 'http://forma:8000/viewer/token' and kwargs['allow_redirects'] is False
-    assert kwargs['json'] == {'project_id': 'b.p', 'version_id': 'urn:v?version=1'}
+    assert kwargs['json'] == {'project_id': 'b.p', 'version_ids': ['urn:v?version=1']}
     assert kwargs['headers']['x-open-webui-user-id'] == 'u1'
 
 
@@ -171,6 +174,7 @@ async def test_token_refuses_unknown_or_forbidden_server(wired):
         ((403, {'detail': 'sign in'}), 403),
         ((500, b'boom'), 502),
         ((200, {'urn': 'x'}), 502),
+        ((200, {'access_token': 't', 'models': []}), 502),
         ((200, b'x' * 300_000), 502),
     ],
 )
@@ -181,6 +185,9 @@ async def test_token_upstream_failures(wired, reply, status):
     assert error.value.status_code == status
 
 
-def test_form_rejects_extra_fields():
+@pytest.mark.parametrize(
+    'changes', [{'url': 'http://evil'}, {'version_ids': []}, {'version_ids': ['v'] * 6}, {'version_ids': ['']}]
+)
+def test_form_rejects_bad_requests(changes):
     with pytest.raises(ValueError):
-        _form(url='http://evil')
+        _form(**changes)

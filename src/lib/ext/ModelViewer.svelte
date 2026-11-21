@@ -8,6 +8,7 @@
 		loadViewerRuntime,
 		modelViewerCommands,
 		newCommands,
+		type LoadedModel,
 		type ModelViewerRef
 	} from './modelViewer';
 
@@ -16,6 +17,7 @@
 	const i18n: any = getContext('i18n');
 	let container: HTMLDivElement;
 	let viewer: any = null;
+	let models: LoadedModel[] = [];
 	let status: 'loading' | 'ready' | 'error' = 'loading';
 	let error = '';
 	// Only commands sent after this tab opened; ones sent while it loads still apply.
@@ -39,13 +41,41 @@
 					throw new Error('WebGL is not available in this browser');
 				}
 			}
-			const doc: any = await new Promise((resolve, reject) =>
-				Viewing.Document.load(`urn:${first.urn}`, resolve, (code: number, message: string) =>
-					reject(new Error(message || `Model could not be loaded (${code})`))
-				)
-			);
-			if (destroyed) return;
-			await viewer.loadDocumentNode(doc, doc.getRoot().getDefaultGeometry());
+			const overlay = first.models.length > 1;
+			const loaded: LoadedModel[] = [];
+			for (const { version_id, urn } of first.models) {
+				const doc: any = await new Promise((resolve, reject) =>
+					Viewing.Document.load(`urn:${urn}`, resolve, (code: number, message: string) =>
+						reject(new Error(message || `Model could not be loaded (${code})`))
+					)
+				);
+				if (destroyed) return;
+				const root = doc.getRoot();
+				const node = root.getDefaultGeometry();
+				// Overlays need 3D views; place every model by shared coordinates in one frame (same globalOffset).
+				const options = !overlay
+					? {}
+					: {
+							applyRefPoint: true,
+							applyScaling: 'm',
+							...(loaded.length
+								? {
+										keepCurrentModels: true,
+										globalOffset: loaded[0].model.getGlobalOffset()?.clone()
+									}
+								: {})
+						};
+				const view =
+					overlay && !node?.is3D?.()
+						? (root.search({ type: 'geometry', role: '3d' })[0] ?? node)
+						: node;
+				loaded.push({
+					versionId: version_id,
+					model: await viewer.loadDocumentNode(doc, view, options)
+				});
+				if (destroyed) return;
+			}
+			models = loaded;
 			status = 'ready';
 		} catch (e) {
 			status = 'error';
@@ -54,12 +84,12 @@
 	};
 
 	$: if (status === 'ready' && viewer) {
-		const next = newCommands($modelViewerCommands, lastSeq, ref.versionId);
+		const next = newCommands($modelViewerCommands, lastSeq, ref.versionIds);
 		lastSeq = next.lastSeq;
 		// In order: a search-based command must not finish after the next one.
 		for (const command of next.commands)
 			applying = applying
-				.then(() => applyModelViewerCommand(viewer, command))
+				.then(() => applyModelViewerCommand(viewer, models, command))
 				.catch((e) => console.error('Model viewer command', e));
 	}
 
