@@ -191,3 +191,31 @@ async def test_token_upstream_failures(wired, reply, status):
 def test_form_rejects_bad_requests(changes):
     with pytest.raises(ValueError):
         _form(**changes)
+
+
+def _layout(tab):
+    return {
+        'schemaVersion': 1,
+        'selectedTerminalId': None,
+        'panels': {
+            'tabs': [tab],
+            'activeId': tab['id'],
+            'history': [],
+            'groups': [{'id': 'default', 'tabIds': [tab['id']], 'activeId': tab['id']}],
+            'activeGroupId': 'default',
+            'layout': {'type': 'group', 'groupId': 'default'},
+        },
+    }
+
+
+def test_chat_layout_saves_model_viewer_tab_with_identifiers_only():
+    from pydantic import ValidationError
+
+    from open_webui.models.chat_views import ChatViewData
+
+    ref = {'serverId': '0', 'projectId': 'b.p', 'versionIds': ['urn:v?version=1'], 'region': 'US', 'name': 'Tower'}
+    tab = {'id': 'model-viewer:0:urn:v?version=1', 'kind': 'model-viewer', 'label': 'Tower', 'modelViewer': ref}
+    assert ChatViewData.model_validate(_layout(tab)).panels.tabs[0].modelViewer.versionIds == ['urn:v?version=1']
+    for bad in ({**ref, 'access_token': 'leak'}, {**ref, 'versionIds': []}, {**ref, 'versionIds': ['v'] * 6}):
+        with pytest.raises(ValidationError):
+            ChatViewData.model_validate(_layout({**tab, 'modelViewer': bad}))

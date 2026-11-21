@@ -13,9 +13,31 @@ class ViewModel(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
 
+class ModelViewerRef(ViewModel):
+    """Fork item 32: identifiers of the models a Model viewer tab shows; never a token."""
+
+    serverId: str = Field(min_length=1, max_length=256)
+    projectId: str = Field(min_length=1, max_length=256)
+    versionIds: list[Annotated[str, Field(min_length=1, max_length=2048)]] = Field(min_length=1, max_length=5)
+    region: str | None = Field(None, max_length=16)
+    name: str | None = Field(None, max_length=200)
+
+
 class PanelTab(ViewModel):
     id: str
-    kind: Literal['chat', 'comments', 'files', 'file', 'terminal', 'browser', 'desktop', 'side', 'page', 'overview']
+    kind: Literal[
+        'chat',
+        'comments',
+        'files',
+        'file',
+        'terminal',
+        'browser',
+        'desktop',
+        'side',
+        'page',
+        'overview',
+        'model-viewer',
+    ]
     label: str
     href: str | None = None
     terminalId: str | None = None
@@ -30,6 +52,7 @@ class PanelTab(ViewModel):
     page: int | None = None
     sessionId: str | None = None
     directory: str | None = None
+    modelViewer: ModelViewerRef | None = None
 
 
 class PanelGroup(ViewModel):

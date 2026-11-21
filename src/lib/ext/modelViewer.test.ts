@@ -65,10 +65,6 @@ describe('model viewer payloads', () => {
 		expect(
 			parseModelViewerRef({ serverId: 'forma', projectId: 'b.p', versionIds: Array(6).fill('v') })
 		).toBeNull();
-		// Tabs saved before multi-model support
-		expect(
-			parseModelViewerRef({ serverId: 'forma', projectId: 'b.p', versionId: 'v1' })?.versionIds
-		).toEqual(['v1']);
 		expect(modelViewerTabId(ref!)).toBe('model-viewer:forma:urn:v?version=1|urn:p?version=2');
 	});
 

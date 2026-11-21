@@ -57,8 +57,7 @@ const text = (value: unknown, max: number) =>
 
 export function parseModelViewerRef(data: unknown): ModelViewerRef | null {
 	const d = data as Record<string, unknown> | null;
-	// Tabs saved before multi-model support have a single versionId.
-	const versionIds = Array.isArray(d?.versionIds) ? d.versionIds : [d?.versionId];
+	const versionIds = Array.isArray(d?.versionIds) ? d.versionIds : [];
 	if (
 		!d ||
 		!text(d.serverId, 256) ||

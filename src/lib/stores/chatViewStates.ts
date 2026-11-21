@@ -78,7 +78,8 @@ export function serializeChatView(state: ChatViewState): ChatViewState {
 				path: tab.path,
 				page: tab.page,
 				sessionId: tab.sessionId,
-				directory: tab.directory
+				directory: tab.directory,
+				modelViewer: tab.modelViewer
 			}))
 		}
 	};
