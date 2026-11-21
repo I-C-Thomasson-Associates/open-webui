@@ -31,6 +31,7 @@ from open_webui.config import (
 )
 from open_webui.constants import TASKS
 from open_webui.ext.tool_result_files import handle_tool_result_attachment
+from open_webui.ext.model_viewer import model_viewer_event
 from open_webui.env import (
     BYPASS_MODEL_ACCESS_CONTROL,
     CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS,
@@ -1220,6 +1221,7 @@ async def chat_completion_tools_handler(
                         tool_result,
                         event_emitter,
                     )
+                    await model_viewer_event(tool_result, tools.get(tool_function_name), event_emitter)
 
                     if tool_result_files:
                         for file_item in tool_result_files:
@@ -3435,6 +3437,7 @@ async def resume_tool_calls(request, form_data, user, model, metadata, message) 
                     result = terminal_file_result
                 result, files, embeds = await process_tool_result(request, name, result, tool_type, metadata, user)
                 await terminal_event_handler(name, params, result, event_emitter)
+                await model_viewer_event(result, tool, event_emitter)
             content = await tool_result_with_citations(
                 item.get('name', ''),
                 params,
@@ -6157,6 +6160,7 @@ async def streaming_chat_response_handler(response, ctx):
                             tool_result,
                             event_emitter,
                         )
+                        await model_viewer_event(tool_result, tool, event_emitter)
 
                         results.append(
                             {

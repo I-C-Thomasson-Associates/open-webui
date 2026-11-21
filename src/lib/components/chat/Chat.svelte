@@ -159,6 +159,11 @@
 	import Navbar from '$lib/components/chat/Navbar.svelte';
 	import Sparkles from '$lib/components/layout/Sidebar/icons/Sparkles.svelte';
 	import Tabs from './Tabs.svelte';
+	import {
+		parseModelViewerCommand,
+		parseModelViewerRef,
+		sendModelViewerCommand
+	} from '$lib/ext/modelViewer';
 	import EventConfirmDialog from '../common/ConfirmDialog.svelte';
 	import ElicitationDialog from './ElicitationDialog.svelte';
 	import DeleteConfirmDialog from '../common/ConfirmDialog.svelte';
@@ -1611,6 +1616,16 @@
 		}
 	};
 
+	const modelViewerEventHandler = (type: string, data: unknown) => {
+		if (type === 'model_viewer:open') {
+			const ref = parseModelViewerRef(data);
+			if (ref) tabs?.openModelViewer(ref);
+		} else if (type === 'model_viewer:command') {
+			const command = parseModelViewerCommand(data);
+			if (command) sendModelViewerCommand(command);
+		}
+	};
+
 	let joinedChatId = '';
 	let liveParticipants: { id: string; name: string }[] = [];
 	const clearPresence = () => (liveParticipants = []);
@@ -2078,6 +2093,8 @@
 					eventConfirmationInputOptions = data?.input?.options ?? data?.options ?? [];
 				} else if (type.startsWith('terminal:')) {
 					terminalEventHandler(type, data, message);
+				} else if (type.startsWith('model_viewer:')) {
+					modelViewerEventHandler(type, data);
 				} else {
 					console.log('Unknown message type', data);
 				}

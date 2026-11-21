@@ -1426,6 +1426,38 @@ After upstream merges, revalidate that `Select.svelte` still delegates to `selec
 
 ---
 
+### 32. ACC Model Viewer Tab
+
+**Status:** Local changes, not committed or deployed. Not tested in a live browser.
+
+**What it does:**
+
+- Shows an ACC Docs model (Revit, IFC, DWG, ...) in a **Model viewer** tab beside the chat, using Autodesk's APS Viewer v7 (loaded from `developer.api.autodesk.com`, pinned to `7.*`).
+- The tab opens when the companion `sobe-forma-service` tool `viewer_model_open` returns. The AI drives the view with `viewer_model_control` (isolate, hide, show all, select, fit, color, clear colors, reset; objects by `db_ids` or property search). This changes only what the user sees, not the model in ACC.
+- **No token in chat history.** Tool results and saved tab state carry identifiers only (tool server ID, project ID, version ID, region, name). The tab asks `POST /api/v1/ext/model-viewer/token` for a token, which keeps it only in memory (the viewer's token callback).
+
+**Token path:**
+
+- `ext/model_viewer.py` (`get_verified_user`) finds the OpenAPI tool server by ID, checks `has_connection_access`, and calls its hidden `POST /viewer/token` with the same headers as a tool call (`build_tool_server_headers`: connection key, custom headers, user-info forwarding). No redirects; 256 KiB response cap; `Cache-Control: no-store`. Unknown or forbidden servers get 404.
+- `sobe-forma-service` re-checks the user's access to that version and that it has a finished viewable, then returns a one-hour `viewables:read` token made by refreshing with a narrowed scope. Live-checked in DEV (November 21, 2026): the narrowed refresh returns a `viewables:read`-only access token, and the rotated refresh token still grants the full scope.
+
+**Events:** `model_viewer_event` (in `ext/model_viewer.py`) runs next to `terminal_event_handler` at its three tool-result sites in `middleware.py`. It only reacts to OpenAPI tool-server results (`server:<id>` / `server:openapi:<id>`) whose `data` has `model_viewer` or `model_viewer_command`, and emits `model_viewer:open` or `model_viewer:command`. `Chat.svelte` validates them (`parseModelViewerRef` / `parseModelViewerCommand`) and opens the tab (`Tabs.openModelViewer`, split beside the chat, one tab per version) or forwards the command to open viewer tabs. Tabs keep the last 20 commands and apply, in order, every one sent after the tab opened, including those that arrive while the model is still loading. The viewer's own token callback reuses the token the tab just fetched until a minute before it expires, so opening a model costs one Autodesk refresh.
+
+**Files:**
+
+- New: `backend/open_webui/ext/model_viewer.py`, `backend/open_webui/ext/test_model_viewer.py`, `src/lib/ext/modelViewer.ts`, `src/lib/ext/ModelViewer.svelte`, `src/lib/ext/modelViewer.test.ts`.
+- Narrow edits: `backend/open_webui/main.py` (router at `/api/v1/ext/model-viewer`), `backend/open_webui/utils/middleware.py` (import plus three one-line calls), `src/lib/components/chat/Tabs/tabs.ts` (`model-viewer` kind, `modelViewer` ref), `src/lib/components/chat/Tabs.svelte` (import, icon, `openModelViewer`, render branch), `src/lib/components/chat/Chat.svelte` (`model_viewer:*` event branch).
+
+**Requirements:** the Forma tool server connection (Admin > Settings > Integrations) must forward the user identity the service trusts, as it already does for tool calls; the service's `APS_SCOPES` must include `viewables:read`. No Content-Security-Policy is set by OWUI or the DEV infrastructure today; if one is added it must allow `developer.api.autodesk.com`, `cdn.derivative.autodesk.com` and their WebSocket/worker use.
+
+**Validation:** 19 backend tests (`ext/test_model_viewer.py`) and 7 Vitest tests passed; full Vitest **151 passed / 10 files**; `test` + `ext` backend run in the WSL overlay venv: 303 passed, 12 failed, the same 12 as the unmodified checkout (old overlay dependencies). Tabs/Chat/ModelViewer compile with the same warning counts as before.
+
+**Not done:** live browser check, viewer state sent back to the AI (for example the user's selection), section planes, choosing a non-default view (the tab loads the default 3D/2D geometry), Forma Site Design proposals (those use the Forma bridge).
+
+**Upstream Sync Checks:** the three `model_viewer_event` calls still sit beside `terminal_event_handler`; tool-server `tool_id` format and `build_tool_server_headers` signature unchanged; `Tabs.svelte` `openPanel`/`selectTab` and the render chain still accept extra tab kinds; Chat event branch still reached for the active chat.
+
+---
+
 ## Deployment Notes
 
 ### Required Configuration
@@ -1484,4 +1516,5 @@ After merging a newer upstream version, verify:
 - The complete `DATABASE_URL` is supplied without relying on automatic URL suffixing.
 - Current dependency manifests still include `azure-keyvault-secrets`.
 - Docker workflow triggers and image variants remain appropriate for the deployment branch.
+- The Model viewer tab (item 32) still gets its token only through `/api/v1/ext/model-viewer/token`, and tool results/tab state carry no token.
 - Chat exceptions retain traceback/chat/model diagnostics and a nonempty fallback (item 30); terminal `/skills` listing failures remain best-effort without swallowing cancellation or changing actual terminal tool failure handling (item 31).

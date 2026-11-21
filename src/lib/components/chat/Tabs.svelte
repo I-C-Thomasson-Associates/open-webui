@@ -121,6 +121,8 @@
 	import SplitPanel from '../icons/SplitPanel.svelte';
 	import { isSavedChatId } from '$lib/utils/chatId';
 	import SubAgentChatViewer from './SubAgentChatViewer.svelte';
+	import ModelViewer from '$lib/ext/ModelViewer.svelte';
+	import { modelViewerTabId, type ModelViewerRef } from '$lib/ext/modelViewer';
 	import { subAgentViewer, trackSubAgentScope } from './subAgentViewer';
 
 	const i18n = getContext<any>('i18n');
@@ -598,7 +600,8 @@
 			voice: 'microphone',
 			comments: 'chat-bubble',
 			overview: 'grid',
-			subagents: 'chat-lines'
+			subagents: 'chat-lines',
+			'model-viewer': 'cube'
 		})[kind];
 	const toTabDomId = (id: string) => `chat-panel-${encodeURIComponent(id)}`;
 	$: activeTabId = tabs.activeId;
@@ -864,6 +867,12 @@
 			inSplit,
 			sourceTabId
 		);
+	};
+	/** Opens (or focuses) the Model viewer tab for one ACC model beside the chat. */
+	export const openModelViewer = (ref: ModelViewerRef) => {
+		const id = modelViewerTabId(ref);
+		if (tabs.tabs.some((tab) => tab.id === id)) selectTab(id);
+		else openPanel({ id, kind: 'model-viewer', label: ref.name || 'Model', modelViewer: ref }, true);
 	};
 	const openOverview = () => {
 		if (!hasMessages) return;
@@ -2114,6 +2123,8 @@
 						parentChatId={chatId ?? ''}
 						visible={panelVisible && visibleTabIds.has(tab.id)}
 					/>
+				{:else if tab.kind === 'model-viewer' && tab.modelViewer}
+					<ModelViewer ref={tab.modelViewer} />
 				{:else if tab.kind === 'overview'}
 					<Overview
 						history={chatHistory}

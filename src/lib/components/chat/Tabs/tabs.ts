@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import type { TerminalContext } from '$lib/types';
 import type { TerminalTarget } from '$lib/apis/terminal';
+import type { ModelViewerRef } from '$lib/ext/modelViewer';
 
 export type TabKind =
 	| 'chat'
@@ -15,7 +16,8 @@ export type TabKind =
 	| 'voice'
 	| 'comments'
 	| 'overview'
-	| 'subagents';
+	| 'subagents'
+	| 'model-viewer';
 export type Tab = {
 	id: string;
 	kind: TabKind;
@@ -39,6 +41,8 @@ export type Tab = {
 	target?: TerminalTarget;
 	browserBaseUrl?: string;
 	context?: TerminalContext | null;
+	/** For a model-viewer tab: identifiers only; its token is fetched at runtime. */
+	modelViewer?: ModelViewerRef;
 };
 export type TabGroup = { id: string; tabIds: string[]; activeId: string };
 export type SplitEdge = 'left' | 'right' | 'top' | 'bottom';
