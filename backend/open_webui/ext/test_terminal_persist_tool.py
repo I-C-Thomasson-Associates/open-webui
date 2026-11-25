@@ -60,7 +60,7 @@ def relay(monkeypatch):
         return state['client']
 
     state = {'opened': opened}
-    monkeypatch.setattr(tool, 'get_terminal_client', client)
+    monkeypatch.setattr(tool, 'get_machine_client', client)
     monkeypatch.setattr(tool, '_get_terminal_file_max_bytes', AsyncMock(return_value=1024))
     return state
 

@@ -158,6 +158,7 @@
 			variant="settings"
 			placeholder={$i18n.t('API Key')}
 			bind:value={realtime.OPENAI_API_KEY}
+			required
 		/>
 	</AdminSettingField>
 	{/if}

@@ -6,6 +6,20 @@
 
 The `jp_dev` and `prod` branches are based on Open WebUI with custom modifications for ICT / Salas O'Brien deployment.
 
+### Upstream 0.13.5 integration — pending local validation (pre-publication)
+
+**Pre-publication snapshot; not committed, published or deployed.** Historical snapshots below are unchanged.
+
+- Original fork `jp_dev` = `origin/jp_dev`: `6fd952d128cc5ddc260aab9a1ea6e19db01c76c6`. Prior upstream `v0.13.4`: `0666e59d26a4d056e0bacee41742486badd71cf8`. Official lightweight `v0.13.5`: `926f826eaef6179c092a936eede6c7363e425975`, checked with `git ls-remote https://github.com/open-webui/open-webui`; no signature check. 358 upstream commits. Fork `main` fast-forwarded to the tag.
+- Candidate `integrate-v0.13.5`: `git merge --no-commit --no-ff v0.13.5`. 17 conflicts resolved; zero unmerged paths or markers; one Alembic head (`5e7a2c9d4b13`).
+- **Upgrade warning (upstream):** chat history moves from the `chat.chat` JSON into `chat_message` rows. Back up the database first and upgrade all workers together; old and new versions are incompatible. Existing `chat_message.usage` is kept and newly moved rows get `usage = NULL`, so items 12/13 totals do not change.
+- Upstream renamed terminals to machines (`routers/machines.py`, `utils/machines/`, `/api/v1/machines`, `MACHINE_PROXY_HEADERS` with `TERMINAL_PROXY_HEADERS` fallback, `machine_id` with `terminal_id` fallback). Fork ext code and tests follow the new names; the orchestrator API (`api/v1/terminals/*`) OWUI calls is unchanged.
+- Item 25 follows upstream #35031: internal (sub-agent) chats no longer bypass `ENABLE_ADMIN_CHAT_ACCESS` for terminal context. It now uses `get_chat_metadata_by_id`. Item 23 raw upload proxy runs only for `http(s)://` machines; Tether, SSH and local machines use the client relay.
+- Checks: Windows `.venv` 3.11.9, isolated synthetic env: `backend/open_webui/ext` **213 passed** (gateway schema and model viewer excluded: no `re2`/`asyncssh` in env). Ruff F821/F811/F823 clean in touched files. Node 22.23.2 Vitest **152 passed / 10 files**; production Vite build **passed**. svelte-check: 5379 errors repo-wide (no baseline run); none in fork-changed files are missing-name or missing-export errors except one that upstream also has.
+- **Sub Agent tool 1.4.0 (`../sobe-ai-tools` `jp_dev`):** before this, background reports read and wrote `parent.chat['history']` on the ORM row, which 0.13.5 no longer keeps, so the busy-parent branch choice (#34542) was lost. Reports now read the parent's `chat_message` rows and write the report plus its parent reply there in the same locked transaction, matching upstream `insert_internal_message` (and the #35035 lock order). Requires Open WebUI >= 0.13.5. **72 passed** (version test updated).
+- **Runtime (`../open-terminal-internal`):** fork `main` fast-forwarded to official Open Terminal `main` (`3e8ffa2`, v0.18.1; identical tree). The push ran the fork's mirror workflows: PyPI skipped (version exists), and the release workflow created fork tag/release `v0.18.1` on the same commit as the official tag. `dev` merged upstream v0.18.1 (3 conflicts). The fork keeps its bounded `/skills` routes and gains upstream's workspace skills (`X-Workspace-Directory`, workspace first, scope `workspace`). It also keeps its `/files/compare`, the `cwd` validation (now defaulting to upstream's start directory) and the removal of `NormalizeNullQueryMiddleware` (it would turn `max_bytes=null` into an unbounded read). Workspace shell scoping (`X-Workspace-Id`), the desktop package and the new agents come from upstream. Windows `.venv`: **118 passed, 39 skipped** (Linux descriptor tests not validated; `test_owui_tool.py` needs `requests`). Image rebuild required.
+- Not run: backend app boot/migration on a synthetic DB (new deps `asyncssh` and `google-re2` are not installed), gateway-schema and model-viewer tests, dependency audit, browser/live checks, Docker build, deployment.
+
 ### Upstream 0.13.4 integration — pending local validation (pre-publication)
 
 **Pre-publication snapshot; not committed, published or deployed.** Historical snapshots below are unchanged.

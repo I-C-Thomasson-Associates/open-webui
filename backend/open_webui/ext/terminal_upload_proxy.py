@@ -13,7 +13,7 @@ import aiohttp
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from open_webui.config import TERMINAL_PROXY_HEADERS
+from open_webui.config import MACHINE_PROXY_HEADERS
 from open_webui.env import AIOHTTP_CLIENT_SESSION_SSL
 
 
@@ -139,8 +139,8 @@ async def proxy_terminal_upload(
         for key, value in upstream_response.headers.items()
         if key.lower() not in _RESPONSE_STRIPPED_HEADERS
     }
-    if TERMINAL_PROXY_HEADERS:
-        filtered_headers.update(TERMINAL_PROXY_HEADERS)
+    if MACHINE_PROXY_HEADERS:
+        filtered_headers.update(MACHINE_PROXY_HEADERS)
 
     async def stream_response():
         try:

@@ -60,12 +60,12 @@ def _fingerprint(connection, base_url, spec_url):
 
 def _load(monkeypatch):
     tree = ast.parse(TOOLS.read_text(encoding='utf-8'), filename=str(TOOLS))
-    terminal_tree = ast.parse((Path(__file__).parents[1] / 'utils' / 'terminals.py').read_text(encoding='utf-8'))
+    terminal_tree = ast.parse((Path(__file__).parents[1] / 'utils' / 'machines' / '__init__.py').read_text(encoding='utf-8'))
     cache_tree = ast.parse((Path(__file__).parents[1] / 'ext' / 'terminal_discovery_cache.py').read_text(encoding='utf-8'))
     wanted = {
         'resolve_schema', 'convert_openapi_to_tool_payload', 'add_terminal_display_file_inline_param',
-        '_fresh_terminal_connection', '_discover_terminal_server', 'get_terminal_tools', 'get_tool_server_url',
-        '_apply_terminal_display_name', 'set_terminal_servers', 'get_terminal_servers',
+        '_fresh_terminal_connection', '_discover_terminal_server', 'get_machine_tools', 'get_tool_server_url',
+        '_apply_terminal_display_name', 'set_machines', 'get_machines',
     }
     nodes = []
     for node in tree.body:
@@ -106,39 +106,39 @@ def _load(monkeypatch):
         'logging': SimpleNamespace(getLogger=lambda _: SimpleNamespace()), 'Config': config, 'Groups': SimpleNamespace(get_groups_by_member_id=AsyncMock(return_value=[])),
         'has_connection_access': AsyncMock(return_value=True), 'Request': object, 'UserModel': object, 'AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER_DATA': 10,
         'AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL': None, 'REDIS_KEY_PREFIX': 'test',
-        'ENABLE_TOOL_SERVERS': True,
+        'ENABLE_TOOL_SERVERS': True, 'MANAGED_SCHEMES': ('ssh://', 'local://'),
         'bearer_auth_header': lambda token: {'Authorization': f'Bearer {token}'} if token else {},
         'clean_openai_tool_schema': lambda value: value, 'execute_tool_server': AsyncMock(return_value=({}, {})),
         'get_async_tool_function_and_apply_extra_params': AsyncMock(side_effect=lambda fn, _: fn),
-        'get_terminal_cwd': AsyncMock(return_value=None), 'get_terminal_system_prompt': AsyncMock(return_value=None),
+        'get_machine_cwd': AsyncMock(return_value=None), 'get_machine_system_prompt': AsyncMock(return_value=None),
         'persist_terminal_file_to_platform': AsyncMock(), 'transfer_platform_file_to_terminal': AsyncMock(),
         'log': SimpleNamespace(debug=lambda *args, **kwargs: None),
         # Tether: without a live device the user's connections are the admin Config list.
-        'get_terminal_connections': AsyncMock(side_effect=lambda user: config.get.return_value),
+        'get_machine_connections': AsyncMock(side_effect=lambda user: config.get.return_value),
         'get_tool_server_data': AsyncMock(),
     }
     module = ast.Module(body=nodes, type_ignores=[])
     exec(compile(ast.fix_missing_locations(module), str(TOOLS), 'exec'), globals_)
-    terminal_names = {'get_terminal_server_url'}
+    terminal_names = {'get_machine_url'}
     terminal_nodes = [copy.deepcopy(node) for node in terminal_tree.body if isinstance(node, ast.FunctionDef) and node.name in terminal_names]
     exec(compile(ast.fix_missing_locations(ast.Module(body=terminal_nodes, type_ignores=[])), '<terminal-routing>', 'exec'), globals_)
 
-    # find_terminal_connection is the central authorizer (tested against the real
+    # find_machine_connection is the central authorizer (tested against the real
     # module in test_terminal_json_resolution.py).  Its default fake mirrors the
     # admin-connection rules: one enabled Config entry, ambiguous IDs rejected.
-    async def find_terminal_connection(user, terminal_id, metadata=None, request=None):
+    async def find_machine_connection(user, terminal_id, metadata=None, request=None):
         matches = [c for c in config.get.return_value if c.get('id') == terminal_id]
         if len(matches) > 1:
-            raise HTTPException(409, 'Ambiguous terminal ID')
+            raise HTTPException(409, 'Ambiguous machine ID')
         return copy.deepcopy(matches[0]) if matches else None
 
-    authorizer = types.ModuleType('open_webui.utils.terminals')
-    authorizer.find_terminal_connection = AsyncMock(side_effect=find_terminal_connection)
+    authorizer = types.ModuleType('open_webui.utils.machines')
+    authorizer.find_machine_connection = AsyncMock(side_effect=find_machine_connection)
     # Same contract as the real helper: only trusted connection context becomes headers.
-    authorizer.terminal_headers = lambda connection: connection.get('_headers', {})
-    monkeypatch.setitem(sys.modules, 'open_webui.utils.terminals', authorizer)
+    authorizer.machine_headers = lambda connection: connection.get('_headers', {})
+    monkeypatch.setitem(sys.modules, 'open_webui.utils.machines', authorizer)
     globals_['_terminal_discovery_cache'] = lambda request: cache
-    return SimpleNamespace(g=globals_, cache=cache, config=config, fetch=fake_cache.safe_fetch_openapi, gateway=gateway, find=authorizer.find_terminal_connection)
+    return SimpleNamespace(g=globals_, cache=cache, config=config, fetch=fake_cache.safe_fetch_openapi, gateway=gateway, find=authorizer.find_machine_connection)
 
 
 def _connection(id='terminal-a', **extra):
@@ -171,14 +171,14 @@ async def test_cached_prompt_is_fp_bound_and_live_prompt_failure_falls_back(monk
     connection = _connection()
     subject.config.get.return_value = [connection]
     subject.fetch.return_value = Result(_openapi())
-    subject.g['get_terminal_system_prompt'].side_effect = ['static prompt', None]
+    subject.g['get_machine_system_prompt'].side_effect = ['static prompt', None]
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='session')))
-    tools, prompt = await subject.g['get_terminal_tools'](
+    tools, prompt = await subject.g['get_machine_tools'](
         request, 'terminal-a', SimpleNamespace(id='user-a'), {'__metadata__': {'chat_id': 'chat'}}
     )
     assert tools['run_command']['spec']['name'] == 'run_command'
     assert prompt == 'static prompt'
-    static_headers = subject.g['get_terminal_system_prompt'].await_args_list[0].args[1]
+    static_headers = subject.g['get_machine_system_prompt'].await_args_list[0].args[1]
     assert static_headers == {'Authorization': 'Bearer discovery-secret'}
 
 
@@ -205,7 +205,7 @@ async def test_tool_operation_rechecks_config_and_rebuilds_headers(monkeypatch):
     subject.fetch.return_value = Result(_openapi())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={'cookie': 'value'}, state=SimpleNamespace(token=SimpleNamespace(credentials='session-one')))
     user = SimpleNamespace(id='user-a')
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', user, {'__metadata__': {'chat_id': 'chat'}})
+    tools, _ = await subject.g['get_machine_tools'](request, 'terminal-a', user, {'__metadata__': {'chat_id': 'chat'}})
     request.state.token.credentials = 'session-two'
     await tools['run_command']['callable']()
     call = subject.g['execute_tool_server'].await_args.kwargs
@@ -235,7 +235,7 @@ async def test_operation_auth_is_current_request_auth_not_discovery_cache(monkey
     subject.fetch.return_value = Result(_openapi())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='session-one')))
     params = {'__metadata__': {'chat_id': 'chat'}, **extra}
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='user-a'), params)
+    tools, _ = await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='user-a'), params)
     await tools['run_command']['callable']()
     assert subject.g['execute_tool_server'].await_args.kwargs['headers']['Authorization'] == expected
 
@@ -248,8 +248,8 @@ async def test_projection_skips_empty_disabled_and_duplicate_ids_without_io(monk
         {}, _connection(id=''), _connection(id='off', enabled=False),
         _connection(id='same'), _connection(id='same'), _connection(id='managed', server_type='orchestrator'),
     ]
-    assert await subject.g['set_terminal_servers'](request) == []
-    assert request.app.state.TERMINAL_SERVERS == []
+    assert await subject.g['set_machines'](request) == []
+    assert request.app.state.MACHINES == []
     subject.fetch.assert_not_awaited()
     assert not subject.cache.calls
     subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
@@ -274,7 +274,7 @@ async def test_projection_is_bounded_and_keeps_healthy_results(monkeypatch):
         return ({'id': connection['id']} if connection['id'] != 't2' else None, None)
 
     subject.g['_discover_terminal_server'] = discover
-    task = asyncio.create_task(subject.g['set_terminal_servers'](request))
+    task = asyncio.create_task(subject.g['set_machines'](request))
     await entered.wait()
     assert maximum == 4
     release.set()
@@ -320,7 +320,7 @@ async def test_generated_callables_fail_closed_after_configuration_change(monkey
     subject.config.get.return_value = [connection]
     subject.fetch.return_value = Result(_openapi())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    tools, _ = await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
     baseline = subject.g['execute_tool_server'].await_count
     changed = copy.deepcopy(connection)
     mutation(changed)
@@ -343,7 +343,7 @@ async def test_generated_callable_rechecks_access_without_upstream_io(monkeypatc
     subject.config.get.return_value = [connection]
     subject.fetch.return_value = Result(_openapi())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    tools, _ = await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
     subject.g['has_connection_access'].return_value = False
     with pytest.raises(RuntimeError, match='Access denied'):
         await tools[name]['callable'](*args)
@@ -379,7 +379,7 @@ async def test_tether_connection_bypasses_discovery_cache(monkeypatch):
     subject.config.get.return_value = [connection]
     subject.g['get_tool_server_data'].return_value = _openapi()
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={})
-    tools, _ = await subject.g['get_terminal_tools'](request, 'tether:dev', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    tools, _ = await subject.g['get_machine_tools'](request, 'tether:dev', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
     assert 'run_command' in tools
     subject.g['get_tool_server_data'].assert_awaited_once_with('tether://dev/openapi.json', {'X-User-Id': 'u'}, service='open_terminal')
     assert subject.cache.calls == [] and subject.fetch.await_count == 0
@@ -392,7 +392,7 @@ async def test_session_auth_rotation_is_read_when_the_tool_is_invoked(monkeypatc
     subject.config.get.return_value = [connection]
     subject.fetch.return_value = Result(_openapi())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='session-one')))
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    tools, _ = await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
     request.state.token.credentials = 'session-two'
     await tools['run_command']['callable']()
     assert subject.g['execute_tool_server'].await_args.kwargs['headers']['Authorization'] == 'Bearer session-two'
@@ -406,9 +406,9 @@ async def test_static_prompt_is_optional_and_display_name_is_a_copy(monkeypatch)
     subject.fetch.return_value = Result(_openapi())
     # The discovery-time optional prompt times out; the live prompt lookup is
     # allowed to fail empty so a usable schema still constructs tools.
-    subject.g['get_terminal_system_prompt'].side_effect = [asyncio.TimeoutError(), None]
+    subject.g['get_machine_system_prompt'].side_effect = [asyncio.TimeoutError(), None]
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={}, state=SimpleNamespace(token=SimpleNamespace(credentials='s')))
-    tools, prompt = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    tools, prompt = await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
     assert tools and prompt is None
     cached = {'openapi': _openapi(), 'info': {'title': 'old'}, 'specs': [{'name': 'run_command'}]}
     changed = _connection(name='second')
@@ -423,7 +423,7 @@ async def test_cached_static_prompt_is_fingerprint_bound_and_usable_after_live_f
     connection = _connection()
     subject.config.get.return_value = [connection]
     subject.fetch.return_value = Result(_openapi())
-    subject.g['get_terminal_system_prompt'].side_effect = ['cached prompt', 'new prompt']
+    subject.g['get_machine_system_prompt'].side_effect = ['cached prompt', 'new prompt']
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)))
     first, _ = await subject.g['_discover_terminal_server'](request, connection)
     second, _ = await subject.g['_discover_terminal_server'](request, connection)
@@ -440,11 +440,11 @@ async def test_cached_static_prompt_is_fingerprint_bound_and_usable_after_live_f
 async def test_disabled_feature_returns_upstream_shapes_without_config_or_discovery(monkeypatch):
     subject = _load(monkeypatch)
     subject.g['ENABLE_TOOL_SERVERS'] = False
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None, TERMINAL_SERVERS=[{'id': 'stale'}])))
-    assert await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {}) == {}
-    assert await subject.g['get_terminal_servers'](request) == []
-    assert await subject.g['set_terminal_servers'](request) == []
-    assert request.app.state.TERMINAL_SERVERS == []
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None, MACHINES=[{'id': 'stale'}])))
+    assert await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {}) == {}
+    assert await subject.g['get_machines'](request) == []
+    assert await subject.g['set_machines'](request) == []
+    assert request.app.state.MACHINES == []
     subject.config.get.assert_not_awaited()
     subject.fetch.assert_not_awaited()
     subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
@@ -458,12 +458,12 @@ async def test_upstream_config_knobs_and_inherited_access_apply_to_fresh_calls(m
     subject.config.get.return_value = [connection]
     subject.fetch.return_value = Result(_openapi())
     subject.g['Groups'].get_groups_by_member_id.return_value = [SimpleNamespace(id='parent-group')]
-    subject.g['get_terminal_cwd'].return_value = '/workspace'
+    subject.g['get_machine_cwd'].return_value = '/workspace'
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={})
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {})
+    tools, _ = await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {})
     assert tools['run_command']['user_shell_tools'] == 'always'
     assert ('/workspace' in tools['run_command']['spec'].get('description', '')) is cwd_enabled
-    assert subject.g['get_terminal_cwd'].await_count == int(cwd_enabled)
+    assert subject.g['get_machine_cwd'].await_count == int(cwd_enabled)
     await tools['run_command']['callable']()
     for call in subject.g['Groups'].get_groups_by_member_id.await_args_list:
         assert call.kwargs == {'include_inherited': True}
@@ -479,7 +479,7 @@ async def test_existing_callables_fail_closed_when_feature_or_config_knobs_chang
     subject.config.get.return_value = [connection]
     subject.fetch.return_value = Result(_openapi())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=None)), cookies={})
-    tools, _ = await subject.g['get_terminal_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {})
+    tools, _ = await subject.g['get_machine_tools'](request, 'terminal-a', SimpleNamespace(id='u'), {})
     if change == 'feature':
         subject.g['ENABLE_TOOL_SERVERS'] = False
     else:
@@ -535,17 +535,17 @@ async def test_authorization_failures_happen_before_discovery_or_gateway(monkeyp
     elif case == 'duplicate':
         subject.config.get.return_value = [connection, copy.deepcopy(connection)]
     elif case == 'chat-denied':
-        # e.g. fork item 25: a foreign saved chat is rejected by find_terminal_connection itself.
+        # e.g. fork item 25: a foreign saved chat is rejected by find_machine_connection itself.
         subject.find.side_effect = HTTPException(403, 'Chat access denied')
     else:
         subject.config.get.return_value = []
     with pytest.raises((RuntimeError, HTTPException)):
-        await subject.g['get_terminal_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='user-a'), {'__metadata__': {'chat_id': 'chat'}})
+        await subject.g['get_machine_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='user-a'), {'__metadata__': {'chat_id': 'chat'}})
     assert subject.find.await_args.args[1] == 'terminal-a'
     assert subject.find.await_args.args[2]['chat_id'] == 'chat'
     assert not subject.cache.calls
     subject.fetch.assert_not_awaited()
-    subject.g['get_terminal_cwd'].assert_not_awaited()
+    subject.g['get_machine_cwd'].assert_not_awaited()
     subject.gateway.build_terminal_tool_gateway_seed_headers.assert_not_awaited()
 
 
@@ -558,7 +558,7 @@ async def test_template_connection_discovers_directly_with_floor_and_trusted_hea
     subject.find.return_value = template
     subject.fetch.return_value = Result(_openapi())
     metadata = {'chat_id': 'saved'}
-    tools, _ = await subject.g['get_terminal_tools'](_tool_request(), 'template:conn:tpl', SimpleNamespace(id='user-a'), {'__metadata__': metadata})
+    tools, _ = await subject.g['get_machine_tools'](_tool_request(), 'template:conn:tpl', SimpleNamespace(id='user-a'), {'__metadata__': metadata})
     # Not cached/fingerprinted: a template instance is per user, so it is fetched live.
     assert not subject.cache.calls
     fetch = subject.fetch.await_args
@@ -580,7 +580,7 @@ async def test_every_operation_reauthorizes_through_find_before_gateway(monkeypa
     subject = _load(monkeypatch)
     subject.config.get.return_value = [_connection()]
     subject.fetch.return_value = Result(_openapi())
-    tools, _ = await subject.g['get_terminal_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
+    tools, _ = await subject.g['get_machine_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': 'saved'}})
     subject.find.side_effect = {
         'gone': AsyncMock(return_value=None),
         'disabled': AsyncMock(return_value=_connection(enabled=False)),
@@ -603,6 +603,6 @@ async def test_non_saved_chat_ids_still_track_the_session(monkeypatch, chat_id):
     subject = _load(monkeypatch)
     subject.config.get.return_value = [_connection()]
     subject.fetch.return_value = Result(_openapi())
-    tools, _ = await subject.g['get_terminal_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': chat_id}})
+    tools, _ = await subject.g['get_machine_tools'](_tool_request(), 'terminal-a', SimpleNamespace(id='u'), {'__metadata__': {'chat_id': chat_id}})
     await tools['run_command']['callable']()
     assert subject.g['execute_tool_server'].await_args.kwargs['headers'].get('X-Session-Id', '') == chat_id

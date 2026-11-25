@@ -1,6 +1,6 @@
 """Terminal chat authorization at the router ingress (HTTP proxy and WebSocket), AST-loaded.
 
-``find_terminal_connection`` is the central authorizer (tested against the real
+``find_machine_connection`` is the central authorizer (tested against the real
 module in test_terminal_json_resolution.py); here it is a fake so these tests
 pin how the router *uses* it: authorize before any gateway/upstream work,
 re-authorize on every WebSocket poll, and fail closed without leaking details.
@@ -31,14 +31,14 @@ def _connection(**extra):
 
 def _load_terminal_ingress():
     """Execute selected production AST nodes without importing the full router graph."""
-    source_path = Path(__file__).resolve().parents[1] / 'routers' / 'terminals.py'
+    source_path = Path(__file__).resolve().parents[1] / 'routers' / 'machines.py'
     source = ast.parse(source_path.read_text(encoding='utf-8'), filename=str(source_path))
     names = {
         '_sanitize_proxy_path',
-        'proxy_terminal',
-        '_proxy_terminal',
+        'proxy_machine',
+        '_proxy_machine',
         '_resolve_authenticated_connection',
-        '_resolve_terminal_access',
+        '_resolve_machine_access',
         '_terminal_identity',
         '_watch_terminal_access',
         'socket_metadata',
@@ -72,16 +72,16 @@ def _load_terminal_ingress():
         'Depends': lambda dependency: None,
         'get_verified_user': object(),
         'get_verified_user_by_token': AsyncMock(),
-        'find_terminal_connection': AsyncMock(),
+        'find_machine_connection': AsyncMock(),
         # Same shape as the real helper: only trusted connection context becomes headers.
-        'terminal_headers': lambda connection: connection.get('_headers', {}),
-        'get_terminal_server_url': lambda connection: connection.get('url', ''),
+        'machine_headers': lambda connection: connection.get('_headers', {}),
+        'get_machine_url': lambda connection: connection.get('url', ''),
         'build_terminal_tool_gateway_seed_headers': AsyncMock(return_value={'X-Gateway': 'seed'}),
         'proxy_terminal_upload': AsyncMock(return_value=Response(status_code=204)),
         'bearer_auth_header': lambda token: {'Authorization': f'Bearer {token}'} if token else {},
         'AIOHTTP_CLIENT_SESSION_SSL': None,
         'ENABLE_TOOL_SERVERS': True,
-        'TERMINAL_PROXY_HEADERS': {},
+        'MACHINE_PROXY_HEADERS': {},
         'URL': URL,
         'JSONResponse': JSONResponse,
         'Response': Response,
@@ -93,7 +93,7 @@ def _load_terminal_ingress():
         're': __import__('re'),
         'json': json,
         'aiohttp': SimpleNamespace(ClientTimeout=lambda **kwargs: None, ClientConnectionError=ConnectionError),
-        'get_terminal_client': MagicMock(),
+        'get_machine_client': MagicMock(),
         'log': SimpleNamespace(
             error=lambda *args, **kwargs: None,
             exception=lambda *args, **kwargs: None,
@@ -142,12 +142,12 @@ USER = SimpleNamespace(id='user-id', role='user')
 @pytest.mark.parametrize('ingress_source', ['header', 'path'])
 async def test_http_authorizes_with_chat_context_before_gateway_or_upstream(ingress_source):
     ingress = _load_terminal_ingress()
-    find = ingress.globals['find_terminal_connection']
+    find = ingress.globals['find_machine_connection']
     find.side_effect = HTTPException(403, 'Chat access denied')
     request = _request('owner-chat') if ingress_source == 'header' else _request('temporary:ignored', 'owner-chat')
 
     with pytest.raises(HTTPException) as denied:
-        await ingress.proxy_terminal('terminal-id', 'files/upload-stream', request, USER)
+        await ingress.proxy_machine('terminal-id', 'files/upload-stream', request, USER)
 
     assert denied.value.status_code == 403
     assert find.await_args.args[:2] == (USER, 'terminal-id')
@@ -159,19 +159,19 @@ async def test_http_authorizes_with_chat_context_before_gateway_or_upstream(ingr
 @pytest.mark.asyncio
 async def test_http_unknown_terminal_is_404_before_gateway_or_upstream():
     ingress = _load_terminal_ingress()
-    ingress.globals['find_terminal_connection'].return_value = None
-    response = await ingress.proxy_terminal('terminal-id', 'files/upload-stream', _request(), USER)
+    ingress.globals['find_machine_connection'].return_value = None
+    response = await ingress.proxy_machine('terminal-id', 'files/upload-stream', _request(), USER)
     assert response.status_code == 404
     ingress.globals['build_terminal_tool_gateway_seed_headers'].assert_not_awaited()
     ingress.globals['proxy_terminal_upload'].assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_http_upload_stream_gets_gateway_seed_session_and_trusted_terminal_headers():
+async def test_http_upload_stream_gets_gateway_seed_session_and_trusted_machine_headers():
     ingress = _load_terminal_ingress()
-    ingress.globals['find_terminal_connection'].return_value = _connection(_headers={'X-Terminal-Chat-Id': 'owner-chat'})
+    ingress.globals['find_machine_connection'].return_value = _connection(_headers={'X-Terminal-Chat-Id': 'owner-chat'})
 
-    response = await ingress.proxy_terminal('terminal-id', 'files/upload-stream', _request('owner-chat'), USER)
+    response = await ingress.proxy_machine('terminal-id', 'files/upload-stream', _request('owner-chat'), USER)
 
     assert response.status_code == 204
     headers = ingress.globals['proxy_terminal_upload'].await_args.args[2]
@@ -187,14 +187,14 @@ async def test_http_upload_stream_gets_gateway_seed_session_and_trusted_terminal
 @pytest.mark.asyncio
 async def test_http_upload_stream_for_tether_owner_uses_relay_not_raw_proxy():
     ingress = _load_terminal_ingress()
-    ingress.globals['find_terminal_connection'].return_value = _connection(owner_id='user-id', auth_type='none')
+    ingress.globals['find_machine_connection'].return_value = _connection(owner_id='user-id', auth_type='none', url='tether://user-id')
     upstream = SimpleNamespace(
         status=204, headers={}, read=AsyncMock(return_value=b''), release=AsyncMock()
     )
     session = SimpleNamespace(request=AsyncMock(return_value=upstream), close=AsyncMock())
-    ingress.globals['get_terminal_client'].return_value = session
+    ingress.globals['get_machine_client'].return_value = session
 
-    response = await ingress.proxy_terminal('terminal-id', 'files/upload-stream', _request(), USER)
+    response = await ingress.proxy_machine('terminal-id', 'files/upload-stream', _request(), USER)
 
     assert response.status_code == 204
     ingress.globals['proxy_terminal_upload'].assert_not_awaited()
@@ -205,13 +205,13 @@ async def test_http_upload_stream_for_tether_owner_uses_relay_not_raw_proxy():
 async def test_disabled_feature_blocks_http_and_ws_before_authorizer_or_gateway():
     ingress = _load_terminal_ingress()
     ingress.globals['ENABLE_TOOL_SERVERS'] = False
-    response = await ingress.proxy_terminal('terminal-id', 'files/upload-stream', _request(), USER)
+    response = await ingress.proxy_machine('terminal-id', 'files/upload-stream', _request(), USER)
     assert response.status_code == 403
     assert json.loads(response.body) == {'error': 'Tool servers are disabled'}
     ws = _WebSocket({})
-    assert await ingress._resolve_terminal_access(ws, 'terminal-id', 'token') is None
+    assert await ingress._resolve_machine_access(ws, 'terminal-id', 'token') is None
     assert ws.closed == [(4003, 'Tool servers are disabled')]
-    ingress.globals['find_terminal_connection'].assert_not_awaited()
+    ingress.globals['find_machine_connection'].assert_not_awaited()
     ingress.globals['build_terminal_tool_gateway_seed_headers'].assert_not_awaited()
     ingress.globals['proxy_terminal_upload'].assert_not_awaited()
 
@@ -221,7 +221,7 @@ async def test_ws_handshake_authorizes_with_socket_chat_and_denial_closes_4003()
     ingress = _load_terminal_ingress()
     connection = _connection()
     ingress.globals['get_verified_user_by_token'].return_value = USER
-    find = ingress.globals['find_terminal_connection']
+    find = ingress.globals['find_machine_connection']
     find.return_value = connection
     ws = _WebSocket({'type': 'auth', 'token': 'token', 'chat_id': 'owner-chat'})
 
@@ -244,9 +244,9 @@ async def test_ws_handshake_authorizes_with_socket_chat_and_denial_closes_4003()
 async def test_ws_unknown_terminal_closes_without_connection(terminal_id, code):
     ingress = _load_terminal_ingress()
     ingress.globals['get_verified_user_by_token'].return_value = USER
-    ingress.globals['find_terminal_connection'].return_value = None
+    ingress.globals['find_machine_connection'].return_value = None
     ws = _WebSocket({})
-    assert await ingress._resolve_terminal_access(ws, terminal_id, 'token') is None
+    assert await ingress._resolve_machine_access(ws, terminal_id, 'token') is None
     assert [c for c, _ in ws.closed] == [code]
 
 
@@ -279,7 +279,7 @@ async def test_ws_watcher_reauthorizes_and_closes_on_change_or_failure(change, c
     ingress = _load_terminal_ingress()
     connection = _connection(_headers={'X-Terminal-Chat-Id': 'owner-chat'})
     ws, identity = _watch(ingress, connection)
-    find = ingress.globals['find_terminal_connection']
+    find = ingress.globals['find_machine_connection']
     changed = copy.deepcopy(connection)
     find.return_value = changed
     if change in ('url', 'key'):
@@ -311,7 +311,7 @@ async def test_ws_watcher_keeps_unchanged_identity_then_stops_on_revocation():
     ingress = _load_terminal_ingress()
     connection = _connection(_headers={'X-Terminal-Chat-Id': 'owner-chat'})
     ws, identity = _watch(ingress, connection)
-    find = ingress.globals['find_terminal_connection']
+    find = ingress.globals['find_machine_connection']
     find.return_value = connection
     polls = 0
 
@@ -329,7 +329,7 @@ async def test_ws_watcher_keeps_unchanged_identity_then_stops_on_revocation():
 
 
 def test_ws_proxy_uses_watcher_in_first_completion_task_group():
-    source = (Path(__file__).resolve().parents[1] / 'routers' / 'terminals.py').read_text(encoding='utf-8')
+    source = (Path(__file__).resolve().parents[1] / 'routers' / 'machines.py').read_text(encoding='utf-8')
     tree = ast.parse(source)
     proxy = next(node for node in tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == '_proxy_terminal_websocket')
     assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == '_watch_terminal_access' for node in ast.walk(proxy))
@@ -337,17 +337,17 @@ def test_ws_proxy_uses_watcher_in_first_completion_task_group():
 
 
 @pytest.mark.asyncio
-async def test_authorized_terminal_context_allows_configured_and_internal_admins(monkeypatch):
+async def test_authorized_terminal_context_allows_owner_and_configured_admins(monkeypatch):
     chat = SimpleNamespace(id='admin-chat', user_id='owner', meta={'internal': True})
-    monkeypatch.setattr(authorization.Chats, 'get_chat_by_id', AsyncMock(return_value=chat))
+    monkeypatch.setattr(authorization.Chats, 'get_chat_metadata_by_id', AsyncMock(return_value=chat))
     assert await authorization.authorized_terminal_chat_context(SimpleNamespace(id='owner', role='user'), 'admin-chat') == 'admin-chat'
 
     monkeypatch.setattr(authorization, 'ENABLE_ADMIN_CHAT_ACCESS', True)
     assert await authorization.authorized_terminal_chat_context(SimpleNamespace(id='admin', role='admin'), 'admin-chat') == 'admin-chat'
 
+    # Upstream 0.13.5 (#35031): internal chats no longer bypass ENABLE_ADMIN_CHAT_ACCESS.
     monkeypatch.setattr(authorization, 'ENABLE_ADMIN_CHAT_ACCESS', False)
-    monkeypatch.setattr(authorization, 'is_internal_chat', lambda meta: meta == {'internal': True})
-    assert await authorization.authorized_terminal_chat_context(SimpleNamespace(id='admin', role='admin'), 'admin-chat') == 'admin-chat'
+    assert await authorization.authorized_terminal_chat_context(SimpleNamespace(id='admin', role='admin'), 'admin-chat') is None
 
 
 @pytest.mark.asyncio
@@ -355,12 +355,12 @@ async def test_authorized_terminal_context_allows_configured_and_internal_admins
 async def test_authorized_terminal_context_denies_foreign_shared_folder_missing_and_non_admin(monkeypatch, meta):
     chat = SimpleNamespace(id='foreign-chat', user_id='owner', meta=meta)
     get_chat = AsyncMock(return_value=chat)
-    monkeypatch.setattr(authorization.Chats, 'get_chat_by_id', get_chat)
+    monkeypatch.setattr(authorization.Chats, 'get_chat_metadata_by_id', get_chat)
     monkeypatch.setattr(authorization, 'ENABLE_ADMIN_CHAT_ACCESS', False)
 
     user = SimpleNamespace(id='user-id', role='user')
     assert await authorization.authorized_terminal_chat_context(user, 'foreign-chat') is None
     assert await authorization.authorized_terminal_chat_context(SimpleNamespace(id='admin', role='admin'), 'foreign-chat') is None
     assert await authorization.authorized_terminal_chat_context(user, '') is None
-    monkeypatch.setattr(authorization.Chats, 'get_chat_by_id', AsyncMock(return_value=None))
+    monkeypatch.setattr(authorization.Chats, 'get_chat_metadata_by_id', AsyncMock(return_value=None))
     assert await authorization.authorized_terminal_chat_context(user, 'missing-chat') is None

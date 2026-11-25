@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 import aiohttp
 from fastapi import HTTPException, Request, UploadFile
 
-from open_webui.utils.tether import get_terminal_client
+from open_webui.utils.machines import get_machine_client
 from open_webui.env import (
     AIOHTTP_CLIENT_ALLOW_REDIRECTS,
     AIOHTTP_CLIENT_SESSION_TOOL_SERVER_SSL,
@@ -141,7 +141,7 @@ async def persist_terminal_file_to_platform(
     timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER)
 
     # Tether terminals (tether://) are only reachable through the user's relay.
-    async with get_terminal_client(
+    async with get_machine_client(
         base, instance_user_id or user.id, service=service, timeout=timeout, trust_env=True
     ) as session:
         # Directory check: /files/list succeeds only for directories.
@@ -290,7 +290,7 @@ async def transfer_platform_file_to_terminal(
     timeout = aiohttp.ClientTimeout(total=AIOHTTP_CLIENT_TIMEOUT_TOOL_SERVER)
 
     # Tether terminals (tether://) are only reachable through the user's relay.
-    async with get_terminal_client(
+    async with get_machine_client(
         base, instance_user_id or user.id, service=service, timeout=timeout, trust_env=True
     ) as session:
         async with session.post(

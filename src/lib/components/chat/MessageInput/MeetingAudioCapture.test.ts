@@ -133,16 +133,16 @@ function capture(overrides: any = {}) {
 
 function upload(overrides: any = {}) {
 	// Execute the actual bounded handler, not a reimplementation or a mounted component.
-	const script = inputSource
-		.slice(
-			inputSource.indexOf('\tconst getFilesystemUploadTerminal ='),
-			inputSource.indexOf('\tconst inputFilesHandler =')
-		)
-		.replace(/\bexport\s+const\b/g, 'const');
+	const between = (start: string, end: string) =>
+		inputSource.slice(inputSource.indexOf(start), inputSource.indexOf(end));
+	const script = (
+		between('\tconst getFilesystemUploadMachine =', '\tconst recordedAudioHandler =') +
+		between('\tconst uploadFileHandler =', '\tconst inputFilesHandler =')
+	).replace(/\bexport\s+const\b/g, 'const');
 	const context: any = {
 		$_user: { role: 'admin' },
-		$selectedTerminalId: null,
-		$terminalServers: [],
+		$selectedMachineId: null,
+		$machines: [],
 		$settings: {},
 		fileUploadCapableModels: ['model'],
 		selectedModelIds: ['model'],
@@ -153,16 +153,17 @@ function upload(overrides: any = {}) {
 		files: [],
 		onUpdate: vi.fn(),
 		chatId: '',
-		terminalContext: null,
+		machineContext: null,
+		machineIdOf: (item: any) => item?.machine_id,
 		localStorage: { token: 'test' },
 		console: { ...console, log: vi.fn(), warn: vi.fn() },
 		uploadFile: vi.fn().mockResolvedValue({ id: 'uploaded-id', meta: {} }),
 		selectedModels: ['model'],
 		getCurrentDirectory: undefined,
-		resolveTerminalTarget: vi.fn((selector: string) => ({ selector, baseUrl: 'local', key: 'test' })),
+		resolveMachineTarget: vi.fn((selector: string) => ({ selector, baseUrl: 'local', key: 'test' })),
 		isSavedChatId: (id: string) => !!id && !id.startsWith('local:'),
 		getCwd: vi.fn().mockResolvedValue({ cwd: '/workspace' }),
-		uploadNewFileToTerminal: vi
+		uploadNewFileToMachine: vi
 			.fn()
 			.mockResolvedValue({ path: '/workspace/transcript.txt', size: 20 }),
 		showFileNavDir: { set: vi.fn() },
@@ -424,8 +425,8 @@ describe('T9 explicit upload success contract', () => {
 			const u = upload(
 				mode === 'terminal'
 					? {
-							$selectedTerminalId: 'terminal',
-							$terminalServers: [
+							$selectedMachineId: 'terminal',
+							$machines: [
 								{ id: 'terminal', url: 'local', config: { chat_uploads: 'filesystem' } }
 							]
 						}
@@ -522,12 +523,12 @@ describe('T9 explicit upload success contract', () => {
 		'returns false and cleans terminal upload after %s',
 		async (failure) => {
 			const u = upload({
-				$selectedTerminalId: 'terminal',
-				$terminalServers: [{ id: 'terminal', url: 'local', config: { chat_uploads: 'filesystem' } }]
+				$selectedMachineId: 'terminal',
+				$machines: [{ id: 'terminal', url: 'local', config: { chat_uploads: 'filesystem' } }]
 			});
 			if (failure === 'throw')
-				u.context.uploadNewFileToTerminal.mockRejectedValue(new Error('failed'));
-			else u.context.uploadNewFileToTerminal.mockResolvedValue(failure === 'null' ? null : {});
+				u.context.uploadNewFileToMachine.mockRejectedValue(new Error('failed'));
+			else u.context.uploadNewFileToMachine.mockResolvedValue(failure === 'null' ? null : {});
 			expect(await u.uploadFileHandler(transcriptFile())).toBe(false);
 			expect(u.context.files).toHaveLength(0);
 			expect(u.context.onUpdate).toHaveBeenCalledOnce();

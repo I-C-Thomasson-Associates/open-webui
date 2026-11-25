@@ -16,7 +16,7 @@ describe('admin Models init', () => {
 
 	it('excludes terminal agents from saved overrides and the admin model list', () => {
 		expect(init).toContain("!model.id.startsWith('agent:')");
-		expect(init).toContain("model.owned_by !== 'terminal'");
+		expect(init).toContain('!isMachine(model.owned_by)');
 	});
 
 	it('keeps tag extraction, selectedTag reset and filtering', () => {
